@@ -48,6 +48,8 @@ const kitchenActions = {
 function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
+  const [stockRows, setStockRows] = useState([]);
+  const [trialBalance, setTrialBalance] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [sales, setSales] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -64,6 +66,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const canViewCustomers = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "Viewer"].includes(tenant.role);
   const canViewSales = ["Owner", "Manager", "Accountant", "Cashier", "Viewer"].includes(tenant.role);
   const canViewAccounts = ["Owner", "Manager", "Accountant", "Cashier", "Viewer"].includes(tenant.role);
+  const canViewAccountingReports = ["Owner", "Manager", "Accountant", "Viewer"].includes(tenant.role);
   const canViewCafe = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "KitchenStaff", "Viewer"].includes(tenant.role);
   const canViewGameNet = ["Owner", "Manager", "Cashier", "GameOperator", "Accountant", "Viewer"].includes(tenant.role);
   const canCreateProduct = ["Owner", "Manager", "InventoryManager"].includes(tenant.role);
@@ -88,10 +91,21 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     setLoading(true);
     setError("");
     try {
-      if (page === "products") setProducts(await client.get("/api/inventory/products"));
+      if (page === "products") {
+        const [productRows, currentStock] = await Promise.all([
+          client.get("/api/inventory/products"),
+          client.get("/api/inventory/stock")
+        ]);
+        setProducts(productRows || []);
+        setStockRows(currentStock || []);
+      }
       else if (page === "customers") setCustomers(await client.get("/api/customers"));
       else if (page === "sales") setSales(await client.get("/api/sales/orders"));
-      else if (page === "accounts") setAccounts(await client.get("/api/accounting/accounts"));
+      else if (page === "accounts") {
+        const accountRows = await client.get("/api/accounting/accounts");
+        setAccounts(accountRows || []);
+        if (canViewAccountingReports) setTrialBalance(await client.get("/api/accounting/trial-balance"));
+      }
       else if (page === "cafe") setKitchenTickets(await client.get("/api/cafe/kitchen/tickets"));
       else if (page === "gamenet") {
         const [deviceRows, sessionRows] = await Promise.all([
@@ -101,8 +115,9 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         setDevices(deviceRows || []);
         setActiveSessions(sessionRows || []);
       } else {
-        const [productRows, customerRows, salesRows, accountRows, ticketRows, sessionRows] = await Promise.all([
+        const [productRows, currentStock, customerRows, salesRows, accountRows, ticketRows, sessionRows] = await Promise.all([
           canViewProducts ? client.get("/api/inventory/products") : Promise.resolve([]),
+          canViewProducts ? client.get("/api/inventory/stock") : Promise.resolve([]),
           canViewCustomers ? client.get("/api/customers") : Promise.resolve([]),
           canViewSales ? client.get("/api/sales/orders") : Promise.resolve([]),
           canViewAccounts ? client.get("/api/accounting/accounts") : Promise.resolve([]),
@@ -110,6 +125,11 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           canViewGameNet ? client.get("/api/gamenet/sessions/active") : Promise.resolve([])
         ]);
         setProducts(productRows || []);
+        setStockRows(currentStock || []);
+        if (canViewAccountingReports) {
+          try { setTrialBalance(await client.get("/api/accounting/trial-balance")); }
+          catch { setTrialBalance(null); }
+        }
         setCustomers(customerRows || []);
         setSales(salesRows || []);
         setAccounts(accountRows || []);
@@ -121,7 +141,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     } finally {
       setLoading(false);
     }
-  }, [client, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewCafe, canViewGameNet]);
+  }, [client, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -464,8 +484,8 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
 
         {page === "products" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button>}</div>
-          <div className="mg-server-table-wrap"><table><thead><tr><th>کد کالا</th><th>نام</th><th>واحد</th><th>قیمت پیش‌فرض</th><th>نوع موجودی</th><th>وضعیت</th></tr></thead>
-            <tbody>{products.map(product => <tr key={product.id}><td>{product.sku}</td><td>{product.name}</td><td>{product.baseUnit}</td><td>{money(product.defaultSalePrice)}</td><td>{product.tracksInventory ? "انبارگردانی‌شونده" : "خدماتی"}</td><td>{product.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
+          <div className="mg-server-table-wrap"><table><thead><tr><th>کد کالا</th><th>نام</th><th>واحد</th><th>قیمت پیش‌فرض</th><th>موجودی شعبه</th><th>میانگین بهای واحد</th><th>ارزش موجودی</th><th>نوع موجودی</th><th>وضعیت</th></tr></thead>
+            <tbody>{products.map(product => <tr key={product.id}><td>{product.sku}</td><td>{product.name}</td><td>{product.baseUnit}</td><td>{money(product.defaultSalePrice)}</td><td>{product.tracksInventory ? count(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.quantityOnHand || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.averageUnitCost || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.inventoryValue || 0) : "—"}</td><td>{product.tracksInventory ? "انبارگردانی‌شونده" : "خدماتی"}</td><td>{product.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
           </table>{!products.length && <div className="mg-server-empty">هنوز کالایی ثبت نشده است.</div>}</div>
         </section>}
 
@@ -488,6 +508,12 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد حساب</th><th>عنوان</th><th>نوع حساب</th><th>وضعیت</th></tr></thead>
             <tbody>{accounts.map(account => <tr key={account.id}><td>{account.code}</td><td>{account.name}</td><td>{accountTypeName[account.type] || account.type}</td><td>{account.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
           </table>{!accounts.length && <div className="mg-server-empty">حسابی ثبت نشده است. مدیر کسب‌وکار می‌تواند سرفصل‌های پایه را ایجاد کند.</div>}</div>
+          {canViewAccountingReports && trialBalance && <div className="mg-server-trial-balance">
+            <div className="mg-server-panel-head"><div><h3>تراز آزمایشی</h3><p>{trialBalance.isBalanced ? "جمع بدهکار و بستانکار برابر است." : "اختلاف در تراز آزمایشی وجود دارد."}</p></div><span className={trialBalance.isBalanced ? "mg-balance-ok" : "mg-balance-warning"}>{trialBalance.isBalanced ? "متوازن" : "نامتوازن"}</span></div>
+            <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>حساب</th><th>بدهکار</th><th>بستانکار</th><th>مانده بدهکار</th><th>مانده بستانکار</th></tr></thead><tbody>
+              {(trialBalance.accounts || []).map(account => <tr key={account.id}><td>{account.code}</td><td>{account.name}</td><td>{money(account.debit)}</td><td>{money(account.credit)}</td><td>{money(account.netDebit)}</td><td>{money(account.netCredit)}</td></tr>)}
+            </tbody><tfoot><tr><th colSpan="2">جمع کل</th><th>{money(trialBalance.totalDebit)}</th><th>{money(trialBalance.totalCredit)}</th><th colSpan="2"></th></tr></tfoot></table></div>
+          </div>}
         </section>}
 
         {page === "cafe" && <section className="mg-server-panel">
