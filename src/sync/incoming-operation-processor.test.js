@@ -21,7 +21,7 @@ test("applies eligible incoming operations through the atomic adapter contract",
     sequence: 1, schemaVersion: 1, operationId: "op-1", operationType: "customer.profile.updated",
     payloadJson: JSON.stringify({ name: "MG" })
   }]);
-  const result = await processor.processBatch("tenant-1");
+  const result = await processor.processBatch("tenant-1", 100, null, true);
   assert.equal(result.applied, 1);
   assert.equal(result.processed, 1);
   assert.equal(result.blockedByConflict, false);
@@ -33,7 +33,7 @@ test("records sensitive operations as conflicts without applying them", async ()
     sequence: 2, schemaVersion: 1, operationId: "op-2", operationType: "accounting.entry.posted",
     payloadJson: JSON.stringify({ amount: 100 })
   }]);
-  const result = await processor.processBatch("tenant-1");
+  const result = await processor.processBatch("tenant-1", 100, null, true);
   assert.equal(result.applied, 0);
   assert.equal(result.conflicts.length, 1);
   assert.deepEqual(calls, [["conflict", 2]]);
@@ -59,7 +59,7 @@ test("stops on adapter failure and does not process later operations", async () 
     adapter,
     classify: () => ({ disposition: "apply", reason: "test" })
   });
-  await assert.rejects(processor.processBatch("tenant-1"), /durable transaction failed/);
+  await assert.rejects(processor.processBatch("tenant-1", 100, null, true), /durable transaction failed/);
   assert.deepEqual(calls, [1]);
 });
 
@@ -88,7 +88,7 @@ test("stops ordered replay at the first unresolved conflict", async () => {
       : { disposition: "apply", reason: "eligible" }
   });
 
-  const result = await processor.processBatch("tenant-1");
+  const result = await processor.processBatch("tenant-1", 100, null, true);
 
   assert.equal(result.applied, 0);
   assert.equal(result.processed, 1);
@@ -112,7 +112,7 @@ test("passes the active branch into the durable inbox query", async () => {
   });
 
   await processor.processBatch("tenant-1", 40, "branch-a");
-  assert.deepEqual(query, ["tenant-1", 40, "branch-a"]);
+  assert.deepEqual(query, ["tenant-1", 40, "branch-a", false]);
 });
 
 test("rejects invalid branch scope before reading the inbox", async () => {
@@ -159,4 +159,22 @@ test("refuses to replay an inbox row from another branch", async () => {
     /outside the active branch/
   );
   assert.equal(applied, false);
+});
+
+
+test("does not query a tenant-wide inbox without explicit manager authority", async () => {
+  let queried = false;
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { queried = true; return []; } },
+    adapter: {
+      async readConflictState() { return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() {}
+    },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  });
+
+  const result = await processor.processBatch("tenant-1");
+  assert.equal(result.received, 0);
+  assert.equal(queried, false);
 });
