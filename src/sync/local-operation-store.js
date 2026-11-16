@@ -36,11 +36,12 @@ export function isIncomingRowVisible(row, branchId, allowTenantWide) {
 }
 
 const DATABASE_NAME = "mg-business-local";
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 const OPERATIONS_STORE = "operations";
 const META_STORE = "metadata";
 const INBOX_STORE = "inbox";
 const CUSTOMERS_STORE = "customers";
+const CONFLICTS_STORE = "conflicts";
 
 let databasePromise;
 
@@ -84,6 +85,13 @@ function openDatabase() {
           customers.createIndex("byTenantCode", ["tenantId", "code"], { unique: true });
         if (!customers.indexNames.contains("byTenantUpdatedAt"))
           customers.createIndex("byTenantUpdatedAt", ["tenantId", "updatedAtUtc"]);
+        let conflicts;
+        if (!database.objectStoreNames.contains(CONFLICTS_STORE))
+          conflicts = database.createObjectStore(CONFLICTS_STORE, { keyPath: ["tenantId", "sequence"] });
+        else
+          conflicts = event.target.transaction.objectStore(CONFLICTS_STORE);
+        if (!conflicts.indexNames.contains("byTenantStatusCreatedAt"))
+          conflicts.createIndex("byTenantStatusCreatedAt", ["tenantId", "status", "createdAtUtc"]);
       };
       request.onsuccess = () => {
         const database = request.result;
@@ -244,7 +252,8 @@ export class LocalOperationStore {
       isActive: true,
       syncStatus: "pending",
       createdAtUtc: now, updatedAtUtc: now,
-      createdByActorId: actorId, originBranchId: branchId
+      createdByActorId: actorId, originBranchId: branchId,
+      originOperationId: operation.operationId, lastOperationId: operation.operationId
     };
     const database = await openDatabase();
     const transaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE], "readwrite");
@@ -279,6 +288,156 @@ export class LocalOperationStore {
     });
     await done;
     return rows;
+  }
+
+  async readConflictState(tenantId, row) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    let payload;
+    try { payload = JSON.parse(row.payloadJson); } catch { return null; }
+    const customerId = typeof payload?.customerId === "string" ? payload.customerId : "";
+    if (!customerId) return null;
+    const database = await openDatabase();
+    const transaction = database.transaction(CUSTOMERS_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const customers = transaction.objectStore(CUSTOMERS_STORE);
+    const byIdRequest = customers.get([tenantId, customerId]);
+    let byCodeRequest = null;
+    if (row.operationType === "customer.profile.created" && typeof payload.code === "string")
+      byCodeRequest = customers.index("byTenantCode").get([tenantId, payload.code.trim().toUpperCase()]);
+    const [byId, byCode] = await Promise.all([
+      requestResult(byIdRequest),
+      byCodeRequest ? requestResult(byCodeRequest) : Promise.resolve(null)
+    ]);
+    await done;
+    const current = byId || byCode;
+    return current ? {
+      id: current.id,
+      version: current.version,
+      originOperationId: current.originOperationId || null,
+      lastOperationId: current.lastOperationId || null
+    } : null;
+  }
+
+  async recordConflict(conflict) {
+    if (!conflict || typeof conflict !== "object" || !conflict.tenantId
+      || !Number.isSafeInteger(conflict.sequence) || conflict.sequence < 1
+      || typeof conflict.operationId !== "string" || !conflict.operationId.trim())
+      throw new TypeError("A valid incoming conflict record is required.");
+    const database = await openDatabase();
+    const transaction = database.transaction(CONFLICTS_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    const conflicts = transaction.objectStore(CONFLICTS_STORE);
+    const key = [conflict.tenantId, conflict.sequence];
+    const request = conflicts.get(key);
+    let integrityError = null;
+    request.onsuccess = () => {
+      const existing = request.result;
+      if (existing && existing.operationId !== conflict.operationId) {
+        integrityError = new Error("A conflict sequence was reused for a different operation.");
+        transaction.abort();
+        return;
+      }
+      conflicts.put({
+        ...conflict,
+        key: undefined,
+        status: "open",
+        createdAtUtc: existing?.createdAtUtc || new Date().toISOString(),
+        updatedAtUtc: new Date().toISOString()
+      });
+    };
+    try { await done; }
+    catch (error) { if (integrityError) throw integrityError; throw error; }
+  }
+
+  async applyAndAcknowledge({ tenantId, sequence, operation }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (!Number.isSafeInteger(sequence) || sequence < 1) throw new TypeError("sequence is invalid.");
+    if (!operation || typeof operation !== "object" || !operation.payload)
+      throw new TypeError("A validated incoming operation is required.");
+    const payload = operation.payload;
+    if (!["customer.profile.created", "customer.profile.updated", "customer.contact.updated"].includes(operation.operationType))
+      throw new Error("No local projection handler is registered for " + operation.operationType + ".");
+    if (typeof payload.customerId !== "string" || !payload.customerId.trim())
+      throw new TypeError("Customer command requires a customerId.");
+
+    const isCreate = operation.operationType === "customer.profile.created";
+    if (isCreate && payload.baseVersion !== 0)
+      throw new TypeError("Customer creation requires baseVersion 0.");
+    const database = await openDatabase();
+    const transaction = database.transaction([INBOX_STORE, CUSTOMERS_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    const inboxStore = transaction.objectStore(INBOX_STORE);
+    const customerStore = transaction.objectStore(CUSTOMERS_STORE);
+    const inboxRequest = inboxStore.get([tenantId, sequence]);
+    const customerRequest = customerStore.get([tenantId, payload.customerId]);
+    let inboxRow;
+    let existingCustomer;
+    let inboxReady = false;
+    let customerReady = false;
+    let integrityError = null;
+    const commit = () => {
+      if (!inboxReady || !customerReady) return;
+      if (!inboxRow) {
+        integrityError = new Error("Incoming inbox row disappeared before projection commit.");
+        transaction.abort();
+        return;
+      }
+      const now = new Date().toISOString();
+      if (isCreate) {
+        if (existingCustomer && existingCustomer.originOperationId !== operation.operationId) {
+          integrityError = new Error("Customer ID already exists under a different create operation.");
+          transaction.abort();
+          return;
+        }
+        if (!existingCustomer) {
+          const normalized = normalizeLocalCustomer(payload);
+          customerStore.add({
+            tenantId, id: payload.customerId, ...normalized,
+            version: 1, isActive: true, syncStatus: "synced",
+            createdAtUtc: operation.occurredAtUtc || now,
+            updatedAtUtc: now,
+            createdByActorId: operation.actorId || null,
+            originBranchId: operation.branchId || null,
+            originOperationId: operation.operationId,
+            lastOperationId: operation.operationId,
+            serverSequence: sequence
+          });
+        }
+      } else {
+        if (!existingCustomer || existingCustomer.version !== payload.baseVersion) {
+          integrityError = new Error("Customer version changed before the incoming update could be committed.");
+          transaction.abort();
+          return;
+        }
+        const fieldValue = field => Object.prototype.hasOwnProperty.call(payload, field)
+          ? payload[field] : existingCustomer[field];
+        const normalized = normalizeLocalCustomer({
+          code: existingCustomer.code,
+          name: fieldValue("name"),
+          phone: fieldValue("phone"),
+          email: fieldValue("email"),
+          address: fieldValue("address"),
+          notes: fieldValue("notes")
+        });
+        Object.assign(existingCustomer, normalized, {
+          version: existingCustomer.version + 1,
+          syncStatus: "synced",
+          updatedAtUtc: now,
+          lastOperationId: operation.operationId,
+          serverSequence: sequence
+        });
+        customerStore.put(existingCustomer);
+      }
+      inboxRow.applied = true;
+      inboxRow.appliedAtUtc = now;
+      inboxStore.put(inboxRow);
+    };
+    inboxRequest.onsuccess = () => { inboxRow = inboxRequest.result; inboxReady = true; commit(); };
+    customerRequest.onsuccess = () => { existingCustomer = customerRequest.result; customerReady = true; commit(); };
+    try { await done; }
+    catch (error) { if (integrityError) throw integrityError; throw error; }
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("mg-customer-sync-updated"));
   }
 
   async getPending(tenantId, limit = 100, branchId = null, allowTenantWide = false, deviceId) {
