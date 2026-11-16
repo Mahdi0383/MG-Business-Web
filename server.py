@@ -115,6 +115,17 @@ CREATE TABLE IF NOT EXISTS customers(
  UNIQUE(tenant_id,phone)
 );
 CREATE INDEX IF NOT EXISTS idx_customers_tenant_name ON customers(tenant_id,full_name);
+CREATE TABLE IF NOT EXISTS customer_ledger(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, customer_id TEXT NOT NULL,
+ created_by TEXT NOT NULL REFERENCES users(id), source_type TEXT NOT NULL,
+ source_id TEXT NOT NULL, debit INTEGER NOT NULL DEFAULT 0 CHECK(debit>=0),
+ credit INTEGER NOT NULL DEFAULT 0 CHECK(credit>=0),
+ note TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+ CHECK((debit>0 AND credit=0) OR (credit>0 AND debit=0)),
+ UNIQUE(tenant_id,source_type,source_id),
+ FOREIGN KEY(customer_id) REFERENCES customers(id)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_ledger_customer_date ON customer_ledger(tenant_id,customer_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS orders(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  order_number TEXT NOT NULL, customer_id TEXT, created_by TEXT NOT NULL REFERENCES users(id),
@@ -535,9 +546,20 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
-                rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
-                    FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
+                rows = db.execute("""SELECT c.id,c.full_name AS fullName,c.phone,c.email,c.notes,
+                    c.created_at AS createdAt,COALESCE(SUM(l.debit-l.credit),0) AS balance
+                    FROM customers c LEFT JOIN customer_ledger l ON l.customer_id=c.id AND l.tenant_id=c.tenant_id
+                    WHERE c.tenant_id=? GROUP BY c.id ORDER BY c.full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path.startswith("/api/customers/") and path.endswith("/ledger"):
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
+                customer_id = path.split("/")[-2]
+                rows = db.execute("""SELECT id,source_type AS sourceType,source_id AS sourceId,
+                    debit,credit,note,created_at AS createdAt FROM customer_ledger
+                    WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 1000""",
+                    (user["tenant_id"],customer_id)).fetchall()
+                return self.send_json(200, {"items":[dict(row) for row in rows]})
             if path == "/api/orders":
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
