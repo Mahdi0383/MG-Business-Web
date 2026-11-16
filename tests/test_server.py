@@ -186,6 +186,11 @@ class ApiIntegrationTests(unittest.TestCase):
             "sellPrice": 90000, "costPrice": 30000
         }, token)
         self.assertEqual(status, 409)
+        status, duplicate_product_id = self.request("POST", "/api/products", {
+            "id":"product-1","name":"Duplicate product ID","sku":"ESP-02",
+            "sellPrice":100000,"costPrice":40000
+        }, token)
+        self.assertEqual(status,409)
 
         status, result = self.request("POST", "/api/inventory/movements", {
             "id": "move-in-1", "productId": "product-1", "movementType": "purchase",
@@ -422,6 +427,10 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,201)
         status, duplicate_supplier = self.request("POST", "/api/suppliers", {
             "id":"supplier-duplicate","name":"Test Dairy"
+        }, token)
+        self.assertEqual(status,409)
+        status, duplicate_supplier_id = self.request("POST", "/api/suppliers", {
+            "id":"supplier-1","name":"Second Supplier"
         }, token)
         self.assertEqual(status,409)
         status, result = self.request("POST", "/api/purchase-invoices", {
