@@ -48,6 +48,8 @@ if 'if path.startswith("/api/gamenet/devices/")' not in post_handler:
     raise SystemExit("game device updates must be routed through POST")
 if 'if path == "/api/suppliers":' not in server or 'if path == "/api/purchase-invoices":' not in server or 'path.endswith("/payments")' not in server:
     raise SystemExit("supplier and purchase invoice workflows are missing")
+if any(name not in server for name in ("purchase_invoice_items","supplier_payments","suppliers")):
+    raise SystemExit("purchase records must be included in backup support")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
