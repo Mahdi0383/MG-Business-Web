@@ -1,5 +1,8 @@
+using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace MG.Business.Domain.Tests;
 
@@ -35,11 +38,11 @@ public sealed class ApiHealthEndpointTests
         var connectionString = $"Data Source={databasePath}";
 
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-            builder.ConfigureAppConfiguration((_, configuration) =>
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Database:Provider"] = "Sqlite",
-                    ["ConnectionStrings:Business"] = connectionString
-                })));
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<DbContextOptions<BusinessDbContext>>();
+                services.RemoveAll<BusinessDbContext>();
+                services.AddDbContext<BusinessDbContext>(options => options.UseSqlite(connectionString));
+            }));
     }
 }
