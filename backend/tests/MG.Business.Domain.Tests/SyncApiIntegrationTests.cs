@@ -549,15 +549,34 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Forbidden, forbiddenOtherBranchPush.StatusCode);
 
-        staff.DefaultRequestHeaders.Remove("X-MG-Branch");
-        var forbiddenUnselectedBranchPush = await staff.PostAsJsonAsync("/api/sync/operations", new
+        var unassignedStaffEmail = $"branch-sync-unassigned-{Guid.NewGuid():N}@mg.test";
+        using var unassignedStaff = await RegisterAndLoginAsync(factory, unassignedStaffEmail);
+        var unassignedMembership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = unassignedStaffEmail,
+            role = 3,
+            branchId = (Guid?)null
+        });
+        Assert.Equal(HttpStatusCode.Created, unassignedMembership.StatusCode);
+        unassignedStaff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        var unassignedDeviceId = Guid.NewGuid();
+        var unassignedHeartbeat = await unassignedStaff.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = unassignedDeviceId,
+            deviceName = "Unassigned Staff Device",
+            platform = "Test",
+            clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, unassignedHeartbeat.StatusCode);
+
+        var forbiddenUnselectedBranchPush = await unassignedStaff.PostAsJsonAsync("/api/sync/operations", new
         {
             operations = new[]
             {
                 new
                 {
                     operationId = Guid.NewGuid(),
-                    deviceId = staffDeviceId,
+                    deviceId = unassignedDeviceId,
                     branchId = secondary.Id,
                     operationType = "test.forbidden-unselected-branch",
                     schemaVersion = 1,
