@@ -318,6 +318,8 @@ public static class SyncEndpoints
                     ["operations"] = ["Null operation entries are not allowed."]
                 });
 
+            await using var transaction = await db.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, cancellationToken);
             var requireAuthorityLeases = configuration.GetValue<bool>("SyncSecurity:RequireAuthorityLeases");
             if (!requireAuthorityLeases && request.Operations.Any(item => item.AuthorityEpoch != 0))
                 return Results.Conflict(new
@@ -482,8 +484,6 @@ public static class SyncEndpoints
                 && prepared.Any(item => item.Request.BranchId is null))
                 return Results.Forbid();
 
-            await using var transaction = await db.Database.BeginTransactionAsync(
-                System.Data.IsolationLevel.Serializable, cancellationToken);
             var operationIds = prepared.Select(x => x.Request.OperationId).ToArray();
             var existing = await db.SyncOperations.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
