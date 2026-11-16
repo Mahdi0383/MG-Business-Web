@@ -80,6 +80,8 @@ public static class BranchEndpoints
             var branch = await db.Branches.SingleOrDefaultAsync(x =>
                 x.TenantId == tenant.TenantId && x.Id == branchId, cancellationToken);
             if (branch is null) return Results.NotFound();
+            if (branch.IsActive == request.IsActive)
+                return Results.Ok(ToResponse(branch));
 
             if (!request.IsActive)
             {
