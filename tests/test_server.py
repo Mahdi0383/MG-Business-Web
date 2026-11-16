@@ -370,6 +370,19 @@ class ApiIntegrationTests(unittest.TestCase):
         altered["tenant"]["id"] = "different-workspace"
         status, result = self.request("POST", "/api/backup/restore", altered, token)
         self.assertEqual(status, 400)
+        broken = json.loads(json.dumps(snapshot))
+        broken["tables"]["order_items"].append({
+            "id": "broken-backup-item", "tenant_id": broken["tenant"]["id"],
+            "order_id": "missing-order", "product_id": "missing-product",
+            "product_name": "Broken", "quantity": 1, "unit_price": 1,
+            "unit_cost": 0, "line_total": 1
+        })
+        status, result = self.request("POST", "/api/backup/restore", broken, token)
+        self.assertEqual(status, 409)
+        # A failed restore must leave the pre-restore workspace intact.
+        status, result = self.request("GET", "/api/gamenet/sessions", token=token)
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(len(result["items"]), 2)
         status, result = self.request("POST", "/api/backup/restore", snapshot, token)
         self.assertEqual(status, 200)
         self.assertGreater(result["restoredRows"], 0)
