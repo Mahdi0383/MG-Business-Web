@@ -303,14 +303,35 @@ export class LocalOperationStore {
     return operations.length;
   }
 
-  async getInboxCount(tenantId) {
+  async getInboxCount(tenantId, branchId = null) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required.");
     const database = await openDatabase();
     const transaction = database.transaction(INBOX_STORE, "readonly");
     const done = transactionDone(transaction);
-    const count = await requestResult(
-      transaction.objectStore(INBOX_STORE).index("byTenantApplied")
-        .count(IDBKeyRange.only([tenantId, false]))
-    );
+    const index = transaction.objectStore(INBOX_STORE).index("byTenantApplied");
+
+    if (branchId === null) {
+      const count = await requestResult(index.count(IDBKeyRange.only([tenantId, false])));
+      await done;
+      return count;
+    }
+
+    const count = await new Promise((resolve, reject) => {
+      let matching = 0;
+      const request = index.openCursor(IDBKeyRange.only([tenantId, false]));
+      request.onerror = () => reject(request.error || new Error("Could not count incoming sync operations."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(matching);
+          return;
+        }
+        if (cursor.value.branchId == null || cursor.value.branchId === branchId)
+          matching += 1;
+        cursor.continue();
+      };
+    });
     await done;
     return count;
   }
