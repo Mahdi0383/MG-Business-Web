@@ -6,14 +6,15 @@ A release is blocked until every mandatory gate below has objective evidence att
 ## Current validated baseline
 
 - [x] Frontend CI (tests and production build) passes on the current development head.
-- [x] Backend SQLite CI passes on the current development head.
-- [x] API CI passes on the current development head.
+- [x] Backend SQLite build, model-snapshot verification and integration/domain tests pass on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` (run `43958619643`).
+- [ ] PostgreSQL API CI for code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` is still running; the preceding head passed PostgreSQL migration application.
 - [x] Sales receipt creation and journal posting are transactional.
 - [x] Partial and full customer-balance settlement API exists.
 - [x] Payment history is tenant/branch scoped.
 - [x] Payment collection persists idempotency keys and request fingerprints; exact retries replay the original receipt and changed payloads are rejected.
 - [x] Game-session closure replays the committed invoice after a lost response and rejects changed settlement payloads.
 - [x] Inventory movement validates the active stock-tracked product and stock ledger inside the serializable write transaction.
+- [x] Inventory stock movement supports optional `Idempotency-Key` replay protection with a persisted request fingerprint, tenant/branch unique index and exact-retry / changed-payload integration tests; making the key mandatory and wiring it into every client remains outstanding.
 - [x] Public ordering rejects ambiguous multi-tenant routing.
 - [x] Sync journal validates payload integrity, actor scope, idempotency envelopes and monotonic cursors.
 - [x] PWA shell does not cache authentication, API or synchronization traffic.
