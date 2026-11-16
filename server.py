@@ -522,15 +522,18 @@ class Handler(SimpleHTTPRequestHandler):
                 if customer_id and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone():
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
-                products, subtotal = {}, 0
+                products, subtotal, cogs_total = {}, 0, 0
                 for product_id, quantity in normalized.items():
                     product = db.execute("SELECT id,name,sell_price,cost_price FROM products WHERE id=? AND tenant_id=? AND active=1",
                                           (product_id,user["tenant_id"])).fetchone()
                     if not product:
                         db.rollback()
                         return self.send_json(404, {"error": "یکی از کالاهای سفارش پیدا نشد."})
-                    stock = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE tenant_id=? AND product_id=?",
-                                       (user["tenant_id"],product_id)).fetchone()[0]
+                    stock_row = db.execute("""SELECT COALESCE(SUM(quantity_delta),0) AS quantity,
+                        COALESCE(SUM(quantity_delta*unit_cost),0) AS stock_value
+                        FROM inventory_movements WHERE tenant_id=? AND product_id=?""",
+                        (user["tenant_id"],product_id)).fetchone()
+                    stock, stock_value = stock_row["quantity"], stock_row["stock_value"]
                     if stock < quantity:
                         db.rollback()
                         return self.send_json(409, {"error": "موجودی کالای %s کافی نیست؛ موجودی: %s" % (product["name"],stock)})
@@ -538,8 +541,14 @@ class Handler(SimpleHTTPRequestHandler):
                     if line_total > 9007199254740991 or subtotal + line_total > 9007199254740991:
                         db.rollback()
                         return self.send_json(400, {"error": "مبلغ سفارش بیش از حد مجاز است."})
+                    average_cost = max(0, stock_value // stock) if stock else product["cost_price"]
+                    line_cost = average_cost * quantity
+                    if line_cost > 9007199254740991 or cogs_total + line_cost > 9007199254740991:
+                        db.rollback()
+                        return self.send_json(400, {"error": "بهای تمام‌شده سفارش بیش از حد مجاز است."})
                     subtotal += line_total
-                    products[product_id] = (product,quantity,line_total)
+                    cogs_total += line_cost
+                    products[product_id] = (product,quantity,line_total,average_cost)
                 if discount >= subtotal:
                     db.rollback()
                     return self.send_json(400, {"error": "تخفیف باید از مبلغ سفارش کمتر باشد."})
@@ -551,11 +560,12 @@ class Handler(SimpleHTTPRequestHandler):
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
                     VALUES(?,?,?,?,?,'paid',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
-                for product_id,(product,quantity,line_total) in products.items():
+                for product_id,(product,quantity,line_total,average_cost) in products.items():
                     db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total)
-                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,product["sell_price"],product["cost_price"],line_total))
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,product["sell_price"],average_cost,line_total))
                     db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
-                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],product_id,user["id"],"sale",-quantity,product["cost_price"],"سفارش "+order_number,now))
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],product_id,user["id"],"sale",-quantity,average_cost,"سفارش "+order_number,now))
+                post_order_cogs_journal(db,user["tenant_id"],user["id"],order_id,cogs_total)
                 tx_id = "order-"+order_id
                 title = "فروش سفارش "+order_number
                 occurred_at = time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now))
