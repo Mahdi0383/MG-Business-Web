@@ -363,10 +363,11 @@ test("commits customer edits with their outbox command and advances version only
   const deviceId = await store.getDeviceId(actorId);
   const updated = await store.updateCustomer({
     tenantId, branchId, actorId, customerId: created.id,
-    customer: { name: "After", phone: "09121111111", email: "after@example.com", address: "New", notes: "Updated" }
+    customer: { code: "C-EDIT-CHANGED", name: "After", phone: "09121111111", email: "after@example.com", address: "New", notes: "Updated" }
   });
 
   assert.equal(updated.name, "After");
+  assert.equal(updated.code, "C-EDIT-1");
   assert.equal(updated.version, 1);
   assert.equal(updated.syncStatus, "pending");
   const pending = await store.getPending(tenantId, 100, branchId, false, deviceId);
