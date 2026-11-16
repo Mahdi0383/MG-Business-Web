@@ -156,3 +156,6 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Added an integration test proving a Viewer can enroll a device but cannot push a customer creation command.
 - The role check is applied to new commands; exact retries remain idempotent and do not repeat business effects.
 
+- Additional verification added for customer updates: missing/zero baseVersion is rejected, changed payload reuse under an existing operation ID is rejected, and a multi-operation batch containing a stale customer version rolls back earlier customer mutations and journal writes.
+- Customer create/update sync commands now enforce the same Owner/Manager/Cashier write-role boundary as the online customer API.
+
