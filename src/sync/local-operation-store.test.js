@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LocalOperationStore, isIncomingRowVisible } from "./local-operation-store.js";
+import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible } from "./local-operation-store.js";
 
 
 
@@ -251,4 +251,20 @@ test("incoming inbox visibility is restricted to the selected branch unless mana
   assert.equal(isIncomingRowVisible(otherBranchRow, "branch-a", true), false);
   assert.equal(isIncomingRowVisible(tenantWideRow, null, false), false);
   assert.equal(isIncomingRowVisible(tenantWideRow, null, true), true);
+});
+
+
+test("pending outbox visibility matches both device and branch authority", () => {
+  const selected = { deviceId: "device-a", branchId: "branch-a" };
+  const otherDevice = { deviceId: "device-b", branchId: "branch-a" };
+  const otherBranch = { deviceId: "device-a", branchId: "branch-b" };
+  const tenantWide = { deviceId: "device-a", branchId: null };
+
+  assert.equal(isPendingOperationVisible(selected, "branch-a", false, "device-a"), true);
+  assert.equal(isPendingOperationVisible(otherDevice, "branch-a", true, "device-a"), false);
+  assert.equal(isPendingOperationVisible(otherBranch, "branch-a", true, "device-a"), false);
+  assert.equal(isPendingOperationVisible(tenantWide, "branch-a", false, "device-a"), false);
+  assert.equal(isPendingOperationVisible(tenantWide, "branch-a", true, "device-a"), true);
+  assert.equal(isPendingOperationVisible(tenantWide, null, true, "device-a"), true);
+  assert.equal(isPendingOperationVisible(tenantWide, null, false, "device-a"), false);
 });
