@@ -7,6 +7,17 @@ export function isPendingOperationVisible(operation, branchId, allowTenantWide, 
   return operation.branchId === branchId || (allowTenantWide && operation.branchId == null);
 }
 
+export function isSameIncomingEnvelope(existing, incoming) {
+  if (!existing || typeof existing !== "object" || Array.isArray(existing)
+    || !incoming || typeof incoming !== "object" || Array.isArray(incoming)) return false;
+  const immutableFields = [
+    "tenantId", "sequence", "operationId", "actorId", "deviceId", "branchId",
+    "operationType", "schemaVersion", "authorityEpoch", "occurredAtUtc",
+    "receivedAtUtc", "payloadJson", "payloadSha256"
+  ];
+  return immutableFields.every(field => existing[field] === incoming[field]);
+}
+
 export function isIncomingRowVisible(row, branchId, allowTenantWide) {
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
   if (typeof allowTenantWide !== "boolean") return false;
@@ -326,11 +337,7 @@ export class LocalOperationStore {
           if (existing) {
             // A tenant-wide operation can be encountered from more than one branch
             // cursor. Preserve its state only when the immutable envelope is identical.
-            if (existing.operationId !== operation.operationId
-              || existing.payloadSha256 !== operation.payloadSha256
-              || existing.branchId !== operation.branchId
-              || existing.operationType !== operation.operationType
-              || existing.schemaVersion !== operation.schemaVersion) {
+            if (!isSameIncomingEnvelope(existing, { ...operation, tenantId })) {
               integrityConflict = new Error("A journal sequence was reused with a different incoming operation envelope.");
               transaction.abort();
             }
