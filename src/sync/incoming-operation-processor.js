@@ -7,9 +7,12 @@
  */
 export class IncomingOperationProcessor {
   constructor({ store, adapter, classify }) {
-    if (!store || !adapter || typeof adapter.applyAndAcknowledge !== "function" ||
-        typeof classify !== "function") {
-      throw new TypeError("store, transactional adapter and classifier are required.");
+    if (!store || typeof store.getUnappliedIncoming !== "function" || !adapter
+      || typeof adapter.readConflictState !== "function"
+      || typeof adapter.recordConflict !== "function"
+      || typeof adapter.applyAndAcknowledge !== "function"
+      || typeof classify !== "function") {
+      throw new TypeError("store, complete transactional adapter and classifier are required.");
     }
     this.store = store;
     this.adapter = adapter;
@@ -34,10 +37,12 @@ export class IncomingOperationProcessor {
       if (branchId !== null && row.branchId != null && row.branchId !== branchId)
         throw new Error("Incoming inbox returned an operation outside the active branch.");
       if (!Number.isSafeInteger(row.sequence) || row.sequence <= previousSequence
-        || typeof row.operationId !== "string" || !row.operationId
-        || typeof row.operationType !== "string" || !row.operationType
+        || typeof row.operationId !== "string" || !row.operationId.trim()
+        || typeof row.operationType !== "string" || !row.operationType.trim()
+        || (row.branchId != null && (typeof row.branchId !== "string" || !row.branchId.trim()))
         || !Number.isInteger(row.schemaVersion) || row.schemaVersion < 1
-        || typeof row.payloadJson !== "string")
+        || typeof row.payloadJson !== "string"
+        || new TextEncoder().encode(row.payloadJson).byteLength > 64 * 1024)
         throw new TypeError("Incoming inbox contains an invalid or non-monotonic operation envelope.");
       previousSequence = row.sequence;
 
@@ -52,6 +57,10 @@ export class IncomingOperationProcessor {
 
       const currentState = await this.adapter.readConflictState(tenantId, row);
       const decision = this.classify({ ...row, payload }, currentState);
+      if (!decision || typeof decision !== "object" || Array.isArray(decision)
+        || !["apply", "conflict", "manual-review"].includes(decision.disposition)
+        || typeof decision.reason !== "string" || !decision.reason.trim())
+        throw new TypeError("Incoming operation classifier returned an invalid decision.");
 
       if (decision.disposition !== "apply") {
         await this.adapter.recordConflict({
