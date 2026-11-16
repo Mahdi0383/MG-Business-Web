@@ -606,21 +606,38 @@ public sealed class SalesApiIntegrationTests
         Assert.Equal(40m, first!.PaidAmount);
         Assert.Equal(60m, first.BalanceDue);
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-concurrent-10");
+        var concurrentRequests = Enumerable.Range(0, 2).Select(_ =>
+            client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+            {
+                amount = 10m, paymentMethod = PaymentMethod.Cash,
+                paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+                paymentReference = "PAY-CONCURRENT"
+            })).ToArray();
+        var concurrentResponses = await Task.WhenAll(concurrentRequests);
+        Assert.All(concurrentResponses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        var concurrentResults = await Task.WhenAll(concurrentResponses.Select(response =>
+            response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()));
+        Assert.Equal(concurrentResults[0].GetProperty("paymentId").GetGuid(),
+            concurrentResults[1].GetProperty("paymentId").GetGuid());
+        Assert.Single(concurrentResults.Select(result => result.GetProperty("paymentId").GetGuid()).Distinct());
+
         using var overpayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
-            amount = 61m, paymentMethod = PaymentMethod.Cash,
+            amount = 51m, paymentMethod = PaymentMethod.Cash,
             paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
-            paymentReference = "PAY-61"
+            paymentReference = "PAY-51"
         });
         Assert.Equal(HttpStatusCode.Conflict, overpayment.StatusCode);
 
         client.DefaultRequestHeaders.Remove("Idempotency-Key");
-        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-final-60");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-final-50");
         var finalPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
-            amount = 60m, paymentMethod = PaymentMethod.Card,
+            amount = 50m, paymentMethod = PaymentMethod.Card,
             paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
-            paymentReference = "PAY-60"
+            paymentReference = "PAY-50"
         });
         Assert.Equal(HttpStatusCode.OK, finalPayment.StatusCode);
         var final = await finalPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
@@ -634,10 +651,10 @@ public sealed class SalesApiIntegrationTests
 
         var paymentHistory = await client.GetFromJsonAsync<SalesPaymentResponse[]>($"/api/sales/orders/{sale.Id}/payments");
         Assert.NotNull(paymentHistory);
-        Assert.Equal(2, paymentHistory!.Length);
-        Assert.Equal(new[] { 40m, 60m }, paymentHistory.Select(x => x.Amount).ToArray());
-        Assert.Equal(new[] { "Cash", "Card" }, paymentHistory.Select(x => x.Method).ToArray());
-        Assert.Equal(new[] { "PAY-40", "PAY-60" }, paymentHistory.Select(x => x.Reference).ToArray());
+        Assert.Equal(3, paymentHistory!.Length);
+        Assert.Equal(new[] { 40m, 10m, 50m }, paymentHistory.Select(x => x.Amount).ToArray());
+        Assert.Equal(new[] { "Cash", "Cash", "Card" }, paymentHistory.Select(x => x.Method).ToArray());
+        Assert.Equal(new[] { "PAY-40", "PAY-CONCURRENT", "PAY-50" }, paymentHistory.Select(x => x.Reference).ToArray());
     }
 
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
