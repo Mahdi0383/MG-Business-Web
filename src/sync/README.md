@@ -2,7 +2,7 @@
 
 The browser client now has a durable IndexedDB operation store, a push agent and a production service worker that caches the application shell and same-origin static assets. API/auth/sync routes are explicitly excluded from caching.
 
-- A stable browser device ID is created and persisted per authenticated actor in IndexedDB, so switching accounts in the same browser cannot reuse a device registration owned by another user.
+- A stable browser device ID is created and persisted per authenticated actor in IndexedDB, so switching accounts in the same browser cannot reuse a device registration owned by another user. Offline enqueue also requires that actor identity and stamps the corresponding actor-owned device ID into the durable operation envelope; it never creates an anonymous device registration.
 - Business commands can be explicitly appended with tenant/branch, actor-independent device identity, schema version, authority epoch, payload JSON and SHA-256 hash.
 - The client currently permits only authority epoch zero. Non-zero epochs are rejected locally and by the API until a signed lease verifier and fencing authority are deployed; a client cannot promote itself by choosing an epoch.
 - Pending operations survive page reloads and browser restarts.
