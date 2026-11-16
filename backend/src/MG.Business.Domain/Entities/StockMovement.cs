@@ -38,4 +38,11 @@ public sealed class StockMovement
     public decimal UnitCost { get; private set; }
     public string? Reference { get; private set; }
     public DateTimeOffset CreatedAtUtc { get; private set; }
+
+    public decimal SignedQuantity => Type switch
+    {
+        StockMovementType.Receipt or StockMovementType.SalesReturn or StockMovementType.AdjustmentIncrease => Quantity,
+        StockMovementType.Issue or StockMovementType.Sale or StockMovementType.PurchaseReturn or StockMovementType.AdjustmentDecrease => -Quantity,
+        _ => throw new InvalidOperationException("Unsupported stock movement type.")
+    };
 }
