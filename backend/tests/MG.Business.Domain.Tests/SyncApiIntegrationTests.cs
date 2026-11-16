@@ -421,7 +421,8 @@ public sealed class SyncApiIntegrationTests
     }
 
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
-    private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);\n    private sealed record BranchCreated(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAtUtc);
+    private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
+    private sealed record BranchCreated(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAtUtc);
     private sealed record SyncPushResponse(SyncAck[] Accepted);
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
