@@ -59,6 +59,8 @@ if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("purchase editor and payment form are missing")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
+if "customerLedgerPanel" not in app or "data-customer-ledger" not in app:
+    raise SystemExit("Customer account statement UI is missing")
 if "reservationForm" not in app or "data-reservation-cancel" not in app:
     raise SystemExit("GameNet reservation management UI is missing")
 if "duplicate" not in server or "mg-business.pending-order" not in app:
