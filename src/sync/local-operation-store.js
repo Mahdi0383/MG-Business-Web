@@ -553,7 +553,7 @@ export class LocalOperationStore {
       || typeof lease.deviceId !== "string" || !lease.deviceId || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
       || typeof lease.signatureBase64 !== "string" || typeof lease.publicKeySpkiBase64 !== "string"
       || !Number.isFinite(Date.parse(lease.expiresAtUtc)) || Date.parse(lease.expiresAtUtc) <= Date.now())
-      throw new TypeError("Only an active authority lease bound to this browser device and scope can be stored.");
+      throw new TypeError("Only an active authority lease for this tenant and branch scope can be stored.");
     const key = `authority-lease:${tenantId}:${branchId || "tenant-wide"}`;
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readwrite");
