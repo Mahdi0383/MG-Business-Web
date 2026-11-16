@@ -152,7 +152,8 @@ public sealed class SyncApiIntegrationTests
     private sealed record SyncPushResponse(SyncAck[] Accepted);
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
-    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, bool IsOnline, string? AlertCode);\n    private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
+    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, bool IsOnline, string? AlertCode);
+    private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
         string OperationType, int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
         DateTimeOffset ReceivedAtUtc, string PayloadJson, string PayloadSha256);
 }
