@@ -24,6 +24,32 @@ The default development configuration uses SQLite. Configure hosted environments
 
 Never commit production credentials, signing keys, or Data Protection key material.
 
+## Run API and PostgreSQL with Docker Compose
+
+From the repository root:
+
+```bash
+cp .env.docker.example .env.docker
+```
+
+Edit `.env.docker` and replace the database password with a long random alphanumeric value. Set `MG_FRONTEND_ORIGIN` to the exact origin serving the frontend (for local Vite this is normally `http://localhost:5173`). Keep `MG_API_BIND_ADDRESS=127.0.0.1` unless a properly secured HTTPS reverse proxy and firewall are configured.
+
+```bash
+docker compose --env-file .env.docker up -d --build
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs -f api
+```
+
+The API listens on the host port configured by `MG_API_PORT` (default 8080). PostgreSQL data and ASP.NET Core Data Protection keys are stored in named Docker volumes. The container runs as a non-root user. PostgreSQL migrations are applied at API startup because `Database__ApplyMigrations=true` is set in Compose.
+
+To stop the services without deleting data:
+
+```bash
+docker compose --env-file .env.docker down
+```
+
+Do not use `docker compose down -v` unless you intentionally want to permanently delete the database and Data Protection keys. This Compose setup is a deployment foundation, not a public internet security boundary: do not expose port 8080 directly to the internet. Put the API behind HTTPS, configure a restrictive firewall, backups, monitoring and secrets management first.
+
 ## Implemented HTTP surface
 
 ### Authentication
