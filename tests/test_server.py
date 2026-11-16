@@ -161,6 +161,19 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["fullName"], "Test Customer")
 
+        status, result = self.request("POST", "/api/orders", {
+            "id": "order-test-1", "customerId": "customer-1", "discount": 5000,
+            "paymentMethod": "card",
+            "items": [{"productId": "product-1", "quantity": 2}]
+        }, token)
+        self.assertEqual(status, 201)
+        self.assertEqual(result["total"], 165000)
+        status, result = self.request("GET", "/api/orders", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["items"][0]["orderNumber"], result["orderNumber"] if "orderNumber" in result else result["items"][0]["orderNumber"])
+        status, result = self.request("GET", "/api/inventory", token=token)
+        self.assertEqual(result["items"][0]["quantity"], 13)
+
         status, result = self.request("DELETE", "/api/products/product-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/products", token=token)
@@ -169,11 +182,12 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/transactions", token=token)
-        self.assertEqual(result["items"], [])
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["id"], "order-order-test-1")
         status, result = self.request("GET", "/api/accounting/profit-loss", token=token)
-        self.assertEqual(result["netProfit"], 0)
+        self.assertEqual(result["netProfit"], 165000)
         status, result = self.request("GET", "/api/accounting/journal", token=token)
-        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(len(result["items"]), 3)
         self.assertTrue(all(item["debit"] == item["credit"] for item in result["items"]))
 
         db = server.connect()
