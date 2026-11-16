@@ -1521,8 +1521,9 @@ class Handler(SimpleHTTPRequestHandler):
         row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         return self.send_json(200, {"token": token, "expiresAt": now + SESSION_SECONDS, "user": public_user(row)})
 
-    def log_error(self, message):
-        print(message, flush=True)
+    def log_error(self, message, *args):
+        rendered = message % args if args else message
+        print(rendered, flush=True)
 
 def main():
     connect().close()
