@@ -20,8 +20,8 @@ public sealed class SyncDeviceCursor
     public bool Advance(Guid actorId, long sequence, DateTimeOffset nowUtc)
     {
         if (actorId == Guid.Empty) throw new ArgumentException("Actor is required.", nameof(actorId));
+        if (actorId != ActorId) throw new UnauthorizedAccessException("A device cursor is bound to its enrolling actor.");
         if (sequence < LastAcknowledgedSequence) return false;
-        ActorId = actorId;
         LastAcknowledgedSequence = sequence;
         UpdatedAtUtc = nowUtc.ToUniversalTime();
         return true;
