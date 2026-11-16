@@ -288,12 +288,24 @@ export class LocalOperationStore {
         transaction.abort();
         return;
       }
+      let integrityConflict = null;
       for (const operation of operations) {
         const existingRequest = inbox.get([tenantId, operation.sequence]);
         existingRequest.onsuccess = () => {
-          // A tenant-wide operation can be encountered from more than one branch
-          // cursor. Preserve its existing applied/conflict state on duplicate pulls.
-          if (existingRequest.result) return;
+          const existing = existingRequest.result;
+          if (existing) {
+            // A tenant-wide operation can be encountered from more than one branch
+            // cursor. Preserve its state only when the immutable envelope is identical.
+            if (existing.operationId !== operation.operationId
+              || existing.payloadSha256 !== operation.payloadSha256
+              || existing.branchId !== operation.branchId
+              || existing.operationType !== operation.operationType
+              || existing.schemaVersion !== operation.schemaVersion) {
+              integrityConflict = new Error("A journal sequence was reused with a different incoming operation envelope.");
+              transaction.abort();
+            }
+            return;
+          }
           inbox.add({
             ...operation,
             tenantId,
@@ -304,9 +316,13 @@ export class LocalOperationStore {
         };
       }
       metadata.put({ key: cursorKey, value: nextSequence });
-    };
-    await done;
-    return operations.length;
+      try {
+        await done;
+      } catch (error) {
+        if (integrityConflict) throw integrityConflict;
+        throw error;
+      }
+      return operations.length;
   }
 
   async getInboxCount(tenantId, branchId = null) {
