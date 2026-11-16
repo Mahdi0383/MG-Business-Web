@@ -152,7 +152,7 @@ test("branch-filtered pull acknowledges the scanned journal cursor", async () =>
     cursor: 1,
     page: { operations: [operation], nextSequence: 5, hasMore: false }
   });
-  const result = await agent.pullIncoming("tenant-1");
+  const result = await agent.pullIncoming("tenant-1", { actorId: "actor-1" });
   assert.equal(result.status, "pulled");
   assert.equal(result.received, 1);
   assert.deepEqual(calls.stored, ["tenant-1", [operation], 5, null]);
@@ -164,7 +164,7 @@ test("branch-filtered pull advances across pages containing only hidden rows", a
     cursor: 4,
     page: { operations: [], nextSequence: 8, hasMore: false }
   });
-  const result = await agent.pullIncoming("tenant-1");
+  const result = await agent.pullIncoming("tenant-1", { actorId: "actor-1" });
   assert.equal(result.status, "pulled");
   assert.equal(result.received, 0);
   assert.deepEqual(calls.stored, ["tenant-1", [], 8, null]);
@@ -187,6 +187,6 @@ test("pull rejects a scan cursor preceding a visible operation", async () => {
       hasMore: false
     }
   });
-  await assert.rejects(agent.pullIncoming("tenant-1"), /precedes the last returned operation/);
+  await assert.rejects(agent.pullIncoming("tenant-1", { actorId: "actor-1" }), /precedes the last returned operation/);
   assert.equal(calls.acknowledged, null);
 });
