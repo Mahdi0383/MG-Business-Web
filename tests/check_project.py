@@ -63,6 +63,8 @@ if "stableRequestId" not in app:
     raise SystemExit("Idempotency keys must remain stable for retryable forms")
 if "offline-card" not in app or "همگام‌سازی آفلاین هنوز فعال نیست" not in app:
     raise SystemExit("Offline writes must be blocked clearly when the API is unavailable")
+if "audit.items" not in app or "/api/audit-log" not in app:
+    raise SystemExit("Audit history UI is missing")
 if "userPasswordForm" not in app or "/password" not in app:
     raise SystemExit("User password reset UI is missing")
 if "customerLedgerPanel" not in app or "data-customer-ledger" not in app:
