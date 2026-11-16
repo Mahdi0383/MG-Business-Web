@@ -139,6 +139,7 @@ export function formatApiError(error) {
 
 
 export function isNetworkUnavailable(error) {
+  if (error instanceof ApiError) return false;
   return error instanceof TypeError
     || (typeof navigator !== "undefined" && navigator.onLine === false);
 }
