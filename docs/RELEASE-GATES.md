@@ -71,3 +71,9 @@ A release is blocked until every mandatory gate below has objective evidence att
 **Current decision: NOT APPROVED for production financial operations.**
 
 Passing CI demonstrates that the current automated test/build gates pass; it does not prove the incomplete controls above. Do not enable live financial/offline multi-node operation until all mandatory blockers are checked and independently verified.
+
+
+### Cryptographic device trust design — 2026-11-17
+
+- Added `docs/architecture/DEVICE-ENROLLMENT-AND-REQUEST-AUTH.md` as a proposed security contract covering one-time enrollment challenges, non-extractable Web Crypto signing keys, credential hashing/rotation/revocation, canonical request signatures, replay protection, and signed authority leases with fencing.
+- This is design documentation only; no enrollment or request-signing code is implemented by this document. Browser UUID identity remains untrusted, and this release gate remains open.
