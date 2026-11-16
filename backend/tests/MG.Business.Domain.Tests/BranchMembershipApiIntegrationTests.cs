@@ -61,6 +61,8 @@ public sealed class BranchMembershipApiIntegrationTests
 
         var disabled = await owner.PatchAsJsonAsync($"/api/branches/{branch.Id}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.OK, disabled.StatusCode);
+        var repeatedDisable = await owner.PatchAsJsonAsync($"/api/branches/{branch.Id}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.OK, repeatedDisable.StatusCode);
         var disableFinalBranch = await owner.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.Conflict, disableFinalBranch.StatusCode);
         staff.DefaultRequestHeaders.Remove("X-MG-Branch");
