@@ -71,7 +71,8 @@ public sealed class DeviceRequestSignatureMiddleware
         var credential = await db.DeviceCredentials.SingleOrDefaultAsync(
             x => x.TenantId == tenantId && x.DeviceId == deviceId, context.RequestAborted);
         if (credential is null || !credential.IsActive || credential.ActorId != actorId
-            || credential.BranchId != tenant.BranchId || credential.KeyVersion != keyVersion)
+            || (credential.BranchId is Guid credentialBranch && credentialBranch != tenant.BranchId)
+            || credential.KeyVersion != keyVersion)
         {
             await Reject(context, StatusCodes.Status401Unauthorized, "DEVICE_CREDENTIAL_INVALID");
             return;
