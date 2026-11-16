@@ -52,6 +52,9 @@ if 'if path == "/api/suppliers":' not in server or 'if path == "/api/purchase-in
     raise SystemExit("supplier and purchase invoice workflows are missing")
 if any(name not in server for name in ("purchase_invoice_items","supplier_payments","suppliers")):
     raise SystemExit("purchase records must be included in backup support")
+app = (root / "app.js").read_text(encoding="utf-8")
+if "purchaseLines" not in app or "supplierPaymentForm" not in app:
+    raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
