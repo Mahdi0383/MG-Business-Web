@@ -25,15 +25,16 @@ A release is blocked until every mandatory gate below has objective evidence att
 ## Mandatory blockers before live financial use
 
 ### Identity and device trust
-- [ ] Replace browser-profile device IDs with cryptographic device enrollment. A detailed WebCrypto P-256 challenge/signature contract and mandatory negative-test matrix is documented in `docs/architecture/offline-first-ha-protocol.md`; implementation and verification are still outstanding.
-- [ ] Bind enrolled device keys to tenant, branch, actor and revocation state.
-- [ ] Add rotation, revocation, recovery and lost-device procedures.
-- [ ] Verify every device command against its enrolled identity and authorization.
+- [x] Replace browser-profile UUID trust with WebCrypto ECDSA P-256 enrollment, single-use challenges and digest-only opaque credentials; browser private keys are non-extractable IndexedDB CryptoKeys.
+- [x] Bind credentials and browser device IDs to tenant, branch and actor scope.
+- [x] Add same-key recovery, proof-of-possession key rotation and authenticated device/lease revocation endpoints.
+- [x] Verify `/api/sync/*` requests (except enrollment lifecycle) against active credential, actor/tenant/branch binding, key version, timestamp, body hash, ECDSA signature and one-time nonce.
+- [ ] Complete independent security review, multi-node nonce replay/race tests and lost-device operational runbook.
 
 ### Authority, failover and split-brain safety
-- [ ] Implement signed authority leases with issuer trust roots.
-- [ ] Enforce lease expiry, monotonic fencing epochs and replay protection.
-- [ ] Prove that an expired or fenced authority cannot commit writes.
+- [x] Implement short-lived ECDSA-signed tenant/branch authority leases with serializable acquisition and a pinned client verification key.
+- [x] Enforce expiry, monotonic fencing epochs, device/branch binding and stale-epoch rejection on sync push when production-required lease mode is enabled.
+- [x] Add backend integration coverage for lease signature verification, competing-device exclusion and fenced push; final PostgreSQL concurrency/race proof remains open.
 - [ ] Implement MG Master / Control Center authority handoff and audited failback.
 - [ ] Run multi-node partition, clock-skew, stale-leader and recovery tests.
 
@@ -101,3 +102,8 @@ Passing CI demonstrates that the current automated test/build gates pass; it doe
 - Device enrollment now persists the browser's non-extractable private key before the server can commit. A repeated proof using that same key and a fresh challenge rotates the one-time credential and key version, allowing recovery after a lost response without exposing the private key.
 - Signed request middleware deletes expired replay nonces for the authenticated tenant/device during normal traffic and records last credential use. The replay store therefore remains bounded for active devices; idle-device records expire from acceptance and are removed on the next request.
 - Integration coverage verifies enrollment response recovery, credential version rotation, replay rejection and request-body tampering. Key revocation/rotation administration, device loss recovery and lease fencing remain separate gates.
+
+
+## Current branch validation
+- Frontend CI passed on intermediate development head `9c337aee8e91ed81e927abbaa312cd432bef699c`.
+- Current branch head at this documentation update: `0bfe5d64880c88fb43b94696b60d557efb9693a6`. Frontend/backend/API CI and PostgreSQL migration validation must all pass on the final candidate before release review.
