@@ -38,6 +38,39 @@ export function classifyIncomingOperation(operation, currentState = null) {
     };
   }
 
+  if (type === "customer.profile.created") {
+    const baseVersion = operation.payload?.baseVersion;
+    if (baseVersion !== 0) {
+      return {
+        disposition: "manual-review",
+        reason: "invalid-create-version-precondition",
+        operationId: operation.operationId ?? null
+      };
+    }
+    if (!currentState) {
+      return {
+        disposition: "apply",
+        reason: "customer-does-not-exist",
+        expectedVersion: 0,
+        operationId: operation.operationId ?? null
+      };
+    }
+    if (currentState.originOperationId === operation.operationId) {
+      return {
+        disposition: "apply",
+        reason: "originating-device-echo",
+        expectedVersion: 0,
+        operationId: operation.operationId ?? null
+      };
+    }
+    return {
+      disposition: "conflict",
+      reason: "customer-already-exists",
+      actualVersion: currentState.version ?? null,
+      operationId: operation.operationId ?? null
+    };
+  }
+
   if (FIELD_MERGE_PREFIXES.some(prefix => type.startsWith(prefix))) {
     const payload = operation.payload && typeof operation.payload === "object"
       ? operation.payload
