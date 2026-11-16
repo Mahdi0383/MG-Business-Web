@@ -557,3 +557,40 @@ test("does not acknowledge an outbound customer update if its local version prec
   assert.equal(customer.syncStatus, "pending");
   assert.equal(customer.version, 7);
 });
+
+test("caches authoritative server customers for offline access without overwriting pending local edits", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-cache-" + crypto.randomUUID();
+  const customerId = crypto.randomUUID();
+
+  await store.cacheServerCustomers(tenantId, [{
+    id: customerId, code: "SERVER-001", name: "Server Original",
+    phone: "09120000000", email: "server@example.com",
+    address: "First", notes: null, isActive: true, version: 5
+  }]);
+  let rows = await store.getCustomers(tenantId);
+  let customer = rows.find(row => row.id === customerId);
+  assert.equal(customer.version, 5);
+  assert.equal(customer.syncStatus, "synced");
+  assert.equal(customer.name, "Server Original");
+
+  await store.updateCustomer({
+    tenantId, branchId, actorId, customerId,
+    customer: { name: "Local Offline Edit" }
+  });
+  await store.cacheServerCustomers(tenantId, [{
+    id: customerId, code: "SERVER-001", name: "Server Newer",
+    phone: "09129999999", email: "new@example.com",
+    address: "Second", notes: "Server refresh", isActive: true, version: 6
+  }]);
+
+  rows = await store.getCustomers(tenantId);
+  customer = rows.find(row => row.id === customerId);
+  assert.equal(customer.version, 5);
+  assert.equal(customer.syncStatus, "pending");
+  assert.equal(customer.name, "Local Offline Edit");
+  const deviceId = await store.getDeviceId(actorId);
+  assert.equal((await store.getPending(tenantId, 10, branchId, false, deviceId)).length, 1);
+});
