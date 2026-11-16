@@ -196,6 +196,11 @@ class ApiIntegrationTests(unittest.TestCase):
             "phone": "+491234567", "email": "test@example.com"
         }, token)
         self.assertEqual(status, 201)
+        status, duplicate_customer = self.request("POST", "/api/customers", {
+            "id":"customer-duplicate","fullName":"Duplicate Customer",
+            "phone":"+491234567"
+        }, token)
+        self.assertEqual(status,409)
         status, result = self.request("GET", "/api/customers", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["fullName"], "Test Customer")
