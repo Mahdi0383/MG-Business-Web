@@ -758,3 +758,25 @@ test("originating device deactivation echo advances inbox without deactivating t
   assert.equal(customer.lastOperationId, operation.operationId);
   assert.equal((await store.getOpenConflicts(tenantId, branchId, false)).length, 0);
 });
+
+
+test("stores and reads only verified, unexpired authority lease epochs by tenant and branch", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = `lease-tenant-${crypto.randomUUID()}`;
+  const branchId = `lease-branch-${crypto.randomUUID()}`;
+  const lease = {
+    tenantId,
+    branchId,
+    epoch: 7,
+    expiresAtUtc: new Date(Date.now() + 120_000).toISOString(),
+    verified: true
+  };
+
+  await store.setAuthorityLease({ tenantId, branchId, lease });
+  assert.equal(await store.getAuthorityEpoch({ tenantId, branchId }), 7);
+  assert.equal(await store.getAuthorityEpoch({ tenantId, branchId: null }), 0);
+  await assert.rejects(
+    store.setAuthorityLease({ tenantId, branchId, lease: { ...lease, verified: false } }),
+    /verified, active authority lease/
+  );
+});
