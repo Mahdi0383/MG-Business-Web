@@ -18,29 +18,17 @@ test("routes financial and inventory operations to manual review", () => {
   }
 });
 
-test("allows a profile operation only when its base version matches", () => {
-  const result = classifyIncomingOperation({
-    operationId: "profile-1",
-    operationType: "customer.profile.updated",
-    schemaVersion: 1,
-    payload: { baseVersion: 8 }
-  }, { version: 8 });
-
-  assert.equal(result.disposition, "apply");
-  assert.equal(result.expectedVersion, 8);
-});
-
-test("detects concurrent profile edits instead of overwriting newer state", () => {
-  const result = classifyIncomingOperation({
-    operationId: "profile-2",
-    operationType: "customer.contact.updated",
-    schemaVersion: 1,
-    payload: { baseVersion: 8 }
-  }, { version: 9 });
-
-  assert.equal(result.disposition, "conflict");
-  assert.equal(result.reason, "concurrent-profile-edit");
-  assert.equal(result.actualVersion, 9);
+test("keeps customer updates in manual review until authoritative update replay is enabled", () => {
+  for (const operationType of ["customer.profile.updated", "customer.contact.updated"]) {
+    const result = classifyIncomingOperation({
+      operationId: "profile-1",
+      operationType,
+      schemaVersion: 1,
+      payload: { baseVersion: 8 }
+    }, { version: 8 });
+    assert.equal(result.disposition, "manual-review");
+    assert.equal(result.reason, "customer-update-command-not-enabled");
+  }
 });
 
 test("fails closed for unknown commands and missing version preconditions", () => {
