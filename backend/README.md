@@ -90,7 +90,7 @@ Health checks:
 ### Device presence and connectivity alerts
 
 - `POST /api/sync/heartbeat` — authenticated tenant device heartbeat; stores device identity, last-seen time, branch, platform and client version.
-- `GET /api/sync/devices` — Owner/Manager-only tenant device inventory. A device is considered online while its last heartbeat is within 90 seconds; stale devices return `DEVICE_HEARTBEAT_MISSED`. The response also reports each device's last acknowledged sequence and estimated pending journal-operation count.
+- `GET /api/sync/devices` — Owner/Manager-only tenant device inventory, including last acknowledged journal sequence. A device is considered online while its last heartbeat is within 90 seconds; stale devices return `DEVICE_HEARTBEAT_MISSED`. The response also reports each device's last acknowledged sequence and estimated pending journal-operation count.
 - The web client sends a heartbeat every 30 seconds while a tenant workspace is open and displays stale-device alerts to Owners/Managers.
 
 This is tenant-API monitoring only. Alerts are currently surfaced by manager polling in the open web workspace; push notifications, background monitoring independent of an open session, relay to MG Master, and customer-central/MG-Master failover alert routing are not implemented yet. Device IDs are browser-profile identifiers and are not cryptographic device enrollment credentials.
