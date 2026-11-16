@@ -97,12 +97,12 @@ python server.py
 
 کلید صادرکننده باید هنگام اجرای سرور نیز تنظیم باشد و نباید داخل مخزن عمومی یا در اختیار مشتری قرار گیرد. کد خروجی را مالک کسب‌وکار در بخش تنظیمات وارد می‌کند. ابزار صدور کد باید فقط در محیط مورد اعتماد اجرا شود.
 
-## اجرای آزمون‌ها
+## بررسی پیش‌نیازهای استقرار\n\nپیش از راه‌اندازی سرویس، تنظیمات محیط را بررسی کنید:\n\n```sh\npython deployment_preflight.py\n```\n\nبرای کنترل سخت‌گیرانه‌تر پیش از استقرار عملیاتی، متغیرهای `MG_ENV=production`، `MG_LICENSE_SECRET` (حداقل ۳۲ نویسه) و `MG_PUBLIC_URL` با نشانی HTTPS معتبر را تنظیم و سپس اجرا کنید:\n\n```sh\nMG_ENV=production python deployment_preflight.py --production\n```\n\nاین ابزار پیکربندی bind، پورت، مسیر پایگاه داده و پشتیبان خارج از web root و سیاست نگهداری پشتیبان را بررسی می‌کند؛ جایگزین TLS واقعی، reverse proxy، فایروال، ممیزی امنیتی یا آزمون نفوذ نیست.\n\n## اجرای آزمون‌ها
 
 برای اجرای بررسی‌های محلی از ریشه مخزن:
 
 ```sh
-python -m py_compile server.py license_tool.py backup_manager.py tests/test_server.py tests/test_backup_manager.py tests/check_project.py
+python -m py_compile server.py license_tool.py backup_manager.py deployment_preflight.py tests/test_server.py tests/test_backup_manager.py tests/check_project.py tests/test_deployment_preflight.py
 python tests/check_project.py
 node --test tests/core.test.js
 python -m unittest discover -s tests -p 'test_*.py' -v
