@@ -1,0 +1,1 @@
+Temporary trigger for generating the EF Core model snapshot. This file will be removed after migration scaffolding.
