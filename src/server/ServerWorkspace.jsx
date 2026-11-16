@@ -473,6 +473,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
       <section className="mg-server-content">
         {error && <div className="mg-server-error" role="alert">{error}</div>}
         {loading && <div className="mg-server-loading">در حال دریافت اطلاعات از سرور...</div>}
+        {disconnectedDevices.length > 0 && <div className="mg-server-device-alert" role="alert"><b>هشدار قطع ارتباط دستگاه‌ها</b><p>{count(disconnectedDevices.length)} دستگاه در ۹۰ ثانیه اخیر heartbeat ارسال نکرده‌اند.</p><ul>{disconnectedDevices.map(device => <li key={device.deviceId}>{device.deviceName} — آخرین ارتباط: {dateTime(device.lastSeenAtUtc)}</li>)}</ul></div>}
 
         {page === "dashboard" && !loading && <>
           <div className="mg-server-stats">
