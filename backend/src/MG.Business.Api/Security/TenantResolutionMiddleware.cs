@@ -41,6 +41,14 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
                     return;
                 }
 
+                var tenantIsActive = await db.Tenants.AsNoTracking()
+                    .AnyAsync(item => item.Id == tenantId && item.IsActive, httpContext.RequestAborted);
+                if (!tenantIsActive)
+                {
+                    httpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return;
+                }
+
                 var membership = await db.TenantMemberships.AsNoTracking()
                     .SingleOrDefaultAsync(item => item.TenantId == tenantId
                         && item.UserId == userId && item.IsActive, httpContext.RequestAborted);
@@ -51,34 +59,34 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
                     return;
                 }
 
-                tenantContext.TenantId = tenantId;
-                tenantContext.Role = membership.Role.ToString();
-
-                if (membership.BranchId.HasValue)
-                {
-                    if (!string.IsNullOrWhiteSpace(branchHeader)
-                        && (!Guid.TryParse(branchHeader, out var requestedBranch)
-                            || requestedBranch != membership.BranchId.Value))
-                    {
-                        httpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
-                        return;
-                    }
-
-                    tenantContext.BranchId = membership.BranchId;
-                }
-                else if (!string.IsNullOrWhiteSpace(branchHeader))
+                Guid? selectedBranchId = membership.BranchId;
+                if (!string.IsNullOrWhiteSpace(branchHeader))
                 {
                     if (!Guid.TryParse(branchHeader, out var requestedBranch)
-                        || !await db.Branches.AsNoTracking().AnyAsync(branch =>
-                            branch.TenantId == tenantId && branch.Id == requestedBranch,
-                            httpContext.RequestAborted))
+                        || (selectedBranchId.HasValue && requestedBranch != selectedBranchId.Value))
                     {
                         httpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
                         return;
                     }
 
-                    tenantContext.BranchId = requestedBranch;
+                    selectedBranchId = requestedBranch;
                 }
+
+                if (selectedBranchId is Guid branchId)
+                {
+                    var branchIsActive = await db.Branches.AsNoTracking().AnyAsync(branch =>
+                        branch.TenantId == tenantId && branch.Id == branchId && branch.IsActive,
+                        httpContext.RequestAborted);
+                    if (!branchIsActive)
+                    {
+                        httpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        return;
+                    }
+                }
+
+                tenantContext.TenantId = tenantId;
+                tenantContext.BranchId = selectedBranchId;
+                tenantContext.Role = membership.Role.ToString();
             }
             else if (!string.IsNullOrWhiteSpace(branchHeader))
             {
