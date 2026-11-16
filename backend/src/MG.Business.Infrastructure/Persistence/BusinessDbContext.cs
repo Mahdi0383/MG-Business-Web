@@ -1,11 +1,15 @@
 using MG.Business.Domain.Entities;
+using MG.Business.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace MG.Business.Infrastructure.Persistence;
 
-public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> options) : DbContext(options)
+public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> options) : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>(options)
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
+    public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
@@ -24,6 +28,24 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
             entity.HasIndex(x => x.Slug).IsUnique();
+        });
+
+        modelBuilder.Entity<ApplicationUser>(entity =>
+        {
+            entity.Property(x => x.DisplayName).HasMaxLength(160);
+            entity.HasIndex(x => x.NormalizedEmail).IsUnique();
+        });
+
+        modelBuilder.Entity<TenantMembership>(entity =>
+        {
+            entity.ToTable("tenant_memberships");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Role).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.UserId }).IsUnique();
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict).IsRequired(false);
         });
 
         modelBuilder.Entity<Branch>(entity =>
