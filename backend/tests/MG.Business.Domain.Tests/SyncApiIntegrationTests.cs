@@ -1324,6 +1324,42 @@ public sealed class SyncApiIntegrationTests
         Assert.Empty(journal!.Operations);
     }
 
+    [Fact]
+    public async Task DeviceHeartbeatRejectsOversizedOrControlCharacterMetadata()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-heartbeat-validation-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Heartbeat Validation Store",
+            slug = $"heartbeat-validation-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var oversized = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = Guid.NewGuid(), deviceName = new string('D', 101), platform = "Web", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, oversized.StatusCode);
+
+        var controlCharacter = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = Guid.NewGuid(), deviceName = "MG\\nBrowser", platform = "Web", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, controlCharacter.StatusCode);
+
+        var valid = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = Guid.NewGuid(), deviceName = "MG Browser", platform = "Web", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
