@@ -77,6 +77,7 @@ export function classifyIncomingOperation(operation, currentState = null) {
     return {
       disposition: "conflict",
       reason: "stale-inventory-base-balance",
+      productId: payload.productId,
       expectedQuantityOnHand: Number(payload.baseQuantityOnHand),
       actualQuantityOnHand: Number(currentState.quantityOnHand),
       expectedInventoryValue: baseValue,
