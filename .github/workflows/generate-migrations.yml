@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - feature/platform-core-foundation
-      - feature/offline-first-ha-architecture
 
 permissions:
   contents: write
