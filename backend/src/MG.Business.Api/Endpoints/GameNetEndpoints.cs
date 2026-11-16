@@ -185,6 +185,18 @@ public static class GameNetEndpoints
                         x.TenantId == tenantId && x.BranchId == branchId && x.Id == existingOrderId, cancellationToken);
                     if (existingOrder is null)
                         return Results.Conflict(new { message = "فاکتور ثبت‌شده برای این جلسه پیدا نشد؛ عملیات به بررسی مدیر نیاز دارد." });
+                    if (request.AmountPaid != existingOrder.PaidAmount)
+                        return Results.Conflict(new { message = "این جلسه قبلاً با مبلغ دیگری تسویه شده است؛ نتیجه ثبت‌شده را از تاریخچه فاکتور بررسی کنید." });
+                    if (existingOrder.PaidAmount > 0m)
+                    {
+                        var existingPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.TenantId == tenantId && x.BranchId == branchId && x.SalesOrderId == existingOrder.Id, cancellationToken);
+                        var normalizedReference = string.IsNullOrWhiteSpace(request.PaymentReference)
+                            ? null : request.PaymentReference.Trim();
+                        if (existingPayment is null || existingPayment.Method != request.PaymentMethod
+                            || existingPayment.Reference != normalizedReference)
+                            return Results.Conflict(new { message = "درخواست بستن با اطلاعات تسویه ثبت‌شده یکسان نیست؛ از همان اطلاعات درخواست اولیه استفاده کنید." });
+                    }
                     return Results.Ok(new
                     {
                         session.Id,
