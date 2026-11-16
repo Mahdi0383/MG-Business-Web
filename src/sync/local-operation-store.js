@@ -271,10 +271,14 @@ export class LocalOperationStore {
       throw new Error("Incoming sync cursor cannot move backwards.");
 
     for (const operation of operations) {
-      if (!Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence
-        || typeof operation.operationId !== "string" || !operation.operationId
-        || typeof operation.operationType !== "string" || !operation.operationType
-        || typeof operation.payloadJson !== "string" || typeof operation.payloadSha256 !== "string"
+      if (!operation || typeof operation !== "object" || Array.isArray(operation)
+        || !Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence
+        || typeof operation.operationId !== "string" || !operation.operationId.trim()
+        || typeof operation.operationType !== "string" || !operation.operationType.trim()
+        || (operation.branchId != null && (typeof operation.branchId !== "string" || !operation.branchId.trim()))
+        || typeof operation.payloadJson !== "string"
+        || new TextEncoder().encode(operation.payloadJson).byteLength > 64 * 1024
+        || typeof operation.payloadSha256 !== "string" || !/^[0-9a-f]{64}$/i.test(operation.payloadSha256)
         || !Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1)
         throw new TypeError("Incoming operation envelope is invalid.");
       if (branchId !== null && operation.branchId != null && operation.branchId !== branchId)
