@@ -28,6 +28,45 @@ public static class InventoryEndpoints
             return Results.Ok(products);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
+        group.MapGet("/products/catalog", async (int? page, int? pageSize, string? search, bool? activeOnly, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            var pageNumber = page ?? 1;
+            var take = pageSize ?? 50;
+            if (pageNumber is < 1 or > 1_000_000 || take is < 1 or > 200)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["pagination"] = ["شماره صفحه باید مثبت و اندازه صفحه بین ۱ تا ۲۰۰ باشد."]
+                });
+
+            var normalizedSearch = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+            if (normalizedSearch?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["search"] = ["عبارت جست‌وجو نمی‌تواند بیش از ۱۰۰ نویسه باشد."]
+                });
+
+            var query = db.Products.AsNoTracking().Where(x => x.TenantId == tenant.TenantId);
+            if (activeOnly is true)
+                query = query.Where(x => x.IsActive);
+            if (normalizedSearch is not null)
+                query = query.Where(x => x.Name.Contains(normalizedSearch) || x.Sku.Contains(normalizedSearch));
+
+            var totalCount = await query.CountAsync(cancellationToken);
+            var items = await query.OrderBy(x => x.Name).ThenBy(x => x.Id)
+                .Skip((pageNumber - 1) * take).Take(take)
+                .Select(x => new ProductResponse(x.Id, x.Sku, x.Name, x.BaseUnit, x.TracksInventory, x.DefaultSalePrice, x.IsActive))
+                .ToListAsync(cancellationToken);
+
+            return Results.Ok(new
+            {
+                page = pageNumber,
+                pageSize = take,
+                totalCount,
+                totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)take),
+                items
+            });
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
         group.MapPost("/products", async (CreateProductRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId)
