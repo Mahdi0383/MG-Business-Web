@@ -347,6 +347,31 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.ToTable("device_presences", (string)null);
                 });
 
+            modelBuilder.Entity("MG.Business.Domain.Entities.DeviceRequestNonce", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Nonce")
+                        .HasMaxLength(36)
+                        .HasColumnType("character varying(36)");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TenantId", "DeviceId", "Nonce");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.ToTable("device_request_nonces", (string)null);
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.GameDevice", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1326,6 +1351,15 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId", "BranchId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.DeviceRequestNonce", b =>
+                {
+                    b.HasOne("MG.Business.Domain.Entities.DeviceCredential", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MG.Business.Domain.Entities.GameDevice", b =>
