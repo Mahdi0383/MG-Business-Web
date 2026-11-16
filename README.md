@@ -47,6 +47,7 @@ API فعلی:
 - `POST /api/login` و `POST /api/logout`
 - `GET /api/me` و `GET/POST /api/users` و `DELETE /api/users/{id}` (مدیریت کاربران توسط مالک)
 - `GET/POST /api/orders` و `DELETE /api/orders/{id}` (ثبت و برگشت سفارش)
+- `GET /api/public/menu` و `POST /api/public/orders` (منوی عمومی و سفارش QR بدون ورود کارکنان)
 - `GET /api/reports/sales-by-product` و `GET /api/backup` و `POST /api/backup/restore` (پشتیبان کامل و بازیابی اتمیک در همان فضای کاری؛ کاربران و رمزهای ورود فعلی حفظ می‌شوند)
 - `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger`، `POST /api/customers/{id}/payments`، `GET /api/inventory` و `POST /api/inventory/movements`
@@ -69,6 +70,7 @@ API فعلی:
 - کاتالوگ کالا، پرونده مشتری، دفتر بدهکار/بستانکار مشتری، دریافت جزئی از بدهی، گردش انبار، محاسبه موجودی و جلوگیری از موجودی منفی.
 - گزارش اولیه سود و زیان بر مبنای دفتر کل.
 - کافه POS پایه: سبد سفارش، تخفیف، انتخاب مشتری و روش پرداخت؛ ثبت اتمیک سفارش، کسر موجودی و ثبت درآمد/بهای تمام‌شده.
+- منوی عمومی QR در `/order.html`، ثبت سفارش مهمان با شماره تماس، محدودیت نرخ درخواست، ایجاد پرونده مشتری و ثبت فروش اعتباری/مانده مشتری.
 - گیم‌نت پایه: مدیریت دستگاه، نشست زمان‌دار، تعرفه ساعتی، حالت رایگان/پولی و محاسبه خودکار هزینه؛ محدودیت یک نشست فعال برای هر دستگاه.
 
 - پوسته PWA و cache فایل‌های اصلی برای بارگذاری آفلاین.
