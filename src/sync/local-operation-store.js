@@ -31,7 +31,7 @@ export function isSameIncomingEnvelope(existing, incoming) {
 export function isIncomingRowVisible(row, branchId, allowTenantWide) {
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
   if (typeof allowTenantWide !== "boolean") return false;
-  if (branchId === null) return allowTenantWide;
+  if (branchId === null) return allowTenantWide && row.branchId == null;
   return row.branchId === branchId || (allowTenantWide && row.branchId == null);
 }
 
