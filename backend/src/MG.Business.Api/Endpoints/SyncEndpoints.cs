@@ -617,7 +617,8 @@ public static class SyncEndpoints
 
             var canReadTenantWide = tenant.Role is "Owner" or "Manager";
             var operations = journalWindow
-                .Where(x => (tenant.BranchId.HasValue && x.BranchId == tenant.BranchId)
+                .Where(x => (canReadTenantWide && tenant.BranchId is null)
+                    || (tenant.BranchId.HasValue && x.BranchId == tenant.BranchId)
                     || (canReadTenantWide && x.BranchId is null))
                 .Select(x => new
                 {
