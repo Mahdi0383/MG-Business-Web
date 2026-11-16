@@ -288,7 +288,8 @@ function AuthShell({ apiBaseUrl }) {
         if (active && ["Owner", "Manager"].includes(selectedTenant.role)) {
           const devices = await client.get("/api/sync/devices");
           if (active) {
-            setDeviceStatuses(devices || []);\n            setDisconnectedDevices((devices || []).filter(device => !device.isOnline));\n          }
+            setDeviceStatuses(devices || []);
+            setDisconnectedDevices((devices || []).filter(device => !device.isOnline));\n          }
         }
       } catch {
         // A missed heartbeat is detected by the next successful manager poll.
