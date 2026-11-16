@@ -472,7 +472,7 @@ public static class SyncEndpoints
                     continue;
                 }
 
-                if ((item.Request.OperationType is "customer.profile.created" or "customer.profile.updated")
+                if ((item.Request.OperationType is "customer.profile.created" or "customer.profile.updated" or "customer.profile.deactivated")
                     && tenant.Role is not ("Owner" or "Manager" or "Cashier"))
                     return Results.Forbid();
 
@@ -524,6 +524,49 @@ public static class SyncEndpoints
                     {
                         return Results.ValidationProblem(new Dictionary<string, string[]> { ["customer"] = [exception.Message] });
                     }
+                }
+
+                if (item.Request.OperationType == "customer.profile.deactivated")
+                {
+                    if (item.Request.SchemaVersion != 1 || item.Request.BranchId is null)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer deactivation requires schema version 1 and an explicit originating branch."]
+                        });
+
+                    CustomerDeactivatedCommand? command;
+                    try
+                    {
+                        command = JsonSerializer.Deserialize<CustomerDeactivatedCommand>(
+                            item.Request.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    }
+                    catch (JsonException)
+                    {
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer deactivation payload is invalid."]
+                        });
+                    }
+
+                    if (command is null || command.CustomerId == Guid.Empty || command.BaseVersion < 1)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer deactivation requires a valid ID and positive baseVersion."]
+                        });
+                    if (!customerCommandIds.Add(command.CustomerId))
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["A customer can only be changed once in a sync batch. Split dependent commands into sequential batches."]
+                        });
+
+                    var customer = await db.Customers.SingleOrDefaultAsync(
+                        x => x.TenantId == tenantId && x.Id == command.CustomerId && x.IsActive,
+                        cancellationToken);
+                    if (customer is null)
+                        return Results.NotFound(new { code = "customer_not_found", customerId = command.CustomerId });
+
+                    db.Entry(customer).Property(x => x.Version).OriginalValue = command.BaseVersion;
+                    customer.Deactivate();
                 }
 
                 if (item.Request.OperationType == "customer.profile.created")
@@ -689,6 +732,7 @@ public static class SyncEndpoints
     public sealed record CustomerUpdatedCommand(
         Guid CustomerId, int BaseVersion, string Name, string? Phone, string? Email,
         string? Address, string? Notes);
+    public sealed record CustomerDeactivatedCommand(Guid CustomerId, int BaseVersion);
 
     public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence, Guid? BranchId = null);
     private static void ValidateDeviceMetadata(string? value, string field, int maxLength,
