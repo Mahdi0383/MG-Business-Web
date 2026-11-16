@@ -38,6 +38,12 @@ The current server pull endpoint exposes an append-only operation stream. Applyi
 
 This classifier is an isolated policy primitive with unit tests. It is not yet wired to an inbound projection applier or business forms, so no incoming business operation is automatically applied by this change.
 
+## Local customer command foundation
+
+The IndexedDB schema now includes a tenant-scoped customer projection. Creating a customer validates and normalizes its fields, then writes the local projection and a branch-originated `customer.profile.created` outbox command in one read-write transaction. The UI reads the local projection alongside the server list and shows pending synchronization state. The sync API validates this command and saves the authoritative customer row with the append-only journal operation in one EF Core save; the client-generated customer ID is preserved, so retries remain idempotent. Acknowledging the outbox command marks the local projection synchronized in a single IndexedDB transaction.
+
+This is the first completed offline-first business workflow, not full offline readiness. Inbound customer commands are still retained in the inbox and are not yet projected on other devices; updates, conflict resolution, sales and inventory commands remain future work.
+
 ## Incoming operation processor
 
 `incoming-operation-processor.js` reads a bounded ordered inbox batch, obtains the current conflict state, invokes the fail-closed classifier, and routes eligible commands through an adapter contract. The adapter's `applyAndAcknowledge` method is required to atomically commit the local projection mutation and inbox acknowledgement. Conflicts are recorded separately and are never silently discarded.
