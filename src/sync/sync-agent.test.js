@@ -194,7 +194,7 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
     deviceId: "device-1"
   });
   assert.equal(requestContext.path, "/api/sync/operations");
-  assert.deepEqual(requestContext.options, { tenantId: "tenant-1", branchId: "branch-a" });
+  assert.deepEqual(requestContext.options, { tenantId: "tenant-1", branchId: "branch-a", actorId: "actor-1" });
   assert.equal(requestContext.operation.branchId, "branch-a");
 });
 
