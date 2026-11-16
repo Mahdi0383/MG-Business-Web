@@ -18,5 +18,6 @@ ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 COPY --from=build /app/publish .
+RUN mkdir -p /var/lib/mg-business/keys && chown -R $APP_UID:$APP_UID /var/lib/mg-business
 USER $APP_UID
 ENTRYPOINT ["dotnet", "MG.Business.Api.dll"]
