@@ -1,6 +1,7 @@
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -40,6 +41,7 @@ public sealed class ApiHealthEndpointTests
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<IDbContextOptionsConfiguration<BusinessDbContext>>();
                 services.RemoveAll<DbContextOptions<BusinessDbContext>>();
                 services.RemoveAll<BusinessDbContext>();
                 services.AddDbContext<BusinessDbContext>(options => options.UseSqlite(connectionString));
