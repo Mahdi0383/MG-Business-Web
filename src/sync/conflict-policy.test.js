@@ -66,3 +66,33 @@ test("rejects malformed operation envelopes", () => {
   assert.throws(() => classifyIncomingOperation(null), /operation is required/);
   assert.throws(() => classifyIncomingOperation({ operationType: "x" }), /schema version/);
 });
+
+
+test("applies a customer create only when the ID is absent or it is the originating-device echo", () => {
+  const operation = {
+    operationId: "customer-create-1",
+    operationType: "customer.profile.created",
+    schemaVersion: 1,
+    payload: { customerId: "customer-1", baseVersion: 0 }
+  };
+  assert.equal(classifyIncomingOperation(operation, null).disposition, "apply");
+  assert.equal(classifyIncomingOperation(operation, {
+    version: 1, originOperationId: "customer-create-1"
+  }).reason, "originating-device-echo");
+  const duplicate = classifyIncomingOperation(operation, {
+    version: 1, originOperationId: "another-operation"
+  });
+  assert.equal(duplicate.disposition, "conflict");
+  assert.equal(duplicate.reason, "customer-already-exists");
+});
+
+test("routes customer create commands with a non-zero base version to manual review", () => {
+  const result = classifyIncomingOperation({
+    operationId: "customer-create-invalid",
+    operationType: "customer.profile.created",
+    schemaVersion: 1,
+    payload: { baseVersion: 1 }
+  }, null);
+  assert.equal(result.disposition, "manual-review");
+  assert.equal(result.reason, "invalid-create-version-precondition");
+});
