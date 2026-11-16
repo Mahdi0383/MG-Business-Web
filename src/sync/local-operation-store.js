@@ -351,11 +351,14 @@ export class LocalOperationStore {
     return operations.length;
   }
 
-  async getInboxCount(tenantId, branchId = null) {
+  async getInboxCount(tenantId, branchId = null, allowTenantWide = false) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof allowTenantWide !== "boolean")
+      throw new TypeError("allowTenantWide must be a boolean.");
+    if (branchId === null && !allowTenantWide) return 0;
     const database = await openDatabase();
     const transaction = database.transaction(INBOX_STORE, "readonly");
     const done = transactionDone(transaction);
