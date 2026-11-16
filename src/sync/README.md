@@ -17,6 +17,8 @@ Push batches are selected from the active branch queue in global FIFO order; com
 
 Before any incoming page is committed, the sync agent validates each operation envelope, parses its payload as a JSON object, enforces the payload size bound, and recomputes SHA-256 over the exact UTF-8 payload bytes. A malformed or tampered operation rejects the entire page; the local inbox cursor and device acknowledgement are left unchanged.
 
+A non-manager session with no selected branch has no cross-branch outbox or inbox view. The API also rejects branch-targeted writes from that tenant-wide context; cross-branch writes require an Owner or Manager context, while ordinary members must operate within their selected branch.
+
 Pending outbox reads are additionally filtered to the authenticated browser device ID. If another account has unsynced operations in the same browser profile, those rows remain queued for that account's next login and cannot block or be submitted by the current actor.
 
 Incoming inbox reads and replay batches are branch-scoped: a branch receives its own operations plus tenant-wide operations, while the tenant-wide view can inspect all branches. Repeated delivery of a shared tenant-wide sequence preserves its applied/conflict state only when the immutable operation envelope matches; a reused sequence with different content aborts the local transaction rather than silently discarding data.
