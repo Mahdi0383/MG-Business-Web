@@ -1,3 +1,10 @@
+export function isIncomingRowVisible(row, branchId, allowTenantWide) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+  if (typeof allowTenantWide !== "boolean") return false;
+  if (branchId === null) return allowTenantWide;
+  return row.branchId === branchId || (allowTenantWide && row.branchId == null);
+}
+
 const DATABASE_NAME = "mg-business-local";
 const DATABASE_VERSION = 4;
 const OPERATIONS_STORE = "operations";
@@ -376,7 +383,7 @@ export class LocalOperationStore {
           resolve(matching);
           return;
         }
-        if ((allowTenantWide && cursor.value.branchId == null) || cursor.value.branchId === branchId)
+        if (isIncomingRowVisible(cursor.value, branchId, allowTenantWide))
           matching += 1;
         cursor.continue();
       };
@@ -417,7 +424,7 @@ export class LocalOperationStore {
           return;
         }
         const row = cursor.value;
-        if ((allowTenantWide && row.branchId == null) || row.branchId === branchId)
+        if (isIncomingRowVisible(row, branchId, allowTenantWide))
           matching.push(row);
         cursor.continue();
       };
