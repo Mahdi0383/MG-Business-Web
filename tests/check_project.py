@@ -21,7 +21,7 @@ dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", 
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
-for asset in ("styles.css", "app.js", "core.js", "server.py", "manifest.webmanifest", "service-worker.js", "icon.svg", "order.html", "public-order.js", "tests/test_server.py"):
+for asset in ("styles.css", "app.js", "core.js", "server.py", "license_tool.py", "manifest.webmanifest", "service-worker.js", "icon.svg", "order.html", "public-order.js", "tests/test_server.py"):
     if not (root / asset).is_file():
         raise SystemExit(f"missing required asset: {asset}")
 if "./core.js" not in html:
@@ -38,4 +38,8 @@ if "window.alert=showToast" not in js or "confirm(" in js:
 server = (root / "server.py").read_text(encoding="utf-8")
 if "def translate_path(self, path):" not in server or "def list_directory(self, path):" not in server:
     raise SystemExit("static server must block private files and directory listing")
+if "def verify_license_code(code):" not in server or 'if path == "/api/backup/restore":' not in server:
+    raise SystemExit("license verification or backup restoration endpoint is missing")
+if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
+    raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
