@@ -717,8 +717,10 @@ export class LocalOperationStore {
     };
     try { await done; }
     catch (error) { if (integrityError) throw integrityError; throw error; }
-    if (typeof window !== "undefined")
+    if (typeof window !== "undefined") {
       window.dispatchEvent(new Event("mg-customer-sync-updated"));
+      window.dispatchEvent(new Event("mg-inventory-sync-updated"));
+    }
     return { ...initial, ...normalized, version: baseVersion, syncStatus: "pending", lastOperationId: operation.operationId };
   }
 
