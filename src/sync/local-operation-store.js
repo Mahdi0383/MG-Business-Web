@@ -235,6 +235,17 @@ export class LocalOperationStore {
     await done;
   }
 
+  async clearAuthorityLease({ tenantId, branchId = null }) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required to clear an authority lease.");
+    const key = `authority-lease:${tenantId}:${branchId || "tenant-wide"}`;
+    const database = await openDatabase();
+    const transaction = database.transaction(META_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    transaction.objectStore(META_STORE).delete(key);
+    await done;
+  }
+
   async getAuthorityEpoch({ tenantId, branchId = null, actorId }) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required to read the authority lease.");
