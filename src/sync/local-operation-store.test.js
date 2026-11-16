@@ -152,6 +152,7 @@ test("rejects unverified authority epochs before accessing local storage", async
   await assert.rejects(
     store.enqueue({
       tenantId: "tenant-1",
+      actorId: "actor-1",
       operationType: "inventory.stock.adjusted",
       payload: { quantity: 2 },
       authorityEpoch: 1
@@ -760,23 +761,30 @@ test("originating device deactivation echo advances inbox without deactivating t
 });
 
 
-test("stores and reads only verified, unexpired authority lease epochs by tenant and branch", async () => {
+test("does not trust a caller-controlled verified flag for authority lease epochs", async () => {
   const store = new LocalOperationStore();
   const tenantId = `lease-tenant-${crypto.randomUUID()}`;
-  const branchId = `lease-branch-${crypto.randomUUID()}`;
+  const branchId = crypto.randomUUID();
+  const actorId = `lease-actor-${crypto.randomUUID()}`;
+  const deviceId = await store.getDeviceId(actorId);
   const lease = {
     tenantId,
     branchId,
+    deviceId,
+    leaseId: crypto.randomUUID(),
+    scopeKey: branchId.replaceAll("-", "").toLowerCase(),
     epoch: 7,
+    issuedAtUtc: new Date(Date.now() - 1_000).toISOString(),
     expiresAtUtc: new Date(Date.now() + 120_000).toISOString(),
+    signatureBase64: "AA==",
+    publicKeySpkiBase64: "AA==",
     verified: true
   };
 
-  await store.setAuthorityLease({ tenantId, branchId, lease });
-  assert.equal(await store.getAuthorityEpoch({ tenantId, branchId }), 7);
-  assert.equal(await store.getAuthorityEpoch({ tenantId, branchId: null }), 0);
+  await store.setAuthorityLease({ tenantId, branchId, actorId, lease });
+  assert.equal(await store.getAuthorityEpoch({ tenantId, branchId, actorId }), 0);
   await assert.rejects(
-    store.setAuthorityLease({ tenantId, branchId, lease: { ...lease, verified: false } }),
-    /verified, active authority lease/
+    store.setAuthorityLease({ tenantId, branchId, actorId, lease: { ...lease, deviceId: crypto.randomUUID() } }),
+    /bound to this browser device/
   );
 });
