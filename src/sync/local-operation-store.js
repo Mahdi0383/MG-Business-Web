@@ -277,12 +277,24 @@ export class LocalOperationStore {
   }
 
   async setCursor(tenantId, sequence) {
+    if (!tenantId) throw new TypeError("tenantId is required.");
     if (!Number.isSafeInteger(sequence) || sequence < 0)
       throw new TypeError("Sync cursor must be a non-negative safe integer.");
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readwrite");
     const done = transactionDone(transaction);
-    transaction.objectStore(META_STORE).put({ key: `cursor:${tenantId}`, value: sequence });
+    const metadata = transaction.objectStore(META_STORE);
+    const key = `cursor:${tenantId}`;
+    const request = metadata.get(key);
+    request.onsuccess = () => {
+      const current = Number.isSafeInteger(request.result?.value) && request.result.value >= 0
+        ? request.result.value : 0;
+      if (sequence < current) {
+        transaction.abort();
+        return;
+      }
+      metadata.put({ key, value: sequence });
+    };
     await done;
   }
 }
