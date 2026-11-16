@@ -21,6 +21,7 @@ public static class SyncEndpoints
 
         group.MapPost("/acknowledgements", async (
             SyncAcknowledgementRequest request,
+            HttpContext httpContext,
             ITenantContext tenant,
             BusinessDbContext db,
             CancellationToken cancellationToken) =>
@@ -32,6 +33,9 @@ public static class SyncEndpoints
                 {
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
+            if (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
+                || signedDeviceId != request.DeviceId)
+                return Results.Forbid();
             if (request.BranchId != tenant.BranchId)
                 return Results.Forbid();
 
@@ -159,6 +163,7 @@ public static class SyncEndpoints
 
         group.MapPost("/heartbeat", async (
             DeviceHeartbeatRequest request,
+            HttpContext httpContext,
             ITenantContext tenant,
             BusinessDbContext db,
             CancellationToken cancellationToken) =>
@@ -170,6 +175,9 @@ public static class SyncEndpoints
                 {
                     ["deviceId"] = ["A valid device ID is required."]
                 });
+            if (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
+                || signedDeviceId != request.DeviceId)
+                return Results.Forbid();
 
             var metadataErrors = new Dictionary<string, string[]>();
             ValidateDeviceMetadata(request.DeviceName, "deviceName", 100, metadataErrors);
@@ -300,6 +308,7 @@ public static class SyncEndpoints
 
         group.MapPost("/operations", async (
             PushOperationsRequest request,
+            HttpContext httpContext,
             ITenantContext tenant,
             BusinessDbContext db,
             IConfiguration configuration,
@@ -317,6 +326,9 @@ public static class SyncEndpoints
                 {
                     ["operations"] = ["Null operation entries are not allowed."]
                 });
+            if (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
+                || request.Operations.Any(item => item.DeviceId != signedDeviceId))
+                return Results.Forbid();
 
             await using var transaction = await db.Database.BeginTransactionAsync(
                 System.Data.IsolationLevel.Serializable, cancellationToken);
