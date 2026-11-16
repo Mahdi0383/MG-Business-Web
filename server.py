@@ -188,6 +188,19 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path.startswith("/api/products/"):
+                product_id = path.rsplit("/", 1)[-1]
+                if user["role"] not in ("owner", "manager"):
+                    return self.send_json(403, {"error": "فقط مدیر می‌تواند کالا را غیرفعال کند."})
+                db.execute("BEGIN IMMEDIATE")
+                changed = db.execute("UPDATE products SET active=0,updated_at=? WHERE id=? AND tenant_id=? AND active=1",
+                                     (int(time.time()),product_id,user["tenant_id"])).rowcount
+                if not changed:
+                    db.rollback()
+                    return self.send_json(404, {"error": "کالای فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"product.deactivated","product",product_id)
+                db.commit()
+                return self.send_json(200, {"ok": True})
             if not path.startswith("/api/transactions/"):
                 return self.send_json(404, {"error": "مسیر API پیدا نشد."})
             tx_id = path.rsplit("/", 1)[-1]
