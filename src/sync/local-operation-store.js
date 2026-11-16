@@ -353,6 +353,42 @@ export class LocalOperationStore {
     return { ...initial, ...normalized, version: baseVersion, syncStatus: "pending", lastOperationId: operation.operationId };
   }
 
+  async cacheServerCustomers(tenantId, rows) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (!Array.isArray(rows)) throw new TypeError("Server customer rows must be an array.");
+    const database = await openDatabase();
+    const transaction = database.transaction(CUSTOMERS_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    const customers = transaction.objectStore(CUSTOMERS_STORE);
+    const now = new Date().toISOString();
+    for (const row of rows) {
+      if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id.trim()
+        || !Number.isSafeInteger(row.version) || row.version < 1)
+        throw new TypeError("Server customer row has an invalid identity or version.");
+      const normalized = normalizeLocalCustomer(row);
+      const request = customers.get([tenantId, row.id]);
+      request.onsuccess = () => {
+        const current = request.result;
+        // Never overwrite an unacknowledged local command with a server read.
+        if (current?.syncStatus === "pending") return;
+        customers.put({
+          ...current,
+          tenantId, id: row.id, ...normalized,
+          version: row.version,
+          isActive: row.isActive !== false,
+          syncStatus: "synced",
+          createdAtUtc: current?.createdAtUtc || now,
+          updatedAtUtc: now,
+          serverSequence: current?.serverSequence ?? null,
+          originOperationId: current?.originOperationId ?? null,
+          lastOperationId: current?.lastOperationId ?? null,
+          originBranchId: current?.originBranchId ?? null
+        });
+      };
+    }
+    await done;
+  }
+
   async getCustomers(tenantId, limit = 500) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 1000)) : 500;
