@@ -94,7 +94,7 @@ export class DeviceEnrollmentClient {
     if (this.enrollmentInFlight.has(scope))
       return this.enrollmentInFlight.get(scope);
 
-    const enrollment = this.enroll({ tenantId, branchId, actorId, scope });
+    const enrollment = this.enroll({ tenantId, branchId, actorId, scope, existing });
     this.enrollmentInFlight.set(scope, enrollment);
     try {
       return await enrollment;
@@ -103,15 +103,35 @@ export class DeviceEnrollmentClient {
     }
   }
 
-  async enroll({ tenantId, branchId, actorId, scope }) {
+  async enroll({ tenantId, branchId, actorId, scope, existing }) {
     const deviceId = await this.operationStore.getDeviceId(actorId);
-    const pair = await crypto.subtle.generateKey(
-      { name: "ECDSA", namedCurve: "P-256" },
-      false,
-      ["sign", "verify"]
-    );
-    const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
-    const publicKeySpkiBase64 = toBase64(publicKeyBytes);
+    let privateKey = existing?.privateKey || null;
+    let publicKeySpkiBase64 = existing?.publicKeySpkiBase64 || null;
+    if (!privateKey || !publicKeySpkiBase64) {
+      const pair = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" },
+        false,
+        ["sign", "verify"]
+      );
+      privateKey = pair.privateKey;
+      const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+      publicKeySpkiBase64 = toBase64(publicKeyBytes);
+    }
+
+    // Persist the non-extractable key before the server can commit enrollment.
+    // A lost completion response can then be recovered with the same proof key.
+    const pendingRecord = {
+      scope,
+      tenantId,
+      actorId,
+      deviceId,
+      privateKey,
+      publicKeySpkiBase64,
+      credential: null,
+      keyVersion: existing?.keyVersion || 0,
+      enrolledAtUtc: existing?.enrolledAtUtc || null
+    };
+    await this.writeCredential(pendingRecord);
     const challengeResponse = await this.apiClient.post(
       "/api/sync/enrollment/challenges",
       { deviceId },
@@ -133,7 +153,7 @@ export class DeviceEnrollmentClient {
     ].join("\n");
     const signature = await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-256" },
-      pair.privateKey,
+      privateKey,
       new TextEncoder().encode(canonical)
     );
 
@@ -148,17 +168,12 @@ export class DeviceEnrollmentClient {
       },
       { tenantId, branchId }
     );
-    if (completed?.deviceId !== deviceId || completed?.keyVersion !== 1
-      || typeof completed?.credential !== "string")
+    if (completed?.deviceId !== deviceId || !Number.isInteger(completed?.keyVersion)
+      || completed.keyVersion < 1 || typeof completed?.credential !== "string")
       throw new Error("MG server returned an invalid device enrollment credential.");
 
     const record = {
-      scope,
-      tenantId,
-      actorId,
-      deviceId,
-      privateKey: pair.privateKey,
-      publicKeySpkiBase64,
+      ...pendingRecord,
       credential: completed.credential,
       keyVersion: completed.keyVersion,
       enrolledAtUtc: completed.enrolledAtUtc
