@@ -24,4 +24,4 @@ $('transactionForm').addEventListener('submit',e=>{e.preventDefault();const data
 $('openMenu').onclick=()=>$('sidebar').classList.add('open');$('closeMenu').onclick=()=>$('sidebar').classList.remove('open');
 $('today').textContent=new Intl.DateTimeFormat('fa-IR',{weekday:'long',day:'numeric',month:'long'}).format(new Date());
 renderNav();renderStats();renderTransactions();renderModules();
-if ('serviceWorker' in navigator && location.protocol !== 'file:') { window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(error => console.warn('MG offline worker unavailable', error))); }
+if ('serviceWorker' in navigator && location.protocol !== 'file:') { window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(error => console.warn('MG offline worker unavailable', error))); }
