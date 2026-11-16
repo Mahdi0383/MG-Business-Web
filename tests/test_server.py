@@ -150,6 +150,9 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,409)
 
+        status, audit = self.request("GET", "/api/audit-log", token=token)
+        self.assertEqual(status,200)
+        self.assertTrue(any(x["action"]=="transaction.created" for x in audit["items"]))
         status, result = self.request("GET", "/api/transactions", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(len(result["items"]), 1)
