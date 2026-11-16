@@ -275,6 +275,42 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     }
   };
 
+  const openSaleSettlement = async order => {
+    if (Number(order.balanceDue || 0) <= 0) return;
+    setSaving(true);
+    setError("");
+    try {
+      const [accountRows, paymentRows] = await Promise.all([
+        client.get("/api/accounting/accounts"),
+        client.get(`/api/sales/orders/${order.id}/payments`)
+      ]);
+      const activeAssets = (accountRows || []).filter(account => account.type === "Asset" && account.isActive);
+      const cash = activeAssets.find(account => account.code === "1000") || activeAssets[0];
+      const receivable = activeAssets.find(account => account.code === "1100") || activeAssets[0];
+      if (!cash || !receivable) throw new Error("حساب دریافت وجه و حساب دریافتنی فعال باید در سرفصل‌های حسابداری تعریف شده باشند.");
+      setAccounts(accountRows || []);
+      setForm({
+        orderId: order.id,
+        orderNumber: order.number,
+        total: Number(order.total || 0),
+        paidAmount: Number(order.paidAmount || 0),
+        balanceDue: Number(order.balanceDue || 0),
+        amount: String(order.balanceDue),
+        paymentMethod: "1",
+        paymentAccountId: cash.id,
+        receivableAccountId: receivable.id,
+        paymentReference: "",
+        idempotencyKey: crypto.randomUUID(),
+        paymentHistory: paymentRows || []
+      });
+      setModal("salePayment");
+    } catch (openError) {
+      setError(formatApiError(openError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateSaleLine = (index, field, value) => {
     const lines = [...form.lines];
     lines[index] = { ...lines[index], [field]: value };
@@ -388,6 +424,20 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           receivableAccountId: amountPaid < latestQuote.totalAmount ? form.receivableAccountId : null,
           paymentReference: form.paymentReference.trim() || null
         });
+      } else if (modal === "salePayment") {
+        const amount = Number(form.amount);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > form.balanceDue)
+          throw new Error("مبلغ دریافت باید بیشتر از صفر و حداکثر برابر مانده فاکتور باشد.");
+        if (!form.paymentAccountId || !form.receivableAccountId)
+          throw new Error("حساب دریافت وجه و حساب دریافتنی را انتخاب کنید.");
+        await client.post(`/api/sales/orders/${form.orderId}/payments`, {
+          amount,
+          paymentMethod: Number(form.paymentMethod),
+          paymentAccountId: form.paymentAccountId,
+          receivableAccountId: form.receivableAccountId,
+          paymentReference: form.paymentReference.trim() || null
+        }, { headers: { "Idempotency-Key": form.idempotencyKey } });
+        successNotice = `دریافت وجه فاکتور ${form.orderNumber} با موفقیت ثبت شد.`;
       } else if (modal === "sale") {
         const lines = form.lines.filter(line => line.productId).map(line => ({
           productId: line.productId,
@@ -604,8 +654,8 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
         {page === "sales" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>فروش‌ها</h2><p>{count(sales.length)} فاکتور اخیر</p></div><div className="mg-server-panel-actions">{canCreateSales && <button className="mg-primary-btn" onClick={openSale}>＋ فروش جدید</button>}<button className="mg-secondary-btn" onClick={loadData}>↻ بروزرسانی</button></div></div>
-          <div className="mg-server-table-wrap"><table><thead><tr><th>شماره فاکتور</th><th>مبلغ کل</th><th>پرداخت‌شده</th><th>مانده</th><th>وضعیت</th><th>زمان ثبت</th></tr></thead>
-            <tbody>{sales.map(order => <tr key={order.id}><td>{order.number}</td><td>{money(order.total)}</td><td>{money(order.paidAmount)}</td><td>{money(order.balanceDue)}</td><td>{order.status}</td><td>{dateTime(order.createdAtUtc)}</td></tr>)}</tbody>
+          <div className="mg-server-table-wrap"><table><thead><tr><th>شماره فاکتور</th><th>مبلغ کل</th><th>پرداخت‌شده</th><th>مانده</th><th>وضعیت</th><th>زمان ثبت</th><th>عملیات</th></tr></thead>
+            <tbody>{sales.map(order => <tr key={order.id}><td>{order.number}</td><td>{money(order.total)}</td><td>{money(order.paidAmount)}</td><td>{money(order.balanceDue)}</td><td>{order.status}</td><td>{dateTime(order.createdAtUtc)}</td><td>{canCreateSales && Number(order.balanceDue) > 0 && <button className="mg-mini-btn" disabled={saving} onClick={() => openSaleSettlement(order)}>ثبت دریافت</button>}</td></tr>)}</tbody>
           </table>{!sales.length && <div className="mg-server-empty">هنوز فاکتوری ثبت نشده است.</div>}</div>
         </section>}
 
@@ -645,7 +695,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
     {modal && <div className="mg-server-overlay" onMouseDown={event => event.target === event.currentTarget && setModal("")}>
       <form className="mg-server-modal" onSubmit={save}>
-        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "customerEdit" ? "ویرایش مشتری" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
+        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "customerEdit" ? "ویرایش مشتری" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "salePayment" ? "دریافت وجه فاکتور" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
 
         {modal === "product" && <>
           <label>کد کالا<input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></label>
@@ -698,6 +748,20 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
         </>}
 
+        {modal === "salePayment" && <>
+          <div className="mg-game-quote">
+            <span>فاکتور: {form.orderNumber}</span>
+            <b>پرداخت‌شده: {money(form.paidAmount)}</b>
+            <strong>مانده: {money(form.balanceDue)}</strong>
+          </div>
+          <label>مبلغ دریافت (تومان)<input required type="number" min="0.01" max={form.balanceDue} step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></label>
+          <label>روش دریافت<select required value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}><option value="1">نقدی</option><option value="2">کارت‌خوان</option><option value="3">انتقال بانکی</option><option value="4">کیف پول</option></select></label>
+          <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>حساب دریافتنی<select required value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>شناسه پرداخت / توضیحات<input maxLength="100" value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
+          <div className="mg-server-modal-hint"><b>سوابق دریافت:</b> {(form.paymentHistory || []).length ? form.paymentHistory.map(payment => `${money(payment.amount)} · ${payment.method} · ${dateTime(payment.createdAtUtc)}`).join(" | ") : "هنوز دریافتی ثبت نشده است."}</div>
+        </>}
+
         {modal === "sale" && <>
           <label>مشتری (برای فروش نسیه الزامی است)<select value={form.customerId} onChange={e => setForm({ ...form, customerId: e.target.value })}><option value="">فروش نقدی بدون مشتری</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name} — {customer.code}</option>)}</select></label>
           <div className="mg-sale-lines">
@@ -726,7 +790,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         </>}
 
 
-        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
+        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "salePayment" ? "ثبت دریافت و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
       </form>
     </div>}
   </div>;
