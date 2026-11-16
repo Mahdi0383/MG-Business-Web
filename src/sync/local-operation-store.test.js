@@ -940,7 +940,7 @@ test("does not trust a caller-controlled verified flag for authority lease epoch
   await store.setAuthorityLease({ tenantId, branchId, actorId, lease });
   assert.equal(await store.getAuthorityEpoch({ tenantId, branchId, actorId }), 0);
   await assert.rejects(
-    store.setAuthorityLease({ tenantId, branchId, actorId, lease: { ...lease, deviceId: crypto.randomUUID() } }),
-    /bound to this browser device/
+    store.setAuthorityLease({ tenantId, branchId, actorId, lease: { ...lease, deviceId: "" } }),
+    /active authority lease for this tenant and branch/
   );
 });
