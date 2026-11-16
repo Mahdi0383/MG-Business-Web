@@ -39,7 +39,7 @@ API فعلی:
 - `POST /api/login` و `POST /api/logout`
 - `GET /api/me` و `GET/POST /api/users` و `DELETE /api/users/{id}` (مدیریت کاربران توسط مالک)
 - `GET/POST /api/orders` و `DELETE /api/orders/{id}` (ثبت و برگشت سفارش)
-- `GET /api/reports/sales-by-product`
+- `GET /api/reports/sales-by-product` و `GET /api/backup` (خروجی کامل tenant برای مالک؛ بدون hash رمز عبور)
 - `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/inventory` و `POST /api/inventory/movements`
 - `GET /api/accounting/accounts`، `GET /api/accounting/journal` و `GET /api/accounting/profit-loss`
