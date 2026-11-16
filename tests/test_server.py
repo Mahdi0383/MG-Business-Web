@@ -315,6 +315,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["schema"], "mg-business-server-backup")
         self.assertIn("transactions", result["tables"])
+        self.assertIn("suppliers", result["tables"])
+        self.assertIn("purchase_invoices", result["tables"])
+        self.assertIn("supplier_payments", result["tables"])
         self.assertNotIn("password_hash", result["tables"]["users"][0])
 
         status, result = self.request("POST", "/api/gamenet/devices", {
@@ -381,11 +384,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,201)
         status, result = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
-            "invoiceDate":"2026-11-16","discount":0,
+            "invoiceDate":"2026-11-16","discount":20000,
             "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000}]
         }, token)
         self.assertEqual(status,201)
-        self.assertEqual(result["total"],250000)
+        self.assertEqual(result["total"],230000)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test")["quantity"],10)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
@@ -393,9 +396,9 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"partial")
-        self.assertEqual(result["remainingBalance"],150000)
+        self.assertEqual(result["remainingBalance"],130000)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
-            "amount":150000,"paymentMethod":"cash"
+            "amount":130000,"paymentMethod":"cash"
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"paid")
@@ -483,6 +486,9 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
         self.assertEqual(status, 200)
         self.assertGreaterEqual(len(result["items"]), 2)
+        status, restored_purchases = self.request("GET", "/api/purchase-invoices", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(restored_purchases["items"][0]["status"],"paid")
 
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
