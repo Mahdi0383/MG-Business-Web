@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using MG.Business.Api.Endpoints;
@@ -1639,4 +1641,124 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(revokedAt, credential.RevokedAtUtc);
         Assert.Equal(1, credential.KeyVersion);
     }
+
+    [Fact]
+    public async Task DeviceEnrollmentRequiresProofOfPossessionAndConsumesChallengeOnce()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"device-enroll-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Device Enrollment Store",
+            slug = $"device-enroll-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var challengeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/challenges", new { deviceId });
+        Assert.Equal(HttpStatusCode.OK, challengeResponse.StatusCode);
+        var challenge = await challengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+        Assert.NotNull(challenge);
+
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
+        var signedMessage = string.Join("\\n",
+            "MG-DEVICE-ENROLLMENT-V1",
+            tenant.TenantId.ToString("D"),
+            tenant.BranchId.ToString("D"),
+            challenge!.ActorId.ToString("D"),
+            deviceId.ToString("D"),
+            challenge.ChallengeId.ToString("D"),
+            challenge.Challenge);
+        var signature = Convert.ToBase64String(key.SignData(
+            Encoding.UTF8.GetBytes(signedMessage),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+        var completionRequest = new
+        {
+            challengeId = challenge.ChallengeId,
+            deviceId,
+            challenge = challenge.Challenge,
+            publicKeySpkiBase64 = publicKey,
+            signatureBase64 = signature
+        };
+
+        var completed = await client.PostAsJsonAsync("/api/sync/enrollment/complete", completionRequest);
+        Assert.Equal(HttpStatusCode.Created, completed.StatusCode);
+        var result = await completed.Content.ReadFromJsonAsync<DeviceEnrollmentResult>();
+        Assert.NotNull(result);
+        Assert.Equal(deviceId, result!.DeviceId);
+        Assert.Equal(1, result.KeyVersion);
+        Assert.False(string.IsNullOrWhiteSpace(result.Credential));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+        var persisted = await db.DeviceCredentials.SingleAsync(
+            x => x.TenantId == tenant.TenantId && x.DeviceId == deviceId);
+        Assert.Equal(challenge.ActorId, persisted.ActorId);
+        Assert.NotEqual(result.Credential, persisted.CredentialSha256);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(result.Credential))).ToLowerInvariant(),
+            persisted.CredentialSha256);
+
+        var replay = await client.PostAsJsonAsync("/api/sync/enrollment/complete", completionRequest);
+        Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeviceEnrollmentRejectsSignatureForAlteredChallengeContext()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"device-enroll-tamper-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Device Enrollment Tamper Store",
+            slug = $"device-enroll-tamper-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var challengeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/challenges", new { deviceId });
+        var challenge = await challengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+        Assert.NotNull(challenge);
+
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var signedMessage = string.Join("\\n",
+            "MG-DEVICE-ENROLLMENT-V1",
+            tenant.TenantId.ToString("D"),
+            tenant.BranchId.ToString("D"),
+            challenge!.ActorId.ToString("D"),
+            deviceId.ToString("D"),
+            challenge.ChallengeId.ToString("D"),
+            challenge.Challenge);
+        var signature = Convert.ToBase64String(key.SignData(
+            Encoding.UTF8.GetBytes(signedMessage),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+
+        var response = await client.PostAsJsonAsync("/api/sync/enrollment/complete", new
+        {
+            challengeId = challenge.ChallengeId,
+            deviceId,
+            challenge = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            publicKeySpkiBase64 = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()),
+            signatureBase64 = signature
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    private sealed record DeviceEnrollmentChallengeResponse(
+        Guid ChallengeId, string Challenge, Guid TenantId, Guid? BranchId, Guid ActorId,
+        Guid DeviceId, DateTimeOffset ExpiresAtUtc, string Algorithm);
+
+    private sealed record DeviceEnrollmentResult(Guid DeviceId, int KeyVersion, string Credential);
 }
