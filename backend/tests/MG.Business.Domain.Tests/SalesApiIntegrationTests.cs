@@ -62,6 +62,7 @@ public sealed class SalesApiIntegrationTests
         var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
         Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
 
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "sales-test-opening-receipt-01");
         var receipt = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product!.Id,
