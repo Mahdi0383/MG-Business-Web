@@ -14,6 +14,7 @@ public sealed class JournalEntryLine
         if (decimal.Round(debit, 2) != debit || decimal.Round(credit, 2) != credit)
             throw new ArgumentException("Journal amounts support at most two decimal places.");
 
+        Id = Guid.NewGuid();
         TenantId = tenantId;
         AccountId = accountId;
         Debit = debit;
