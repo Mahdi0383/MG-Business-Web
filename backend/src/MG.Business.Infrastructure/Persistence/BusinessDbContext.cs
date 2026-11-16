@@ -119,6 +119,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Sku).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.BaseUnit).HasMaxLength(24).IsRequired();
+            entity.Property(x => x.DefaultSalePrice).HasPrecision(18, 2);
             entity.HasIndex(x => new { x.TenantId, x.Sku }).IsUnique();
             entity.HasAlternateKey(x => new { x.TenantId, x.Id });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
