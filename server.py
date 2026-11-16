@@ -431,7 +431,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT module_key,expires_at,license_id FROM tenant_modules
                     WHERE tenant_id=? AND enabled=1 AND (expires_at IS NULL OR expires_at>?)""",
                     (user["tenant_id"],int(time.time()))).fetchall()
-                keys = ["overview"]+[row["module_key"] for row in rows]
+                keys = ["overview","settings"]+[row["module_key"] for row in rows]
                 return self.send_json(200, {"modules":sorted(set(keys)),
                     "expiresAt":min((row["expires_at"] for row in rows if row["expires_at"]),default=None)})
             if path == "/api/licenses/status":
@@ -440,8 +440,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if not row:
                     trial = db.execute("SELECT MIN(expires_at) FROM tenant_modules WHERE tenant_id=? AND license_id='trial'",
                                        (user["tenant_id"],)).fetchone()[0]
-                    return self.send_json(200, {"plan":"trial","expiresAt":trial,"status":"trial"})
-                return self.send_json(200, dict(row))
+                    return self.send_json(200, {"plan":"trial","expiresAt":trial,
+                        "status":"expired" if trial and trial <= int(time.time()) else "trial"})
+                status = "expired" if row["expires_at"] <= int(time.time()) else row["status"]
+                return self.send_json(200, {"plan":row["plan"],"expires_at":row["expires_at"],"status":status})
             if path == "/api/backup":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان کامل دریافت کند."})
