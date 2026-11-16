@@ -192,7 +192,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         setActiveSessions(sessionRows || []);
       }
     } catch (loadError) {
-      if (isNetworkUnavailable(loadError) && canViewProducts
+      if ((isNetworkUnavailable(loadError) || (typeof navigator !== "undefined" && navigator.onLine === false)) && canViewProducts
         && (page === "products" || page === "dashboard")) {
         try {
           const [cachedProducts, cachedStock] = await Promise.all([
@@ -439,7 +439,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           }, { headers: { "Idempotency-Key": form.idempotencyKey } });
           successNotice = "گردش انبار با موفقیت ثبت شد.";
         } catch (movementError) {
-          if (!isNetworkUnavailable(movementError)) throw movementError;
+          if (!isNetworkUnavailable(movementError) && !(typeof navigator !== "undefined" && navigator.onLine === false)) throw movementError;
           await operationStore.createStockMovement({
             tenantId: tenant.id, branchId: branch.id, actorId, movement
           });
