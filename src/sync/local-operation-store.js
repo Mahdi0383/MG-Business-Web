@@ -38,7 +38,15 @@ function openDatabase() {
           inbox.deleteIndex("byTenantApplied");
         inbox.createIndex("byTenantApplied", ["tenantId", "applied"]);
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const database = request.result;
+        database.onversionchange = () => {
+          // Let another tab upgrade the shared schema instead of blocking it indefinitely.
+          database.close();
+          databasePromise = null;
+        };
+        resolve(database);
+      };
       request.onerror = () => reject(request.error || new Error("Could not open local MG database."));
       request.onblocked = () => reject(new Error("Local MG database upgrade is blocked by another open tab."));
     }).catch(error => {
