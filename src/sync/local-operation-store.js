@@ -356,7 +356,6 @@ export class LocalOperationStore {
     const payload = operation.payload;
     if (operation.operationType !== "customer.profile.created")
       throw new Error("No local projection handler is registered for " + operation.operationType + ".");
-    const isCreate = true;
     if (typeof payload.customerId !== "string" || !payload.customerId.trim())
       throw new TypeError("Customer command requires a customerId.");
 
