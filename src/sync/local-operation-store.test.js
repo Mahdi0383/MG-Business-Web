@@ -10,6 +10,12 @@ test("validates branch context before reading local sync counters", async () => 
   await assert.rejects(store.getInboxCount("tenant-1", 123), /branchId/);
 });
 
+
+test("validates branch scope before reading the incoming inbox", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(store.getUnappliedIncoming("tenant-1", 100, " "), /branchId/);
+});
+
 test("rejects non-object payloads before attempting IndexedDB access", async () => {
   const store = new LocalOperationStore();
   for (const payload of [undefined, null, "not-an-object", 42, [], false]) {
