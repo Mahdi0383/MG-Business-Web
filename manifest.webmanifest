@@ -1,1 +1,12 @@
-{"name":"MG Business","short_name":"MG Business","lang":"fa","dir":"rtl","start_url":"/","display":"standalone","background_color":"#0c1422","theme_color":"#101827","description":"سامانه یکپارچه مدیریت کسب‌وکار MG"}
+{
+  "name": "MG Business",
+  "short_name": "MG",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c1422",
+  "theme_color": "#101827",
+  "description": "سامانه یکپارچه مدیریت کسب‌وکار MG"
+}
