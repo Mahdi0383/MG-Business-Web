@@ -168,6 +168,15 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        db = server.connect()
+        try:
+            card_receivable = db.execute("""SELECT SUM(l.debit) FROM journal_lines l
+                JOIN accounts a ON a.id=l.account_id
+                JOIN journal_entries e ON e.id=l.entry_id
+                WHERE e.source_type='transaction' AND e.source_id='order-order-test-1' AND a.code='1010'""").fetchone()[0]
+            self.assertEqual(card_receivable, 165000)
+        finally:
+            db.close()
         order_number = result["orderNumber"]
         status, result = self.request("GET", "/api/orders", token=token)
         self.assertEqual(status, 200)
