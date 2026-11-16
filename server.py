@@ -275,6 +275,12 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/me":
                 tenant = db.execute("SELECT id,name FROM tenants WHERE id=?", (user["tenant_id"],)).fetchone()
                 return self.send_json(200, {"user": public_user(user), "tenant": dict(tenant)})
+            if path == "/api/users":
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error": "دسترسی مشاهده کاربران ندارید."})
+                rows = db.execute("SELECT id,username,role,active,created_at AS createdAt FROM users WHERE tenant_id=? ORDER BY username",
+                                  (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/transactions":
                 rows = db.execute("""SELECT id,title,amount,kind,category,occurred_at AS createdAt
                     FROM transactions WHERE tenant_id=? AND status='posted' ORDER BY created_at DESC LIMIT 5000""",
@@ -333,6 +339,22 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path.startswith("/api/users/"):
+                target_id = path.rsplit("/", 1)[-1]
+                if user["role"] != "owner":
+                    return self.send_json(403, {"error": "فقط مالک می‌تواند کاربران را غیرفعال کند."})
+                if target_id == user["id"]:
+                    return self.send_json(400, {"error": "امکان غیرفعال‌کردن حساب خودتان وجود ندارد."})
+                db.execute("BEGIN IMMEDIATE")
+                changed = db.execute("UPDATE users SET active=0 WHERE id=? AND tenant_id=? AND active=1",
+                                     (target_id,user["tenant_id"])).rowcount
+                if not changed:
+                    db.rollback()
+                    return self.send_json(404, {"error": "کاربر فعال پیدا نشد."})
+                db.execute("DELETE FROM sessions WHERE user_id=?", (target_id,))
+                audit(db,user["tenant_id"],user["id"],"user.deactivated","user",target_id)
+                db.commit()
+                return self.send_json(200, {"ok": True})
             if path.startswith("/api/products/"):
                 product_id = path.rsplit("/", 1)[-1]
                 if user["role"] not in ("owner", "manager"):
@@ -414,6 +436,23 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
                 db.commit()
                 return self.send_json(200, {"ok": True})
+            if path == "/api/users":
+                if user["role"] != "owner":
+                    return self.send_json(403, {"error": "فقط مالک می‌تواند کاربر جدید بسازد."})
+                username, password, role = data.get("username"), data.get("password"), data.get("role")
+                if not isinstance(username,str) or not 3 <= len(username.strip()) <= 64:
+                    return self.send_json(400, {"error": "نام کاربری باید ۳ تا ۶۴ نویسه باشد."})
+                if not isinstance(password,str) or len(password) < 12:
+                    return self.send_json(400, {"error": "رمز عبور باید حداقل ۱۲ نویسه باشد."})
+                if role not in ("manager","cashier","viewer"):
+                    return self.send_json(400, {"error": "نقش کاربر معتبر نیست."})
+                target_id, now = secrets.token_urlsafe(18), int(time.time())
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
+                           (target_id,user["tenant_id"],username.strip(),password_hash(password),role,now))
+                audit(db,user["tenant_id"],user["id"],"user.created","user",target_id,{"role":role})
+                db.commit()
+                return self.send_json(201, {"id": target_id, "ok": True})
             if path == "/api/products":
                 if user["role"] not in ("owner", "manager"):
                     return self.send_json(403, {"error": "دسترسی مدیریت کالا ندارید."})
