@@ -589,6 +589,7 @@ export class LocalOperationStore {
     const writeDone = transactionDone(writeTransaction);
     const writeStore = writeTransaction.objectStore(OPERATIONS_STORE);
     const customerStore = writeTransaction.objectStore(CUSTOMERS_STORE);
+    let integrityError = null;
     for (let index = 0; index < existing.length; index += 1) {
       const operation = existing[index];
       if (!operation) continue;
@@ -609,11 +610,18 @@ export class LocalOperationStore {
           customerRequest.onsuccess = () => {
             const customer = customerRequest.result;
             if (!customer || customer.lastOperationId !== operation.operationId) return;
+            if (operation.operationType === "customer.profile.updated"
+              && (!Number.isSafeInteger(payload.baseVersion)
+                || customer.version !== payload.baseVersion
+                || customer.pendingBaseVersion !== payload.baseVersion)) {
+              integrityError = new Error("Customer projection version no longer matches the acknowledged update precondition.");
+              writeTransaction.abort();
+              return;
+            }
             customer.syncStatus = "synced";
             customer.serverSequence = acknowledgement.sequence;
             customer.updatedAtUtc = new Date().toISOString();
             if (operation.operationType === "customer.profile.updated") {
-              if (!Number.isSafeInteger(payload.baseVersion) || customer.version !== payload.baseVersion) return;
               customer.version = payload.baseVersion + 1;
               delete customer.pendingBaseVersion;
             }
@@ -622,7 +630,8 @@ export class LocalOperationStore {
         }
       }
     }
-    await writeDone;
+    try { await writeDone; }
+    catch (error) { if (integrityError) throw integrityError; throw error; }
     if (typeof window !== "undefined")
       window.dispatchEvent(new Event("mg-customer-sync-updated"));
   }
