@@ -1239,7 +1239,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
 
                     b.HasKey("TenantId", "DeviceId", "BranchId");
                     b.HasIndex("ActorId");
-                    b.HasIndex("TenantId", "BranchId", "LastAcknowledgedSequence");
+                    b.HasIndex("TenantId", "BranchId", "LastAcknowledgedSequence").HasDatabaseName("IX_sync_device_branch_cursor_scope_seq");
                     b.ToTable("sync_device_branch_cursors", (string)null);
                 });
 
