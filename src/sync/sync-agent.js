@@ -21,10 +21,10 @@ export class SyncAgent {
           throw new Error("MG Sync API returned a non-monotonic operation sequence.");
         previousSequence = operation.sequence;
       }
-      if (response.operations.length > 0 && response.nextSequence !== previousSequence)
-        throw new Error("MG Sync API cursor does not match the last operation.");
-      if (response.operations.length === 0 && response.nextSequence !== afterSequence)
-        throw new Error("MG Sync API advanced the cursor without returning operations.");
+      // A branch-scoped pull may omit other branches' rows while still advancing
+      // over them in the tenant journal. The scan cursor can exceed the last visible row.
+      if (response.nextSequence < previousSequence)
+        throw new Error("MG Sync API cursor precedes the last returned operation.");
       await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence);
       const deviceId = await this.operationStore.getDeviceId();
       await this.apiClient.post("/api/sync/acknowledgements", {
