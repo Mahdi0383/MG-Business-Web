@@ -463,6 +463,13 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["total"],420000)
+        status, retry_invoice = self.request("POST", "/api/purchase-invoices", {
+            "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
+            "invoiceDate":"2026-11-16","discount":30000,
+            "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000},{"productId":"product-purchase-test-2","quantity":5,"unitCost":40000}]
+        }, token)
+        self.assertEqual(status,200)
+        self.assertTrue(retry_invoice["duplicate"])
         status, duplicate_invoice = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-duplicate","supplierId":"supplier-1","invoiceNumber":"PI-1001",
             "invoiceDate":"2026-11-16","discount":0,
