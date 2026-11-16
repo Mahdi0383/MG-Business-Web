@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101827">
+<meta name="description" content="ثبت سفارش آنلاین MG Business">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css">
+<title>سفارش آنلاین | MG Business</title>
+</head>
+<body class="public-order-body">
+<main class="public-order-page">
+<header class="public-order-header"><div class="logo">MG</div><div><small class="eyebrow">MG BUSINESS · ONLINE ORDER</small><h1 id="businessName">منوی آنلاین</h1><p>محصولات موردنظر خود را انتخاب و سفارش را ثبت کنید.</p></div></header>
+<div id="publicStatus" class="public-status" aria-live="polite">در حال دریافت منو…</div>
+<section><h2 class="section-caption">منوی مجموعه</h2><div id="publicProducts" class="public-products"></div></section>
+<section class="public-cart panel"><div class="panel-head"><div><h2>سبد سفارش</h2><p>اقلام انتخاب‌شده</p></div><b id="publicTotal">۰ تومان</b></div><div id="publicCart"></div>
+<form id="publicOrderForm" class="module-form"><label>نام و نام خانوادگی<input name="customerName" required maxlength="160" autocomplete="name"></label><label>شماره تماس<input name="phone" required minlength="5" maxlength="32" inputmode="tel" autocomplete="tel"></label><button id="publicSubmit" class="primary" type="submit" disabled>ثبت سفارش</button></form>
+<div id="publicResult" class="public-result hidden" aria-live="polite"></div></section>
+<footer class="public-order-footer">Powered by MG Business</footer>
+</main>
+<script src="./public-order.js"></script>
+</body></html>
