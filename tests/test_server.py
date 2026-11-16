@@ -98,6 +98,9 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/accounting/profit-loss", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["revenue"], 150000)
+        status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(trial["totalDebit"], trial["totalCredit"])
         db = server.connect()
         try:
             totals = db.execute("""SELECT SUM(l.debit),SUM(l.credit) FROM journal_lines l
