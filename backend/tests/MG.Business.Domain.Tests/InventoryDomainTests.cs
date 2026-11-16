@@ -11,7 +11,7 @@ public sealed class InventoryDomainTests
         var product = new Product(Guid.NewGuid(), " mg-001 ", " Cola ", " PCS ");
 
         Assert.Equal("MG-001", product.Sku);
-        Assert.Equal("cola", product.Name.ToLowerInvariant() == "cola" ? product.BaseUnit : product.BaseUnit);
+        Assert.Equal("pcs", product.BaseUnit);
         Assert.True(product.TracksInventory);
         Assert.True(product.IsActive);
     }
