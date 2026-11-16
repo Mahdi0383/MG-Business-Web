@@ -286,7 +286,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         if (paidAmount > 0 && !form.paymentAccountId) throw new Error("حساب دریافت وجه را انتخاب کنید.");
         if (balanceDue > 0 && !form.receivableAccountId) throw new Error("حساب دریافتنی را انتخاب کنید.");
 
-        await client.post("/api/sales/orders", {
+        const createdSale = await client.post("/api/sales/orders", {
           customerId: form.customerId || null,
           discount: Number(form.discount || 0),
           amountPaid: paidAmount,
@@ -299,6 +299,56 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           paymentReference: form.paymentReference.trim() || null,
           lines
         });
+
+        if (form.sendToKitchen) {
+          try {
+            await client.post("/api/cafe/kitchen/tickets", {
+              salesOrderId: createdSale.id,
+              serviceType: Number(form.serviceType || 1),
+              tableLabel: form.tableLabel.trim() || null,
+              notes: form.kitchenNotes.trim() || null
+            });
+          } catch (kitchenError) {
+            setError(`فاکتور ${createdSale.number} ثبت شد، اما ارسال به آشپزخانه انجام نشد: ${formatApiError(kitchenError)}`);
+          }
+        }
+      } else if (modal === "game-start") {
+        await client.post("/api/gamenet/sessions", {
+          deviceId: form.deviceId,
+          customerId: form.customerId || null
+        });
+      } else if (modal === "game-close") {
+        if (!closingSession || !gameQuote) throw new Error("اطلاعات سانس برای تسویه در دسترس نیست.");
+        const quotedTotal = Number(gameQuote.totalAmount);
+        let finalAmountPaid = Number(form.amountPaid || 0);
+        if (finalAmountPaid < 0 || finalAmountPaid > quotedTotal)
+          throw new Error("مبلغ دریافتی باید بین صفر و مبلغ صورتحساب باشد.");
+
+        const latestQuote = await client.get(`/api/gamenet/sessions/${closingSession.id}/quote`);
+        const latestTotal = Number(latestQuote.totalAmount);
+        if (Math.abs(finalAmountPaid - quotedTotal) < 0.01 && latestTotal !== quotedTotal)
+          finalAmountPaid = latestTotal;
+        if (finalAmountPaid > latestTotal)
+          throw new Error("مبلغ سانس تغییر کرده است؛ مبلغ دریافتی را بازبینی کنید.");
+
+        const finalBalance = Math.max(0, latestTotal - finalAmountPaid);
+        if (finalBalance > 0 && !closingSession.customerId)
+          throw new Error("برای تسویه ناقص یا نسیه، هنگام شروع سانس باید مشتری انتخاب شده باشد.");
+        if (finalAmountPaid > 0 && !form.paymentAccountId)
+          throw new Error("حساب دریافت وجه را انتخاب کنید.");
+        if (finalBalance > 0 && !form.receivableAccountId)
+          throw new Error("حساب دریافتنی را انتخاب کنید.");
+
+        await client.post(`/api/gamenet/sessions/${closingSession.id}/close`, {
+          amountPaid: finalAmountPaid,
+          paymentMethod: finalAmountPaid === 0 ? 5 : Number(form.paymentMethod || 1),
+          revenueAccountId: form.revenueAccountId,
+          paymentAccountId: finalAmountPaid > 0 ? form.paymentAccountId : null,
+          receivableAccountId: finalBalance > 0 ? form.receivableAccountId : null,
+          paymentReference: form.paymentReference.trim() || null
+        });
+        setClosingSession(null);
+        setGameQuote(null);
       }
 
       setModal("");
