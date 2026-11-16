@@ -1667,7 +1667,7 @@ public sealed class SyncApiIntegrationTests
 
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
-        var signedMessage = string.Join("\\n",
+        var signedMessage = string.Join("\n",
             "MG-DEVICE-ENROLLMENT-V1",
             tenant.TenantId.ToString("D"),
             tenant.BranchId.ToString("D"),
@@ -1732,7 +1732,7 @@ public sealed class SyncApiIntegrationTests
         Assert.NotNull(challenge);
 
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var signedMessage = string.Join("\\n",
+        var signedMessage = string.Join("\n",
             "MG-DEVICE-ENROLLMENT-V1",
             tenant.TenantId.ToString("D"),
             tenant.BranchId.ToString("D"),
