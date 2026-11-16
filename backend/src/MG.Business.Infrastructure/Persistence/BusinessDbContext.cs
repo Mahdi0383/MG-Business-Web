@@ -69,8 +69,8 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
         {
             entity.ToTable("journal_entry_lines", table =>
             {
-                table.HasCheckConstraint("ck_journal_line_one_side", "(debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)");
-                table.HasCheckConstraint("ck_journal_line_non_negative", "debit >= 0 AND credit >= 0");
+                table.HasCheckConstraint("ck_journal_line_one_side", "(CAST(debit AS NUMERIC) > 0 AND CAST(credit AS NUMERIC) = 0) OR (CAST(credit AS NUMERIC) > 0 AND CAST(debit AS NUMERIC) = 0)");
+                table.HasCheckConstraint("ck_journal_line_non_negative", "CAST(debit AS NUMERIC) >= 0 AND CAST(credit AS NUMERIC) >= 0");
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Debit).HasColumnName("debit").HasPrecision(18, 2);
