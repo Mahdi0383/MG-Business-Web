@@ -485,6 +485,13 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"partial")
         self.assertEqual(result["remainingBalance"],320000)
+        status, partial_statement = self.request("GET", "/api/suppliers/supplier-1/ledger", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(partial_statement["totalPurchases"],420000)
+        self.assertEqual(partial_statement["totalPayments"],100000)
+        self.assertEqual(partial_statement["balance"],320000)
+        status, unknown_supplier = self.request("GET", "/api/suppliers/missing-supplier/ledger", token=token)
+        self.assertEqual(status,404)
         status, duplicate_supplier_payment = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "id":"supplier-payment-01","amount":100000,"paymentMethod":"card"
         }, token)
