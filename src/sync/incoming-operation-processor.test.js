@@ -23,6 +23,8 @@ test("applies eligible incoming operations through the atomic adapter contract",
   }]);
   const result = await processor.processBatch("tenant-1");
   assert.equal(result.applied, 1);
+  assert.equal(result.processed, 1);
+  assert.equal(result.blockedByConflict, false);
   assert.deepEqual(calls, [["apply", 1, { name: "MG" }]]);
 });
 
@@ -89,6 +91,8 @@ test("stops ordered replay at the first unresolved conflict", async () => {
   const result = await processor.processBatch("tenant-1");
 
   assert.equal(result.applied, 0);
+  assert.equal(result.processed, 1);
+  assert.equal(result.blockedByConflict, true);
   assert.deepEqual(calls, [["conflict", 1]]);
   assert.equal(result.results[0].sequence, 1);
 });
