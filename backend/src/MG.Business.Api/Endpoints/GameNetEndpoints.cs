@@ -71,6 +71,41 @@ public static class GameNetEndpoints
             return Results.Ok(sessions.OrderBy(x => x.StartedAtUtc));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
+        group.MapGet("/settlement-accounts", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            var accounts = await db.Accounts.AsNoTracking()
+                .Where(x => x.TenantId == tenant.TenantId && x.IsActive
+                    && (x.Type == AccountType.Asset || x.Type == AccountType.Revenue))
+                .OrderBy(x => x.Code)
+                .Select(x => new SettlementAccountResponse(x.Id, x.Code, x.Name, x.Type.ToString()))
+                .ToListAsync(cancellationToken);
+            return Results.Ok(accounts);
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
+
+        group.MapGet("/sessions/{sessionId:guid}/quote", async (Guid sessionId, ITenantContext tenant,
+            BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            var session = await db.GameSessions.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.TenantId == tenant.TenantId && x.Id == sessionId && x.Status == GameSessionStatus.Active
+                && (tenant.BranchId == null || x.BranchId == tenant.BranchId), cancellationToken);
+            if (session is null) return Results.NotFound();
+
+            try
+            {
+                var quote = session.CalculateCharge(DateTimeOffset.UtcNow);
+                return Results.Ok(new SessionQuoteResponse(session.Id, session.CustomerId, DateTimeOffset.UtcNow,
+                    quote.BilledMinutes, quote.TotalAmount));
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Conflict(new { message = exception.Message });
+            }
+            catch (ArgumentOutOfRangeException exception)
+            {
+                return Results.Conflict(new { message = exception.Message });
+            }
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
+
         group.MapPost("/sessions", async (StartSessionRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
@@ -136,6 +171,8 @@ public static class GameNetEndpoints
                     1m, session.TotalAmount!.Value, 0m, 0m);
                 var order = new SalesOrder(tenantId, branchId, number, session.CustomerId, [line], 0m);
                 order.SetPaidAmount(request.AmountPaid);
+                if (order.BalanceDue > 0m && session.CustomerId is null)
+                    return Results.BadRequest(new { message = "برای تسویه ناقص یا نسیه سانس، باید هنگام شروع سانس مشتری انتخاب شده باشد." });
                 if (order.BalanceDue > 0m &&
                     await FindAccount(db, tenantId, request.ReceivableAccountId, AccountType.Asset, cancellationToken) is null)
                     return Results.BadRequest(new { message = "حساب دریافتنی معتبر نیست." });
@@ -210,6 +247,9 @@ public static class GameNetEndpoints
     public sealed record StartSessionRequest(Guid DeviceId, Guid? CustomerId);
     public sealed record CloseSessionRequest(decimal AmountPaid, PaymentMethod PaymentMethod, Guid RevenueAccountId,
         Guid? PaymentAccountId, Guid? ReceivableAccountId, string? PaymentReference);
+    public sealed record SettlementAccountResponse(Guid Id, string Code, string Name, string Type);
+    public sealed record SessionQuoteResponse(Guid SessionId, Guid? CustomerId, DateTimeOffset QuotedAtUtc,
+        int BilledMinutes, decimal TotalAmount);
     public sealed record DeviceResponse(Guid Id, string Code, string Name, decimal HourlyRate, int BillingIntervalMinutes, Guid BranchId, bool HasActiveSession);
     public sealed record ActiveSessionResponse(Guid Id, Guid DeviceId, string DeviceName, Guid? CustomerId,
         DateTimeOffset StartedAtUtc, decimal HourlyRate, int BillingIntervalMinutes);
