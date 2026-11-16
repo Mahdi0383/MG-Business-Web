@@ -8,6 +8,7 @@ using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -1566,11 +1567,14 @@ public sealed class SyncApiIntegrationTests
         return client;
     }
 
-    private static WebApplicationFactory<Program> CreateFactory()
+    private static WebApplicationFactory<Program> CreateFactory(bool requireDeviceSignatures = false)
     {
         var connection = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
         connection.Open();
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["SyncSecurity:RequireDeviceSignatures"] = requireDeviceSignatures.ToString() }));
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<DbContextOptions<BusinessDbContext>>();
@@ -1579,7 +1583,8 @@ public sealed class SyncApiIntegrationTests
                 services.AddSingleton(connection);
                 services.AddDbContext<BusinessDbContext>((provider, options) =>
                     options.UseSqlite(provider.GetRequiredService<Microsoft.Data.Sqlite.SqliteConnection>()));
-            }));
+            });
+        });
     }
 
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
@@ -1761,4 +1766,106 @@ public sealed class SyncApiIntegrationTests
         Guid DeviceId, DateTimeOffset ExpiresAtUtc, string Algorithm);
 
     private sealed record DeviceEnrollmentResult(Guid DeviceId, int KeyVersion, string Credential);
+
+    [Fact]
+    public async Task SignedSyncRequestsRejectReplayAndBodyTampering()
+    {
+        using var factory = CreateFactory(requireDeviceSignatures: true);
+        using var client = await RegisterAndLoginAsync(factory, $"sync-signed-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Signed Sync Store",
+            slug = $"sync-signed-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var challengeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/challenges", new { deviceId });
+        Assert.Equal(HttpStatusCode.OK, challengeResponse.StatusCode);
+        var challenge = await challengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+        Assert.NotNull(challenge);
+
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
+        var enrollmentMessage = string.Join("\\n",
+            "MG-DEVICE-ENROLLMENT-V1",
+            tenant.TenantId.ToString("D"),
+            tenant.BranchId.ToString("D"),
+            challenge!.ActorId.ToString("D"),
+            deviceId.ToString("D"),
+            challenge.ChallengeId.ToString("D"),
+            challenge.Challenge);
+        var enrollmentSignature = Convert.ToBase64String(key.SignData(
+            Encoding.UTF8.GetBytes(enrollmentMessage),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+        var completed = await client.PostAsJsonAsync("/api/sync/enrollment/complete", new
+        {
+            challengeId = challenge.ChallengeId,
+            deviceId,
+            challenge = challenge.Challenge,
+            publicKeySpkiBase64 = publicKey,
+            signatureBase64 = enrollmentSignature
+        });
+        Assert.Equal(HttpStatusCode.Created, completed.StatusCode);
+        var credential = await completed.Content.ReadFromJsonAsync<DeviceEnrollmentResult>();
+        Assert.NotNull(credential);
+
+        async Task<HttpResponseMessage> Send(string signedBody, string actualBody, Guid nonce)
+        {
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedBody))).ToLowerInvariant();
+            var canonical = string.Join("\\n",
+                "MG-DEVICE-REQUEST-V1",
+                "POST",
+                "/api/sync/heartbeat",
+                tenant.TenantId.ToString("D"),
+                tenant.BranchId.ToString("D"),
+                challenge.ActorId.ToString("D"),
+                deviceId.ToString("D"),
+                "1",
+                timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                nonce.ToString("D"),
+                bodyHash);
+            var signature = Convert.ToBase64String(key.SignData(
+                Encoding.UTF8.GetBytes(canonical),
+                HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/sync/heartbeat")
+            {
+                Content = new StringContent(actualBody, Encoding.UTF8, "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Id", deviceId.ToString("D"));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Key-Version", "1");
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Credential", credential!.Credential);
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Timestamp", timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Nonce", nonce.ToString("D"));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Signature", signature);
+            return await client.SendAsync(request);
+        }
+
+        var body = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            deviceId,
+            deviceName = "Signed Browser",
+            platform = "Test",
+            clientVersion = "1.0"
+        });
+        var nonce = Guid.NewGuid();
+        using var accepted = await Send(body, body, nonce);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+
+        using var replay = await Send(body, body, nonce);
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+
+        var tamperedBody = body.Replace("Signed Browser", "Tampered Browser", StringComparison.Ordinal);
+        using var tampered = await Send(body, tamperedBody, Guid.NewGuid());
+        Assert.Equal(HttpStatusCode.Unauthorized, tampered.StatusCode);
+    }
+
 }
