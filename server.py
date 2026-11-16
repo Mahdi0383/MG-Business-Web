@@ -112,6 +112,26 @@ CREATE TABLE IF NOT EXISTS customers(
  UNIQUE(tenant_id,phone)
 );
 CREATE INDEX IF NOT EXISTS idx_customers_tenant_name ON customers(tenant_id,full_name);
+CREATE TABLE IF NOT EXISTS orders(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ order_number TEXT NOT NULL, customer_id TEXT, created_by TEXT NOT NULL REFERENCES users(id),
+ status TEXT NOT NULL CHECK(status IN ('paid','cancelled')),
+ subtotal INTEGER NOT NULL CHECK(subtotal>=0), discount INTEGER NOT NULL CHECK(discount>=0),
+ total INTEGER NOT NULL CHECK(total>0), payment_method TEXT NOT NULL
+ CHECK(payment_method IN ('cash','card','online','credit')), created_at INTEGER NOT NULL,
+ UNIQUE(tenant_id,order_number),
+ FOREIGN KEY(customer_id) REFERENCES customers(id)
+);
+CREATE INDEX IF NOT EXISTS idx_orders_tenant_date ON orders(tenant_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS order_items(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, order_id TEXT NOT NULL,
+ product_id TEXT NOT NULL, product_name TEXT NOT NULL,
+ quantity INTEGER NOT NULL CHECK(quantity>0), unit_price INTEGER NOT NULL CHECK(unit_price>=0),
+ unit_cost INTEGER NOT NULL CHECK(unit_cost>=0), line_total INTEGER NOT NULL CHECK(line_total>=0),
+ FOREIGN KEY(order_id) REFERENCES orders(id),
+ FOREIGN KEY(product_id) REFERENCES products(id)
+);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE TABLE IF NOT EXISTS audit_log(
  id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  actor_id TEXT REFERENCES users(id), action TEXT NOT NULL,
@@ -309,6 +329,12 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
                     FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/orders":
+                rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.subtotal,o.discount,o.total,
+                    o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
+                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+                    WHERE o.tenant_id=? ORDER BY o.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/accounting/accounts":
                 rows = db.execute("SELECT code,name,account_type AS accountType,normal_balance AS normalBalance FROM accounts WHERE tenant_id=? AND active=1 ORDER BY code",
                                   (user["tenant_id"],)).fetchall()
@@ -436,6 +462,71 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
                 db.commit()
                 return self.send_json(200, {"ok": True})
+            if path == "/api/orders":
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی ثبت سفارش ندارید."})
+                items = data.get("items"); discount = data.get("discount",0)
+                payment = data.get("paymentMethod","cash"); customer_id = data.get("customerId")
+                if not isinstance(items,list) or not 1 <= len(items) <= 100:
+                    return self.send_json(400, {"error": "سفارش باید حداقل یک قلم و حداکثر ۱۰۰ قلم داشته باشد."})
+                if type(discount) is not int or discount < 0 or payment not in ("cash","card","online","credit"):
+                    return self.send_json(400, {"error": "تخفیف یا روش پرداخت معتبر نیست."})
+                if customer_id is not None and not isinstance(customer_id,str):
+                    return self.send_json(400, {"error": "شناسه مشتری معتبر نیست."})
+                normalized = {}
+                for line in items:
+                    if not isinstance(line,dict): return self.send_json(400, {"error": "قلم سفارش معتبر نیست."})
+                    product_id, quantity = line.get("productId"), line.get("quantity")
+                    if not isinstance(product_id,str) or type(quantity) is not int or not 1 <= quantity <= 100000:
+                        return self.send_json(400, {"error": "کالا یا تعداد سفارش معتبر نیست."})
+                    normalized[product_id] = normalized.get(product_id,0) + quantity
+                db.execute("BEGIN IMMEDIATE")
+                if customer_id and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone():
+                    db.rollback()
+                    return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
+                products, subtotal = {}, 0
+                for product_id, quantity in normalized.items():
+                    product = db.execute("SELECT id,name,sell_price,cost_price FROM products WHERE id=? AND tenant_id=? AND active=1",
+                                          (product_id,user["tenant_id"])).fetchone()
+                    if not product:
+                        db.rollback()
+                        return self.send_json(404, {"error": "یکی از کالاهای سفارش پیدا نشد."})
+                    stock = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE tenant_id=? AND product_id=?",
+                                       (user["tenant_id"],product_id)).fetchone()[0]
+                    if stock < quantity:
+                        db.rollback()
+                        return self.send_json(409, {"error": "موجودی کالای %s کافی نیست؛ موجودی: %s" % (product["name"],stock)})
+                    line_total = product["sell_price"] * quantity
+                    if line_total > 9007199254740991 or subtotal + line_total > 9007199254740991:
+                        db.rollback()
+                        return self.send_json(400, {"error": "مبلغ سفارش بیش از حد مجاز است."})
+                    subtotal += line_total
+                    products[product_id] = (product,quantity,line_total)
+                if discount >= subtotal:
+                    db.rollback()
+                    return self.send_json(400, {"error": "تخفیف باید از مبلغ سفارش کمتر باشد."})
+                total = subtotal - discount
+                order_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                if len(order_id) > 100:
+                    db.rollback()
+                    return self.send_json(400, {"error": "شناسه سفارش معتبر نیست."})
+                order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
+                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
+                    VALUES(?,?,?,?,?,'paid',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
+                for product_id,(product,quantity,line_total) in products.items():
+                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,product["sell_price"],product["cost_price"],line_total))
+                    db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],product_id,user["id"],"sale",-quantity,product["cost_price"],"سفارش "+order_number,now))
+                tx_id = "order-"+order_id
+                title = "فروش سفارش "+order_number
+                occurred_at = time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now))
+                db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
+                    VALUES(?,?,?,?,?,'income','فروش کافه',?,?)""", (tx_id,user["tenant_id"],user["id"],title,total,occurred_at,now))
+                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at)
+                audit(db,user["tenant_id"],user["id"],"order.created","order",order_id,{"total":total,"items":len(products)})
+                db.commit()
+                return self.send_json(201, {"id":order_id,"orderNumber":order_number,"subtotal":subtotal,"discount":discount,"total":total})
             if path == "/api/users":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند کاربر جدید بسازد."})
