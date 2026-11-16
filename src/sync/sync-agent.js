@@ -70,7 +70,7 @@ export class SyncAgent {
       if (response.nextSequence < previousSequence)
         throw new Error("MG Sync API cursor precedes the last returned operation.");
       await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence, branchId);
-      const deviceId = await this.operationStore.getDeviceId(actorId);
+      const deviceId = await this.operationStore.getDeviceId(actorId, tenantId, branchId);
       await this.apiClient.post("/api/sync/acknowledgements", {
         deviceId,
         sequence: response.nextSequence,
@@ -97,7 +97,7 @@ export class SyncAgent {
     if (this.runningPush) return { status: "already-running", acknowledged: 0 };
     this.runningPush = true;
     try {
-      const deviceId = await this.operationStore.getDeviceId(actorId);
+      const deviceId = await this.operationStore.getDeviceId(actorId, tenantId, branchId);
       const pending = await this.operationStore.getPending(tenantId, boundedBatchSize, branchId, allowTenantWide, deviceId);
       if (pending.length === 0) return { status: "idle", acknowledged: 0 };
 
