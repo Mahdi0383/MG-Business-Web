@@ -712,7 +712,8 @@ export class LocalOperationStore {
       writeStore.put(operation);
 
       if (operation.operationType === "customer.profile.created"
-        || operation.operationType === "customer.profile.updated") {
+        || operation.operationType === "customer.profile.updated"
+        || operation.operationType === "customer.profile.deactivated") {
         let payload;
         try { payload = JSON.parse(operation.payloadJson); } catch { payload = null; }
         if (typeof payload?.customerId === "string") {
@@ -720,7 +721,8 @@ export class LocalOperationStore {
           customerRequest.onsuccess = () => {
             const customer = customerRequest.result;
             if (!customer || customer.lastOperationId !== operation.operationId) return;
-            if (operation.operationType === "customer.profile.updated"
+            if ((operation.operationType === "customer.profile.updated"
+                || operation.operationType === "customer.profile.deactivated")
               && (!Number.isSafeInteger(payload.baseVersion)
                 || customer.version !== payload.baseVersion
                 || customer.pendingBaseVersion !== payload.baseVersion)) {
@@ -731,10 +733,13 @@ export class LocalOperationStore {
             customer.syncStatus = "synced";
             customer.serverSequence = acknowledgement.sequence;
             customer.updatedAtUtc = new Date().toISOString();
-            if (operation.operationType === "customer.profile.updated") {
+            if (operation.operationType === "customer.profile.updated"
+              || operation.operationType === "customer.profile.deactivated") {
               customer.version = payload.baseVersion + 1;
               delete customer.pendingBaseVersion;
             }
+            if (operation.operationType === "customer.profile.deactivated")
+              customer.isActive = false;
             customerStore.put(customer);
           };
         }
