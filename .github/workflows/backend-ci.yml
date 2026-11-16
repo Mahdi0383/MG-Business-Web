@@ -29,6 +29,12 @@ jobs:
         run: dotnet restore backend/src/MG.Business.Api/MG.Business.Api.csproj
       - name: Build API
         run: dotnet build backend/src/MG.Business.Api/MG.Business.Api.csproj --configuration Release --no-restore
+      - name: Restore EF tools
+        run: dotnet tool restore
+      - name: Verify migration snapshot matches the current model
+        run: dotnet ef migrations has-pending-model-changes --project backend/src/MG.Business.Infrastructure/MG.Business.Infrastructure.csproj --startup-project backend/src/MG.Business.Api/MG.Business.Api.csproj --context BusinessDbContext --configuration Release
+      - name: Verify PostgreSQL migration script can be generated
+        run: dotnet ef migrations script --idempotent --project backend/src/MG.Business.Infrastructure/MG.Business.Infrastructure.csproj --startup-project backend/src/MG.Business.Api/MG.Business.Api.csproj --context BusinessDbContext --configuration Release --output ${{ runner.temp }}/mg-business-postgres.sql
       - name: Restore tests
         run: dotnet restore backend/tests/MG.Business.Domain.Tests/MG.Business.Domain.Tests.csproj
       - name: Run domain tests
