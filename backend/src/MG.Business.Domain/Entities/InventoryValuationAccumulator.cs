@@ -11,6 +11,8 @@ public sealed class InventoryValuationAccumulator
     private decimal quantity;
     private decimal value;
 
+    public decimal RawInventoryValue => value;
+
     public void Apply(StockMovement movement)
     {
         ArgumentNullException.ThrowIfNull(movement);
