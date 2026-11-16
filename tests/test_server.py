@@ -405,6 +405,10 @@ class ApiIntegrationTests(unittest.TestCase):
             "id":"supplier-1","name":"Test Dairy","phone":"+49123456789"
         }, token)
         self.assertEqual(status,201)
+        status, duplicate_supplier = self.request("POST", "/api/suppliers", {
+            "id":"supplier-duplicate","name":"Test Dairy"
+        }, token)
+        self.assertEqual(status,409)
         status, result = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
             "invoiceDate":"2026-11-16","discount":30000,
@@ -412,6 +416,12 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["total"],420000)
+        status, duplicate_invoice = self.request("POST", "/api/purchase-invoices", {
+            "id":"purchase-invoice-duplicate","supplierId":"supplier-1","invoiceNumber":"PI-1001",
+            "invoiceDate":"2026-11-16","discount":0,
+            "items":[{"productId":"product-purchase-test","quantity":1,"unitCost":25000}]
+        }, token)
+        self.assertEqual(status,409)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test")["quantity"],10)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test-2")["quantity"],5)
