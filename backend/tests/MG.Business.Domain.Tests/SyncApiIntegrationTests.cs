@@ -499,14 +499,35 @@ public sealed class SyncApiIntegrationTests
         using var staff = await RegisterAndLoginAsync(factory, staffEmail);
         staff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
         staff.DefaultRequestHeaders.Add("X-MG-Branch", secondary.Id.ToString());
+        var staffDeviceId = Guid.NewGuid();
         var staffHeartbeat = await staff.PostAsJsonAsync("/api/sync/heartbeat", new
         {
-            deviceId = Guid.NewGuid(),
+            deviceId = staffDeviceId,
             deviceName = "Secondary Branch Device",
             platform = "Test",
             clientVersion = "1.0"
         });
         Assert.Equal(HttpStatusCode.OK, staffHeartbeat.StatusCode);
+
+        var forbiddenTenantWidePush = await staff.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId = staffDeviceId,
+                    branchId = (Guid?)null,
+                    operationType = "test.forbidden-tenant-wide",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"scope\\":\\"tenant\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenTenantWidePush.StatusCode);
 
         var pull = await staff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
         Assert.NotNull(pull);
