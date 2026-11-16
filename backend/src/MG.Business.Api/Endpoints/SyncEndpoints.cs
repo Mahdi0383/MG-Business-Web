@@ -440,6 +440,51 @@ public static class SyncEndpoints
                     continue;
                 }
 
+                if (item.Request.OperationType == "customer.profile.updated")
+                {
+                    if (item.Request.SchemaVersion != 1 || item.Request.BranchId is null)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer update requires schema version 1 and an explicit originating branch."]
+                        });
+
+                    CustomerUpdatedCommand? command;
+                    try
+                    {
+                        command = JsonSerializer.Deserialize<CustomerUpdatedCommand>(
+                            item.Request.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    }
+                    catch (JsonException)
+                    {
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer update payload is invalid."]
+                        });
+                    }
+
+                    if (command is null || command.CustomerId == Guid.Empty || command.BaseVersion < 1)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer update requires a valid ID and positive baseVersion."]
+                        });
+
+                    var customer = await db.Customers.SingleOrDefaultAsync(
+                        x => x.TenantId == tenantId && x.Id == command.CustomerId && x.IsActive,
+                        cancellationToken);
+                    if (customer is null)
+                        return Results.NotFound(new { code = "customer_not_found", customerId = command.CustomerId });
+
+                    db.Entry(customer).Property(x => x.Version).OriginalValue = command.BaseVersion;
+                    try
+                    {
+                        customer.UpdateContact(command.Name, command.Phone, command.Email, command.Address, command.Notes);
+                    }
+                    catch (ArgumentException exception)
+                    {
+                        return Results.ValidationProblem(new Dictionary<string, string[]> { ["customer"] = [exception.Message] });
+                    }
+                }
+
                 if (item.Request.OperationType == "customer.profile.created")
                 {
                     if (item.Request.SchemaVersion != 1 || item.Request.BranchId is null)
@@ -493,6 +538,16 @@ public static class SyncEndpoints
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                foreach (var operation in inserted)
+                    db.Entry(operation).State = EntityState.Detached;
+                return Results.Conflict(new
+                {
+                    code = "customer_version_conflict",
+                    message = "Customer was changed after this operation's base version. Refresh and reconcile before retrying."
+                });
             }
             catch (DbUpdateException)
             {
@@ -583,6 +638,9 @@ public static class SyncEndpoints
     public sealed record CustomerCreatedCommand(
         Guid CustomerId, string Code, string Name, string? Phone, string? Email,
         string? Address, string? Notes, int BaseVersion);
+    public sealed record CustomerUpdatedCommand(
+        Guid CustomerId, int BaseVersion, string Name, string? Phone, string? Email,
+        string? Address, string? Notes);
 
     public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence, Guid? BranchId = null);
     public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
