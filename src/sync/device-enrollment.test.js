@@ -18,6 +18,8 @@ test("enrolls once, persists a non-extractable key and signs canonical sync requ
       if (path.endsWith("/challenges")) return {
         challengeId: "challenge-1",
         challenge: Buffer.alloc(32, 7).toString("base64"),
+        tenantId,
+        branchId,
         deviceId,
         actorId
       };
