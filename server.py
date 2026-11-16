@@ -629,7 +629,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
                 session_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
                 db.execute("""INSERT INTO game_sessions(id,tenant_id,device_id,customer_id,started_by,started_at,status,
-                    players_count,rate_per_hour,is_free,created_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?)""",
+                    players_count,rate_per_hour,is_free,created_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?)""",
                     (session_id,user["tenant_id"],device_id,customer_id,user["id"],now,players,device["hourly_rate"],device["is_free"],now))
                 audit(db,user["tenant_id"],user["id"],"gamenet.session.started","game_session",session_id,
                       {"deviceId":device_id,"playersCount":players})
