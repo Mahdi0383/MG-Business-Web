@@ -321,7 +321,8 @@ export class LocalOperationStore {
   async recordConflict(conflict) {
     if (!conflict || typeof conflict !== "object" || !conflict.tenantId
       || !Number.isSafeInteger(conflict.sequence) || conflict.sequence < 1
-      || typeof conflict.operationId !== "string" || !conflict.operationId.trim())
+      || typeof conflict.operationId !== "string" || !conflict.operationId.trim()
+      || (conflict.branchId != null && (typeof conflict.branchId !== "string" || !conflict.branchId.trim())))
       throw new TypeError("A valid incoming conflict record is required.");
     const database = await openDatabase();
     const transaction = database.transaction(CONFLICTS_STORE, "readwrite");
