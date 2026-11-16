@@ -16,6 +16,15 @@ test("validates branch scope before reading the incoming inbox", async () => {
   await assert.rejects(store.getUnappliedIncoming("tenant-1", 100, " "), /branchId/);
 });
 
+
+test("requires explicit boolean authority when reading tenant-wide outbox entries", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(
+    store.getPending("tenant-1", 100, "branch-a", "true"),
+    /allowTenantWide/
+  );
+});
+
 test("rejects non-object payloads before attempting IndexedDB access", async () => {
   const store = new LocalOperationStore();
   for (const payload of [undefined, null, "not-an-object", 42, [], false]) {
