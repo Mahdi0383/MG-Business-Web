@@ -150,3 +150,9 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Added fake IndexedDB-backed tests for local customer edit/outbox atomicity, single-pending-edit protection, remote update projection, stale-version conflict persistence and origin-device echo suppression.
 - Frontend CI on commit 4552b80a passed after the schema correction.
 
+### Customer sync authorization hardening — 2026-11-16
+
+- Customer create/update journal commands now require Owner, Manager or Cashier membership in addition to authenticated tenant/device/branch ownership.
+- Added an integration test proving a Viewer can enroll a device but cannot push a customer creation command.
+- The role check is applied to new commands; exact retries remain idempotent and do not repeat business effects.
+
