@@ -13,6 +13,8 @@ The browser client now has a durable IndexedDB operation store, a push agent and
 
 The server scans the tenant journal in sequence order but returns only tenant-wide and active-branch operations to a branch-scoped member. Its scan cursor can advance past rows hidden by branch permissions; those rows are not included in the response. The browser therefore stores a separate pull cursor for each tenant/branch pair. This is required so switching from one branch to another and later returning does not skip that branch's older operations. Server acknowledgement cursors remain monotonic telemetry and do not replace the browser's branch-specific pull cursors.
 
+Push batches are selected from the active branch queue in global FIFO order; commands from other branches are skipped rather than blocking the selected branch. Tenant-wide queued commands are drained only for Owner/Manager roles. Sync HTTP requests carry an explicit tenant/branch context captured by the sync cycle, preventing a branch switch during an in-flight request from storing another branch's response under the wrong cursor.
+
 ## Integration boundary
 
 This is infrastructure only. Existing demo screens and current live business forms are not yet routed through this journal, and generic POST requests are deliberately not auto-queued. Each business workflow must be converted to an explicit local command handler that validates and applies the local projection in the same transaction as enqueueing the operation.
