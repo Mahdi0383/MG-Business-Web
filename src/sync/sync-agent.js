@@ -16,7 +16,8 @@ export class SyncAgent {
     try {
       const afterSequence = await this.operationStore.getCursor(tenantId, branchId);
       const response = await this.apiClient.get(
-        `/api/sync/operations?afterSequence=${afterSequence}&limit=${boundedPageSize}`
+        `/api/sync/operations?afterSequence=${afterSequence}&limit=${boundedPageSize}`,
+        { tenantId, branchId }
       );
       if (!Array.isArray(response?.operations)
         || response.operations.length > boundedPageSize
@@ -39,7 +40,7 @@ export class SyncAgent {
       await this.apiClient.post("/api/sync/acknowledgements", {
         deviceId,
         sequence: response.nextSequence
-      });
+      }, { tenantId, branchId });
       return { status: response.hasMore ? "more-available" : "pulled", received: response.operations.length, nextSequence: response.nextSequence, hasMore: Boolean(response.hasMore) };
     } catch (error) {
       if (error instanceof TypeError || error?.name === "NetworkError") return { status: "offline", received: 0, error };
@@ -48,14 +49,14 @@ export class SyncAgent {
       this.running = false;
     }
   }
-  async pushPending(tenantId, { batchSize = 100 } = {}) {
+  async pushPending(tenantId, { batchSize = 100, branchId = null } = {}) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required for sync push.");
     const boundedBatchSize = Number.isInteger(batchSize) ? Math.max(1, Math.min(batchSize, 100)) : 100;
     if (this.running) return { status: "already-running", acknowledged: 0 };
     this.running = true;
     try {
-      const pending = await this.operationStore.getPending(tenantId, boundedBatchSize);
+      const pending = await this.operationStore.getPending(tenantId, boundedBatchSize, branchId);
       if (pending.length === 0) return { status: "idle", acknowledged: 0 };
 
       const response = await this.apiClient.post("/api/sync/operations", {
@@ -70,7 +71,7 @@ export class SyncAgent {
           payloadJson: operation.payloadJson,
           payloadSha256: operation.payloadSha256
         }))
-      });
+      }, { tenantId, branchId });
 
       const acknowledgements = response?.accepted;
       if (!Array.isArray(acknowledgements))
