@@ -21,6 +21,7 @@ public partial class AddDurableSyncOperations : Migration
                     .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
                 Id = table.Column<Guid>(type: "uuid", nullable: false),
                 TenantId = table.Column<Guid>(type: "uuid", nullable: false),
+                ActorId = table.Column<Guid>(type: "uuid", nullable: false),
                 DeviceId = table.Column<Guid>(type: "uuid", nullable: false),
                 BranchId = table.Column<Guid>(type: "uuid", nullable: true),
                 OperationId = table.Column<Guid>(type: "uuid", nullable: false),
@@ -35,10 +36,13 @@ public partial class AddDurableSyncOperations : Migration
             constraints: table =>
             {
                 table.PrimaryKey("PK_sync_operations", x => x.Sequence);
+                table.ForeignKey("FK_sync_operations_AspNetUsers_ActorId", x => x.ActorId,
+                    principalTable: "AspNetUsers", principalColumn: "Id", onDelete: ReferentialAction.Restrict);
                 table.ForeignKey("FK_sync_operations_tenants_TenantId", x => x.TenantId,
                     principalTable: "tenants", principalColumn: "Id", onDelete: ReferentialAction.Restrict);
             });
 
+        migrationBuilder.CreateIndex(name: "IX_sync_operations_ActorId", table: "sync_operations", column: "ActorId");
         migrationBuilder.CreateIndex(name: "IX_sync_operations_TenantId_OperationId",
             table: "sync_operations", columns: new[] { "TenantId", "OperationId" }, unique: true);
         migrationBuilder.CreateIndex(name: "IX_sync_operations_TenantId_Sequence",
