@@ -152,8 +152,14 @@ public sealed class DeviceRequestSignatureMiddleware
 
         try
         {
+            // Retain replay nonces only for their acceptance window. Cleanup is
+            // scoped to the active device so idle devices need no background job.
+            await db.DeviceRequestNonces
+                .Where(x => x.TenantId == tenantId && x.DeviceId == deviceId && x.ExpiresAtUtc <= now)
+                .ExecuteDeleteAsync(context.RequestAborted);
             db.DeviceRequestNonces.Add(new(
                 tenantId, deviceId, nonce.ToString("D"), now, now.AddMinutes(5)));
+            credential.RecordUse(now);
             await db.SaveChangesAsync(context.RequestAborted);
         }
         catch (DbUpdateException)
