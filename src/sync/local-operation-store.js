@@ -132,16 +132,46 @@ export class LocalOperationStore {
     return operation;
   }
 
-  async getPending(tenantId, limit = 100) {
+  async getPending(tenantId, limit = 100, branchId = null) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required.");
+    const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 100)) : 100;
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
+
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
     const done = transactionDone(transaction);
     const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantStateCreatedAt");
     const range = IDBKeyRange.bound(
       [tenantId, "pending", ""],
-      [tenantId, "pending", "\uffff"]
+      [tenantId, "pending", "\\uffff"]
     );
-    const rows = await requestResult(index.getAll(range, Math.max(1, Math.min(limit, 100))));
+
+    if (branchId === null) {
+      const rows = await requestResult(index.getAll(range, boundedLimit));
+      await done;
+      return rows;
+    }
+
+    // Keep global FIFO order while skipping other branches' queued work,
+    // so one branch's offline backlog cannot starve another branch's sync.
+    const rows = await new Promise((resolve, reject) => {
+      const matching = [];
+      const request = index.openCursor(range);
+      request.onerror = () => reject(request.error || new Error("Could not read pending sync operations."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || matching.length >= boundedLimit) {
+          resolve(matching);
+          return;
+        }
+        const operation = cursor.value;
+        if (operation.branchId == null || operation.branchId === branchId)
+          matching.push(operation);
+        cursor.continue();
+      };
+    });
     await done;
     return rows;
   }
