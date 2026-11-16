@@ -479,8 +479,8 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
   };
 
   const heading = navigation.find(item => item[0] === page)?.[2] || "نمای کلی";
-  const syncLabel = syncStatus === "offline" ? "اینترنت قطع است" : syncStatus === "syncing" ? "در حال همگام‌سازی" : syncStatus === "synced" ? "همگام‌سازی انجام شد" : syncStatus === "error" ? "خطا در همگام‌سازی" : "آماده همگام‌سازی";
-  const syncClass = syncStatus === "offline" ? "offline" : syncStatus === "error" ? "error" : syncStatus === "syncing" ? "syncing" : "ready";
+  const syncLabel = syncStatus === "offline" ? "اینترنت قطع است" : syncStatus === "syncing" ? "در حال همگام‌سازی" : syncStatus === "synced" ? "همگام‌سازی انجام شد" : syncStatus === "conflict" ? "عملیات نیازمند بررسی" : syncStatus === "error" ? "خطا در همگام‌سازی" : "آماده همگام‌سازی";
+  const syncClass = syncStatus === "offline" ? "offline" : syncStatus === "error" || syncStatus === "conflict" ? "error" : syncStatus === "syncing" ? "syncing" : "ready";
   const totalSales = useMemo(() => sales.reduce((sum, order) => sum + Number(order.total || 0), 0), [sales]);
   const assetAccounts = accounts.filter(x => x.type === "Asset");
   const revenueAccounts = accounts.filter(x => x.type === "Revenue");
