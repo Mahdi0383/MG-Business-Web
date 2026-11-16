@@ -19,15 +19,15 @@ public static class SalesEndpoints
 
         group.MapGet("/orders", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
-            var orders = await db.SalesOrders.AsNoTracking()
+            var query = db.SalesOrders.AsNoTracking()
                 .Where(x => x.TenantId == tenant.TenantId
-                    && (tenant.BranchId == null || x.BranchId == tenant.BranchId))
-                .OrderByDescending(x => x.CreatedAtUtc)
-                .Take(100)
-                .Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
-                    x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc))
-                .ToListAsync(cancellationToken);
-            return Results.Ok(orders.OrderByDescending(x => x.CreatedAtUtc));
+                    && (tenant.BranchId == null || x.BranchId == tenant.BranchId));
+            var orderRows = db.Database.IsSqlite()
+                ? (await query.ToListAsync(cancellationToken)).OrderByDescending(x => x.CreatedAtUtc).Take(100).ToList()
+                : await query.OrderByDescending(x => x.CreatedAtUtc).Take(100).ToListAsync(cancellationToken);
+            var orders = orderRows.Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
+                x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc));
+            return Results.Ok(orders);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
         group.MapPost("/orders", async (CreateSaleRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
