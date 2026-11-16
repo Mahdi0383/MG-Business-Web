@@ -1,5 +1,5 @@
 const DATABASE_NAME = "mg-business-local";
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 const OPERATIONS_STORE = "operations";
 const META_STORE = "metadata";
 const INBOX_STORE = "inbox";
@@ -15,11 +15,18 @@ function openDatabase() {
       const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
       request.onupgradeneeded = event => {
         const database = request.result;
+        let operations;
         if (!database.objectStoreNames.contains(OPERATIONS_STORE)) {
-          const operations = database.createObjectStore(OPERATIONS_STORE, { keyPath: "operationId" });
-          operations.createIndex("byStateCreatedAt", ["state", "createdAtUtc"]);
-          operations.createIndex("byTenantState", ["tenantId", "state"]);
+          operations = database.createObjectStore(OPERATIONS_STORE, { keyPath: "operationId" });
+        } else {
+          operations = event.target.transaction.objectStore(OPERATIONS_STORE);
         }
+        if (!operations.indexNames.contains("byStateCreatedAt"))
+          operations.createIndex("byStateCreatedAt", ["state", "createdAtUtc"]);
+        if (!operations.indexNames.contains("byTenantState"))
+          operations.createIndex("byTenantState", ["tenantId", "state"]);
+        if (!operations.indexNames.contains("byTenantStateCreatedAt"))
+          operations.createIndex("byTenantStateCreatedAt", ["tenantId", "state", "createdAtUtc"]);
         if (!database.objectStoreNames.contains(META_STORE))
           database.createObjectStore(META_STORE, { keyPath: "key" });
         let inbox;
@@ -122,10 +129,14 @@ export class LocalOperationStore {
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
     const done = transactionDone(transaction);
-    const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantState");
-    const rows = await requestResult(index.getAll(IDBKeyRange.only([tenantId, "pending"]), Math.max(1, Math.min(limit, 100))));
+    const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantStateCreatedAt");
+    const range = IDBKeyRange.bound(
+      [tenantId, "pending", ""],
+      [tenantId, "pending", "\\uffff"]
+    );
+    const rows = await requestResult(index.getAll(range, Math.max(1, Math.min(limit, 100))));
     await done;
-    return rows.sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc));
+    return rows;
   }
 
   async acknowledge(acknowledgements) {
