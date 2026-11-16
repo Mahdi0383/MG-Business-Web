@@ -94,3 +94,10 @@ Passing CI demonstrates that the current automated test/build gates pass; it doe
 - Device credentials are tenant-scoped so one browser identity can be used in the tenant's authorized branches; enrollment proof itself remains branch-context-bound. A future branch-restricted credential can set an explicit branch scope.
 - Production startup now fails unless `SyncSecurity:RequireDeviceSignatures=true`. Enrollment bootstrap routes are excluded from request-signature middleware but still require authenticated tenant membership and challenge proof.
 - This closes device request authentication and replay protection at the API boundary; key rotation/revocation APIs, expired nonce cleanup, browser key recovery, signed authority leases/fencing and end-to-end multi-node recovery tests remain open release gates.
+
+
+### Device enrollment recovery and nonce retention — 2026-11-17
+
+- Device enrollment now persists the browser's non-extractable private key before the server can commit. A repeated proof using that same key and a fresh challenge rotates the one-time credential and key version, allowing recovery after a lost response without exposing the private key.
+- Signed request middleware deletes expired replay nonces for the authenticated tenant/device during normal traffic and records last credential use. The replay store therefore remains bounded for active devices; idle-device records expire from acceptance and are removed on the next request.
+- Integration coverage verifies enrollment response recovery, credential version rotation, replay rejection and request-body tampering. Key revocation/rotation administration, device loss recovery and lease fencing remain separate gates.
