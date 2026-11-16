@@ -274,7 +274,7 @@ function AuthShell({ apiBaseUrl }) {
         if (active) {
           setSyncStatus(pullResult?.status === "offline" && result.status === "idle"
             ? "offline"
-            : result.status === "synced" && pullResult?.status === "more-available"
+            : pullResult?.status === "more-available"
               ? "syncing"
               : result.status);
         }
