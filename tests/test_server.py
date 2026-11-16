@@ -208,6 +208,12 @@ class ApiIntegrationTests(unittest.TestCase):
             "quantityDelta": 20, "unitCost": 30000
         }, token)
         self.assertEqual(status, 201)
+        status, duplicate_movement = self.request("POST", "/api/inventory/movements", {
+            "id":"move-in-1","productId":"product-1","movementType":"purchase",
+            "quantityDelta":20,"unitCost":30000
+        }, token)
+        self.assertEqual(status,200)
+        self.assertTrue(duplicate_movement["duplicate"])
         status, result = self.request("POST", "/api/inventory/movements", {
             "id": "move-out-1", "productId": "product-1", "movementType": "sale",
             "quantityDelta": -5, "unitCost": 30000
