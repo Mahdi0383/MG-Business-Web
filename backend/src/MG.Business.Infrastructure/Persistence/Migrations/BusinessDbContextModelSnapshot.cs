@@ -582,6 +582,14 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RequestFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<Guid>("SalesOrderId")
                         .HasColumnType("uuid");
 
@@ -593,6 +601,9 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "BranchId");
 
                     b.HasIndex("TenantId", "SalesOrderId");
+
+                    b.HasIndex("TenantId", "BranchId", "IdempotencyKey")
+                        .IsUnique();
 
                     b.ToTable("sales_payments", (string)null);
                 });
