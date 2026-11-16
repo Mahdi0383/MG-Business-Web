@@ -512,8 +512,10 @@ test("coalesces duplicate pull requests while one pull is in flight", async () =
 
 test("coalesces duplicate push requests while one push is in flight", async () => {
   let release;
+  let markStarted;
   let requests = 0;
   const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { markStarted = resolve; });
   const operation = {
     operationId: "pending-op", tenantId: "tenant-1", deviceId: "device-1", branchId: null,
     operationType: "test.created", schemaVersion: 1, authorityEpoch: 0,
@@ -524,6 +526,7 @@ test("coalesces duplicate push requests while one push is in flight", async () =
     async post(path) {
       if (path === "/api/sync/operations") {
         requests += 1;
+        markStarted();
         await gate;
         return { accepted: [{ operationId: "pending-op", sequence: 1 }] };
       }
@@ -535,7 +538,7 @@ test("coalesces duplicate push requests while one push is in flight", async () =
     async acknowledge() {}
   });
   const first = agent.pushPending("tenant-1", { actorId: "actor-1" });
-  await Promise.resolve();
+  await started;
   const second = await agent.pushPending("tenant-1", { actorId: "actor-1" });
   assert.deepEqual(second, { status: "already-running", acknowledged: 0 });
   assert.equal(requests, 1);
