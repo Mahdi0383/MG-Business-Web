@@ -7,7 +7,7 @@ namespace MG.Business.Api.Endpoints;
 
 public static class CustomerEndpoints
 {
-    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "Viewer"];
+    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "GameOperator", "Viewer"];
     private static readonly string[] WriteRoles = ["Owner", "Manager", "Cashier"];
 
     public static IEndpointRouteBuilder MapCustomerEndpoints(this IEndpointRouteBuilder endpoints)
