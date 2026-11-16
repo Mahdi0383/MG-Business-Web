@@ -170,6 +170,13 @@ public static class SyncEndpoints
                     ["deviceId"] = ["A valid device ID is required."]
                 });
 
+            var metadataErrors = new Dictionary<string, string[]>();
+            ValidateDeviceMetadata(request.DeviceName, "deviceName", 100, metadataErrors);
+            ValidateDeviceMetadata(request.Platform, "platform", 40, metadataErrors);
+            ValidateDeviceMetadata(request.ClientVersion, "clientVersion", 40, metadataErrors);
+            if (metadataErrors.Count > 0)
+                return Results.ValidationProblem(metadataErrors);
+
             var branchId = tenant.BranchId;
             var now = DateTimeOffset.UtcNow;
             var presence = await db.DevicePresences
@@ -662,6 +669,17 @@ public static class SyncEndpoints
         string? Address, string? Notes);
 
     public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence, Guid? BranchId = null);
+    private static void ValidateDeviceMetadata(string? value, string field, int maxLength,
+        IDictionary<string, string[]> errors)
+    {
+        if (value is null) return;
+        var normalized = value.Trim();
+        if (normalized.Length > maxLength)
+            errors[field] = [$"{field} cannot exceed {maxLength} characters."];
+        else if (normalized.Any(char.IsControl))
+            errors[field] = [$"{field} cannot contain control characters."];
+    }
+
     public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
     public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
