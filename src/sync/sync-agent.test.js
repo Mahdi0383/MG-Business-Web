@@ -353,3 +353,32 @@ test("requires an authenticated actor before starting sync push", async () => {
   const store = { async getPending() { assert.fail("missing actor must be rejected before storage access"); } };
   await assert.rejects(new SyncAgent(api, store).pushPending("tenant-1"), /actorId is required/);
 });
+
+
+test("acknowledges a pulled page within the same branch cursor scope", async () => {
+  let acknowledgement = null;
+  const api = {
+    async get() { return { operations: [], nextSequence: 7, hasMore: false }; },
+    async post(path, body) {
+      assert.equal(path, "/api/sync/acknowledgements");
+      acknowledgement = body;
+      return {};
+    }
+  };
+  const store = {
+    async getCursor() { return 3; },
+    async storeIncomingPage() {},
+    async getDeviceId() { return "device-1"; }
+  };
+
+  const result = await new SyncAgent(api, store).pullIncoming("tenant-1", {
+    branchId: "branch-a",
+    actorId: "actor-1"
+  });
+  assert.equal(result.status, "pulled");
+  assert.deepEqual(acknowledgement, {
+    deviceId: "device-1",
+    sequence: 7,
+    branchId: "branch-a"
+  });
+});
