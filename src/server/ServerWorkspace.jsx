@@ -51,6 +51,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [productSearch, setProductSearch] = useState("");
+  const [appliedProductSearch, setAppliedProductSearch] = useState("");
   const [productPage, setProductPage] = useState(1);
   const [productCatalog, setProductCatalog] = useState({ page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
   const [stockRows, setStockRows] = useState([]);
@@ -136,7 +137,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       }
       else if (page === "products") {
         const [catalog, currentStock] = await Promise.all([
-          client.get("/api/inventory/products/catalog?page=" + productPage + "&pageSize=25&search=" + encodeURIComponent(productSearch.trim()) + "&activeOnly=false"),
+          client.get("/api/inventory/products/catalog?page=" + productPage + "&pageSize=25&search=" + encodeURIComponent(appliedProductSearch.trim()) + "&activeOnly=false"),
           client.get("/api/inventory/stock")
         ]);
         setProducts(catalog?.items || []);
@@ -185,7 +186,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     } finally {
       setLoading(false);
     }
-  }, [client, operationStore, tenant.id, tenant.role, branch.id, page, productPage, productSearch, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
+  }, [client, operationStore, tenant.id, tenant.role, branch.id, page, productPage, appliedProductSearch, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -681,10 +682,10 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         {page === "products" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button>}</div>
           <div className="mg-server-panel-actions" style={{ marginBottom: 16 }}>
-            <form onSubmit={event => { event.preventDefault(); setProductPage(1); loadData(); }} className="mg-server-search">
+            <form onSubmit={event => { event.preventDefault(); setProductPage(1); setAppliedProductSearch(productSearch); }} className="mg-server-search">
               <input aria-label="جست‌وجوی کالا" placeholder="جست‌وجو بر اساس نام یا کد کالا" maxLength={100} value={productSearch} onChange={event => setProductSearch(event.target.value)} />
               <button className="mg-secondary-btn" type="submit">جست‌وجو</button>
-              {productSearch && <button className="mg-secondary-btn" type="button" onClick={() => { setProductSearch(""); setProductPage(1); }}>پاک‌کردن</button>}
+              {productSearch && <button className="mg-secondary-btn" type="button" onClick={() => { setProductSearch(""); setAppliedProductSearch(""); setProductPage(1); }}>پاک‌کردن</button>}
             </form>
             <span>{count(productCatalog.totalCount)} کالا · صفحه {count(productCatalog.page)} از {count(productCatalog.totalPages)}</span>
           </div>
