@@ -162,20 +162,29 @@ public static class SyncEndpoints
                 .Select(x => (long?)x.Sequence)
                 .MaxAsync(cancellationToken) ?? 0;
 
-            return Results.Ok(devices.OrderByDescending(device => device.LastSeenAtUtc).Select(device =>
+            var inventory = new List<object>(devices.Count);
+            foreach (var device in devices.OrderByDescending(device => device.LastSeenAtUtc))
             {
                 var lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0);
-                return new
+                // Sequence values are database-generated and may contain gaps from other tenants.
+                // Count this tenant's actual journal rows instead of subtracting global sequence values.
+                var pendingOperationCount = await db.SyncOperations.AsNoTracking()
+                    .LongCountAsync(x => x.TenantId == tenantId
+                        && x.Sequence > lastAcknowledgedSequence, cancellationToken);
+
+                inventory.Add(new
                 {
                     device.DeviceId, device.ActorId, device.BranchId, device.DeviceName,
                     device.Platform, device.ClientVersion, device.FirstSeenAtUtc, device.LastSeenAtUtc,
                     lastAcknowledgedSequence,
                     latestJournalSequence,
-                    pendingOperationCount = Math.Max(0, latestJournalSequence - lastAcknowledgedSequence),
+                    pendingOperationCount,
                     isOnline = device.LastSeenAtUtc >= cutoff,
                     alertCode = device.LastSeenAtUtc >= cutoff ? null : "DEVICE_HEARTBEAT_MISSED"
-                };
-            }));
+                });
+            }
+
+            return Results.Ok(inventory);
         });
 
         group.MapPost("/operations", async (
