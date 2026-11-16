@@ -76,6 +76,43 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantPull.StatusCode);
     }
 
+
+    [Fact]
+    public async Task HeartbeatRegistersDeviceAndOwnerCanReadConnectivity()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"heartbeat-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Heartbeat Test Store",
+            slug = $"heartbeat-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId,
+            deviceName = "MG Test Browser",
+            platform = "Test",
+            clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var devices = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
+        Assert.NotNull(devices);
+        var device = Assert.Single(devices!);
+        Assert.Equal(deviceId, device.DeviceId);
+        Assert.Equal("MG Test Browser", device.DeviceName);
+        Assert.True(device.IsOnline);
+        Assert.Null(device.AlertCode);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
@@ -115,7 +152,7 @@ public sealed class SyncApiIntegrationTests
     private sealed record SyncPushResponse(SyncAck[] Accepted);
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
-    private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
+    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, bool IsOnline, string? AlertCode);\n    private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
         string OperationType, int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
         DateTimeOffset ReceivedAtUtc, string PayloadJson, string PayloadSha256);
 }
