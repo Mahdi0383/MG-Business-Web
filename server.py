@@ -149,6 +149,7 @@ def connect():
             post_transaction_journal(db,tx["tenant_id"],tx["created_by"],tx["id"],tx["title"],
                                      tx["amount"],tx["kind"],tx["occurred_at"])
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)", (int(time.time()),))
+    db.commit()
     return db
 
 def password_hash(password: str, salt: bytes | None = None) -> str:
