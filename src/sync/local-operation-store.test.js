@@ -14,6 +14,21 @@ test("requires an authenticated actor before creating a browser device identity"
 });
 
 
+test("isolates browser device identities by tenant and branch", async () => {
+  const store = new LocalOperationStore();
+  const actorId = `actor-${crypto.randomUUID()}`;
+  const tenantId = `tenant-${crypto.randomUUID()}`;
+  const branchA = crypto.randomUUID();
+  const branchB = crypto.randomUUID();
+  const first = await store.getDeviceId(actorId, tenantId, branchA);
+  const repeated = await store.getDeviceId(actorId, tenantId, branchA);
+  const otherBranch = await store.getDeviceId(actorId, tenantId, branchB);
+  const tenantWide = await store.getDeviceId(actorId, tenantId, null);
+  assert.equal(first, repeated);
+  assert.notEqual(first, otherBranch);
+  assert.notEqual(first, tenantWide);
+});
+
 test("does not expose tenant-wide pending or inbox counts without manager authority", async () => {
   const store = new LocalOperationStore();
   assert.equal(await store.getPendingCount("tenant-1", null, false, "device-1"), 0);
