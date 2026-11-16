@@ -10,6 +10,17 @@ test("requires an authenticated actor before creating a browser device identity"
   await assert.rejects(store.getDeviceId(" "), /actorId/);
 });
 
+
+test("does not expose tenant-wide pending or inbox counts without manager authority", async () => {
+  const store = new LocalOperationStore();
+  assert.equal(await store.getPendingCount("tenant-1", null, false), 0);
+  assert.equal(await store.getInboxCount("tenant-1", null, false), 0);
+  assert.deepEqual(
+    await store.getPending("tenant-1", 100, null, false, "device-1"),
+    []
+  );
+});
+
 test("validates branch context before reading local sync counters", async () => {
   const store = new LocalOperationStore();
   await assert.rejects(store.getPendingCount("tenant-1", " "), /branchId/);
