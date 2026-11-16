@@ -44,6 +44,25 @@ CREATE TABLE IF NOT EXISTS transactions(
  occurred_at TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS products(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 160),
+ sku TEXT, category TEXT NOT NULL DEFAULT 'عمومی' CHECK(length(category)<=80),
+ sell_price INTEGER NOT NULL CHECK(sell_price>=0),
+ cost_price INTEGER NOT NULL DEFAULT 0 CHECK(cost_price>=0),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ UNIQUE(tenant_id,sku)
+);
+CREATE INDEX IF NOT EXISTS idx_products_tenant_active ON products(tenant_id,active,name);
+CREATE TABLE IF NOT EXISTS customers(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ full_name TEXT NOT NULL CHECK(length(full_name) BETWEEN 1 AND 160),
+ phone TEXT, email TEXT, notes TEXT NOT NULL DEFAULT '',
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ UNIQUE(tenant_id,phone)
+);
+CREATE INDEX IF NOT EXISTS idx_customers_tenant_name ON customers(tenant_id,full_name);
 CREATE TABLE IF NOT EXISTS audit_log(
  id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  actor_id TEXT REFERENCES users(id), action TEXT NOT NULL,
@@ -152,6 +171,14 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM transactions WHERE tenant_id=? ORDER BY created_at DESC LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/products":
+                rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
+                    FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/customers":
+                rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
+                    FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
         finally: db.close()
 
@@ -214,6 +241,48 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
                 db.commit()
                 return self.send_json(200, {"ok": True})
+            if path == "/api/products":
+                if user["role"] not in ("owner", "manager"):
+                    return self.send_json(403, {"error": "دسترسی مدیریت کالا ندارید."})
+                name = data.get("name"); sku = data.get("sku"); category = data.get("category", "عمومی")
+                sell_price = data.get("sellPrice"); cost_price = data.get("costPrice", 0)
+                if not isinstance(name,str) or not 1 <= len(name.strip()) <= 160:
+                    return self.send_json(400, {"error": "نام کالا معتبر نیست."})
+                if sku is not None and (not isinstance(sku,str) or len(sku.strip()) > 80):
+                    return self.send_json(400, {"error": "کد کالا معتبر نیست."})
+                if not isinstance(category,str) or len(category) > 80:
+                    return self.send_json(400, {"error": "دسته‌بندی کالا معتبر نیست."})
+                if type(sell_price) is not int or sell_price < 0 or type(cost_price) is not int or cost_price < 0:
+                    return self.send_json(400, {"error": "قیمت فروش و خرید باید عدد صحیح و غیرمنفی باشند."})
+                product_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                if len(product_id) > 100: return self.send_json(400, {"error": "شناسه کالا معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""INSERT INTO products(id,tenant_id,name,sku,category,sell_price,cost_price,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?)""", (product_id,user["tenant_id"],name.strip(),sku.strip() if sku else None,category.strip() or "عمومی",sell_price,cost_price,now,now))
+                audit(db,user["tenant_id"],user["id"],"product.created","product",product_id,{"sellPrice":sell_price})
+                db.commit()
+                return self.send_json(201, {"id": product_id, "ok": True})
+            if path == "/api/customers":
+                if user["role"] not in ("owner", "manager", "cashier"):
+                    return self.send_json(403, {"error": "دسترسی مدیریت مشتریان ندارید."})
+                name, phone = data.get("fullName"), data.get("phone")
+                email, notes = data.get("email"), data.get("notes", "")
+                if not isinstance(name,str) or not 1 <= len(name.strip()) <= 160:
+                    return self.send_json(400, {"error": "نام مشتری معتبر نیست."})
+                if phone is not None and (not isinstance(phone,str) or len(phone.strip()) > 32):
+                    return self.send_json(400, {"error": "شماره تماس معتبر نیست."})
+                if email is not None and (not isinstance(email,str) or len(email) > 254):
+                    return self.send_json(400, {"error": "ایمیل معتبر نیست."})
+                if not isinstance(notes,str) or len(notes) > 2000:
+                    return self.send_json(400, {"error": "یادداشت بیش از حد طولانی است."})
+                customer_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                if len(customer_id) > 100: return self.send_json(400, {"error": "شناسه مشتری معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""INSERT INTO customers(id,tenant_id,full_name,phone,email,notes,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?)""", (customer_id,user["tenant_id"],name.strip(),phone.strip() if phone else None,email.strip() if email else None,notes,now,now))
+                audit(db,user["tenant_id"],user["id"],"customer.created","customer",customer_id)
+                db.commit()
+                return self.send_json(201, {"id": customer_id, "ok": True})
             if path == "/api/transactions":
                 if user["role"] not in ("owner", "manager", "cashier"):
                     return self.send_json(403, {"error": "دسترسی ثبت تراکنش ندارید."})
