@@ -218,6 +218,15 @@ public static class SyncEndpoints
                     ["operations"] = [$"Batch size must be between 1 and {MaxBatchSize}."]
                 });
 
+            // No signed authority-lease service is deployed yet. Fail closed rather than
+            // trusting a client-supplied non-zero fencing epoch.
+            if (request.Operations.Any(item => item.AuthorityEpoch != 0))
+                return Results.Conflict(new
+                {
+                    code = "AUTHORITY_LEASE_NOT_CONFIGURED",
+                    message = "Only the initial authority epoch is accepted until signed lease and fencing validation are enabled."
+                });
+
             var prepared = new List<(PushOperationRequest Request, string Hash)>();
             foreach (var item in request.Operations)
             {
