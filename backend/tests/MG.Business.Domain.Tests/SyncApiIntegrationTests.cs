@@ -1792,7 +1792,7 @@ public sealed class SyncApiIntegrationTests
 
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
-        var enrollmentMessage = string.Join("\\n",
+        var enrollmentMessage = string.Join("\n",
             "MG-DEVICE-ENROLLMENT-V1",
             tenant.TenantId.ToString("D"),
             tenant.BranchId.ToString("D"),
@@ -1820,7 +1820,7 @@ public sealed class SyncApiIntegrationTests
         {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedBody))).ToLowerInvariant();
-            var canonical = string.Join("\\n",
+            var canonical = string.Join("\n",
                 "MG-DEVICE-REQUEST-V1",
                 "POST",
                 "/api/sync/heartbeat",
