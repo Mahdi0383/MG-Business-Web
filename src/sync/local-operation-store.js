@@ -363,14 +363,16 @@ export class LocalOperationStore {
     if (!operation || typeof operation !== "object" || !operation.payload)
       throw new TypeError("A validated incoming operation is required.");
     const payload = operation.payload;
-    if (operation.operationType !== "customer.profile.created")
+    const isCreate = operation.operationType === "customer.profile.created";
+    const isUpdate = operation.operationType === "customer.profile.updated";
+    if (!isCreate && !isUpdate)
       throw new Error("No local projection handler is registered for " + operation.operationType + ".");
     if (typeof payload.customerId !== "string" || !payload.customerId.trim())
       throw new TypeError("Customer command requires a customerId.");
-
-    const isCreate = operation.operationType === "customer.profile.created";
-    if (payload.baseVersion !== 0)
+    if (isCreate && payload.baseVersion !== 0)
       throw new TypeError("Customer creation requires baseVersion 0.");
+    if (isUpdate && (!Number.isSafeInteger(payload.baseVersion) || payload.baseVersion < 1))
+      throw new TypeError("Customer update requires a positive baseVersion.");
     const database = await openDatabase();
     const transaction = database.transaction([INBOX_STORE, CUSTOMERS_STORE], "readwrite");
     const done = transactionDone(transaction);
@@ -409,6 +411,30 @@ export class LocalOperationStore {
             originOperationId: operation.operationId,
             lastOperationId: operation.operationId,
             serverSequence: sequence
+          });
+        }
+      } else if (isUpdate) {
+        if (!existingCustomer) {
+          integrityError = new Error("Customer update projection target does not exist.");
+          transaction.abort();
+          return;
+        }
+        // The originating device already applied this exact command locally.
+        // Its journal echo only advances the inbox; it must not apply twice.
+        if (existingCustomer.lastOperationId !== operation.operationId) {
+          if (existingCustomer.version !== payload.baseVersion) {
+            integrityError = new Error("Customer projection version changed before inbound update commit.");
+            transaction.abort();
+            return;
+          }
+          const normalized = normalizeLocalCustomer({ ...existingCustomer, ...payload });
+          customerStore.put({
+            ...existingCustomer, ...normalized,
+            version: payload.baseVersion + 1,
+            syncStatus: "synced",
+            lastOperationId: operation.operationId,
+            serverSequence: sequence,
+            updatedAtUtc: now
           });
         }
       }
