@@ -157,7 +157,8 @@ public static class SyncEndpoints
         return endpoints;
     }
 
-    private sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);\n    public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
+    private sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);
+    public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
         Guid OperationId, Guid DeviceId, Guid? BranchId, string OperationType,
         int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
