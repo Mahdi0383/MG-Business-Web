@@ -88,9 +88,11 @@ public static class SalesEndpoints
 
                 var orderNumber = $"S-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..19].ToUpperInvariant();
                 var order = new SalesOrder(tenantId, branchId, orderNumber, request.CustomerId, orderLines, request.Discount);
-                order.SetPaidAmount(request.AmountPaid);
-                if (order.BalanceDue > 0m && request.CustomerId is null)
+                if (request.AmountPaid > order.Total)
+                    return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداختی نمی‌تواند از مبلغ نهایی فاکتور بیشتر باشد."] });
+                if (request.AmountPaid < order.Total && request.CustomerId is null)
                     return Results.ValidationProblem(new Dictionary<string, string[]> { ["customerId"] = ["برای فروش نسیه یا تسویه ناقص، انتخاب مشتری الزامی است."] });
+                order.SetPaidAmount(request.AmountPaid);
 
                 var dueAccountId = request.ReceivableAccountId;
                 if (order.BalanceDue > 0m &&
