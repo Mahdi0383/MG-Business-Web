@@ -170,7 +170,7 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.BadRequest, malformedHashPush.StatusCode);
 
-        foreach (var invalidPayload in new[] { "null", "[]", "42", "\\"text\\"" })
+        foreach (var invalidPayload in new[] { "null", "[]", "42", "\"text\"" })
         {
             var invalidPayloadPush = await client.PostAsJsonAsync("/api/sync/operations", new
             {
