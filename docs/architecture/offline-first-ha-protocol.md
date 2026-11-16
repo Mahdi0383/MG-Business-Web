@@ -112,7 +112,49 @@ Delivery is **at least once**. Exactly-once network delivery is not assumed. The
 - Backups are encrypted, tested by restore drills and retained according to customer policy.
 - Update packages are signed, staged, health-checked and rollback-capable. Software updates do not override license state or customer data.
 
-## 9. Current implementation status (honest boundary)
+## 8.1 Cryptographic device enrollment and request authentication (required implementation contract)
+
+The current heartbeat-created `DevicePresence` row is an inventory hint only. It is not proof of device identity and MUST NOT authorize sync writes or acknowledgements in a production deployment. The following protocol replaces that trust model; it is a required contract, not a claim that the code already implements it.
+
+### Enrollment
+
+1. An authenticated tenant member requests an enrollment challenge for the active tenant and branch. The server derives tenant, actor and allowed branch from the authenticated request context; client-supplied scope is never authoritative.
+2. The browser creates an ECDSA P-256 signing key pair with WebCrypto. The private `CryptoKey` is non-extractable and persisted in IndexedDB; private key bytes are never sent to the server or placed in localStorage.
+3. The client submits the public JWK and a stable random device installation ID. The server validates the curve, key type, coordinate lengths, algorithm and key thumbprint; it binds the key to tenant + branch policy + actor + device installation.
+4. The server returns a cryptographically random, single-use challenge with a short expiry (maximum five minutes). The challenge is bound to the enrollment record, tenant, actor, device ID and public-key thumbprint.
+5. The client signs a canonical, versioned enrollment transcript containing the challenge, tenant ID, branch ID, actor ID, device ID, key thumbprint, protocol version and expiry. The server verifies the signature, consumes the challenge atomically and activates the credential.
+6. Enrollment retries are idempotent only for the same challenge and exact public key. Reusing a consumed challenge, changing scope, changing the key, or replaying a proof is rejected. Enrollment, rotation and revocation are audited.
+
+### Authenticated sync requests
+
+- Heartbeat, push, pull and acknowledgement endpoints require an enrolled-device proof in addition to the user session.
+- Each proof signs a canonical request transcript containing protocol version, HTTP method, normalized path, tenant ID, branch ID, actor ID, device ID, request timestamp, unique nonce, content SHA-256 and (for sync) the operation batch identity.
+- The server enforces a narrow timestamp window, stores/rejects replayed nonces for the credential validity window, and verifies the signature against the active registered public key before any cursor or journal mutation.
+- The signature covers the exact request body bytes. JSON reserialization, header ambiguity, duplicate security headers and non-canonical paths are rejected.
+- Device credentials are independently revocable and rotatable. Revocation takes effect before the next protected operation; removing a tenant membership also invalidates its device credentials.
+- A browser device ID without a valid signature is never sufficient authorization. Legacy heartbeat auto-registration must be removed or restricted to non-authoritative diagnostics before production.
+
+### Credential storage and recovery
+
+- Store only the validated public key, thumbprint, tenant/branch/actor binding, status, creation/last-use timestamps and revocation metadata. There is no shared device secret to recover.
+- Private keys are non-extractable, scoped to one browser origin and one installation. Browser data loss requires a fresh authenticated enrollment; the old credential is revoked.
+- Key rotation requires proof from the old key plus a fresh authenticated challenge signed by the new key. Lost-key recovery requires an explicit owner/manager re-enrollment flow with audit and revocation of the old key.
+- Device enrollment must be rate-limited per actor, tenant and source network, and must alert on unusual enrollment/revocation patterns.
+
+### Mandatory security tests
+
+- valid enrollment and valid signed heartbeat/push/pull/acknowledgement;
+- unauthenticated enrollment, cross-tenant and cross-branch binding attempts;
+- altered body, method, path, tenant, branch, actor, device, timestamp or nonce;
+- expired, replayed, duplicate and concurrently consumed challenges;
+- replayed request nonce, stale timestamp, malformed/unsupported JWK and signature;
+- revoked credential, removed membership, actor takeover and key rotation;
+- browser storage loss and recovery without restoring trust to a device ID;
+- concurrent enrollment and concurrent replay under both PostgreSQL and SQLite test providers.
+
+No endpoint may fall back to browser-profile identity when proof verification fails. Until this entire contract is implemented and its tests pass, the release gate remains blocked.
+
+## 10. Current implementation status (honest boundary)
 
 Implemented on the feature branch:
 - tenant-scoped append-only sync journal, idempotent push/pull transport, payload hash verification and per-device/per-branch acknowledgement cursors;
