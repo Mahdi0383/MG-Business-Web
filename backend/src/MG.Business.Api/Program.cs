@@ -103,6 +103,7 @@ app.MapTenantContextEndpoints();
 app.MapTenantEndpoints();
 app.MapInventoryEndpoints();
 app.MapAccountingEndpoints();
+app.MapCustomerEndpoints();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = "mg-business-api" }))
    .WithName("Liveness");
