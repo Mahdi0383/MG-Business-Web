@@ -61,6 +61,8 @@ if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservati
     raise SystemExit("GameNet reservation API and backup support are missing")
 if "reservationForm" not in app or "data-reservation-cancel" not in app:
     raise SystemExit("GameNet reservation management UI is missing")
+if "duplicate" not in server or "mg-business.pending-order" not in app:
+    raise SystemExit("POS order retry idempotency is missing")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
