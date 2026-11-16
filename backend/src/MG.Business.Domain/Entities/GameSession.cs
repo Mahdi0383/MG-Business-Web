@@ -45,19 +45,25 @@ public sealed class GameSession
     public decimal? TotalAmount { get; private set; }
     public GameSessionStatus Status { get; private set; }
 
-    public void Close(DateTimeOffset endedAtUtc)
+    public (int BilledMinutes, decimal TotalAmount) CalculateCharge(DateTimeOffset endedAtUtc)
     {
         if (Status != GameSessionStatus.Active)
-            throw new InvalidOperationException("Only active sessions can be closed.");
+            throw new InvalidOperationException("Only active sessions can be quoted or closed.");
         if (endedAtUtc <= StartedAtUtc)
             throw new ArgumentOutOfRangeException(nameof(endedAtUtc), "End time must be after start time.");
 
         var elapsedMinutes = (decimal)(endedAtUtc - StartedAtUtc).TotalMinutes;
         var billedMinutes = (int)(Math.Ceiling(elapsedMinutes / BillingIntervalMinutes) * BillingIntervalMinutes);
         billedMinutes = Math.Max(BillingIntervalMinutes, billedMinutes);
+        var totalAmount = decimal.Round(HourlyRate * billedMinutes / 60m, 2, MidpointRounding.AwayFromZero);
+        return (billedMinutes, totalAmount);
+    }
 
-        BilledMinutes = billedMinutes;
-        TotalAmount = decimal.Round(HourlyRate * billedMinutes / 60m, 2, MidpointRounding.AwayFromZero);
+    public void Close(DateTimeOffset endedAtUtc)
+    {
+        var charge = CalculateCharge(endedAtUtc);
+        BilledMinutes = charge.BilledMinutes;
+        TotalAmount = charge.TotalAmount;
         EndedAtUtc = endedAtUtc;
         Status = GameSessionStatus.Closed;
     }
