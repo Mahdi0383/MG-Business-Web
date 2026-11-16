@@ -318,6 +318,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn("suppliers", result["tables"])
         self.assertIn("purchase_invoices", result["tables"])
         self.assertIn("supplier_payments", result["tables"])
+        self.assertIn("gamenet_reservations", result["tables"])
         self.assertNotIn("password_hash", result["tables"]["users"][0])
 
         status, result = self.request("POST", "/api/gamenet/devices", {
@@ -419,8 +420,8 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(trial["totalDebit"],trial["totalCredit"])
 
         # GameNet reservations prevent overlapping bookings and bind check-in to the reserved customer.
-        start_at=__import__("datetime").datetime.fromtimestamp(time.time()-30).strftime("%Y-%m-%dT%H:%M")
-        end_at=__import__("datetime").datetime.fromtimestamp(time.time()+3600).strftime("%Y-%m-%dT%H:%M")
+        start_at=__import__("datetime").datetime.fromtimestamp(time.time()-10).strftime("%Y-%m-%dT%H:%M:%S")
+        end_at=__import__("datetime").datetime.fromtimestamp(time.time()+3600).strftime("%Y-%m-%dT%H:%M:%S")
         status, reservation = self.request("POST", "/api/gamenet/reservations", {
             "id":"reservation-01","deviceId":"pc-free","customerId":"customer-1",
             "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
@@ -490,6 +491,10 @@ class ApiIntegrationTests(unittest.TestCase):
         status, restored_purchases = self.request("GET", "/api/purchase-invoices", token=token)
         self.assertEqual(status,200)
         self.assertEqual(restored_purchases["items"][0]["status"],"paid")
+        status, restored_reservations = self.request("GET", "/api/gamenet/reservations", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(next(x for x in restored_reservations["items"] if x["id"]=="reservation-01")["status"],"completed")
+        self.assertEqual(next(x for x in restored_reservations["items"] if x["id"]=="reservation-cancel")["status"],"cancelled")
 
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
