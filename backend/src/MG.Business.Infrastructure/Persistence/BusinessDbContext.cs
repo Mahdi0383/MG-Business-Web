@@ -62,6 +62,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
             entity.HasMany(x => x.Lines).WithOne().HasForeignKey(x => new { x.TenantId, x.JournalEntryId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(x => x.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
         });
 
         modelBuilder.Entity<JournalEntryLine>(entity =>
@@ -72,8 +73,8 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
                 table.HasCheckConstraint("ck_journal_line_non_negative", "debit >= 0 AND credit >= 0");
             });
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.Debit).HasPrecision(18, 2);
-            entity.Property(x => x.Credit).HasPrecision(18, 2);
+            entity.Property(x => x.Debit).HasColumnName("debit").HasPrecision(18, 2);
+            entity.Property(x => x.Credit).HasColumnName("credit").HasPrecision(18, 2);
             entity.Property(x => x.Description).HasMaxLength(300);
             entity.HasOne<Account>().WithMany().HasForeignKey(x => new { x.TenantId, x.AccountId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
