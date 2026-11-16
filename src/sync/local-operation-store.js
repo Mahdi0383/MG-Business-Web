@@ -207,10 +207,10 @@ export class LocalOperationStore {
       previousSequence = operation.sequence;
     }
 
-    if (operations.length > 0 && nextSequence !== previousSequence)
-      throw new Error("Incoming sync cursor must equal the last received sequence.");
-    if (operations.length === 0 && nextSequence !== previousSequence)
-      throw new Error("An empty incoming page cannot advance the sync cursor.");
+    // The server may advance across journal rows hidden by branch permissions.
+    // The cursor therefore represents the scanned journal head, not the last visible row.
+    if (nextSequence < previousSequence)
+      throw new Error("Incoming sync cursor cannot precede the last received operation.");
 
     const database = await openDatabase();
     const transaction = database.transaction([INBOX_STORE, META_STORE], "readwrite");
