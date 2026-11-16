@@ -33,14 +33,19 @@ export class SyncAgent {
         throw new Error("MG Sync API returned an invalid pull page.");
       let previousSequence = afterSequence;
       for (const operation of response.operations) {
-        if (!Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence)
+        if (!operation || typeof operation !== "object" || Array.isArray(operation)
+          || !Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence)
           throw new Error("MG Sync API returned a non-monotonic operation sequence.");
+        if (operation.branchId != null
+          && (typeof operation.branchId !== "string" || !operation.branchId.trim()))
+          throw new Error("MG Sync API returned an invalid branch identity.");
         if (branchId !== null && operation.branchId != null && operation.branchId !== branchId)
           throw new Error("MG Sync API returned an operation outside the active branch.");
-        if (typeof operation.operationId !== "string" || !operation.operationId
-          || typeof operation.operationType !== "string" || !operation.operationType
+        if (typeof operation.operationId !== "string" || !operation.operationId.trim()
+          || typeof operation.operationType !== "string" || !operation.operationType.trim()
           || typeof operation.payloadJson !== "string"
-          || typeof operation.payloadSha256 !== "string"
+          || new TextEncoder().encode(operation.payloadJson).byteLength > 64 * 1024
+          || typeof operation.payloadSha256 !== "string" || !/^[0-9a-f]{64}$/i.test(operation.payloadSha256)
           || !Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1)
           throw new Error("MG Sync API returned an invalid operation envelope.");
         previousSequence = operation.sequence;
