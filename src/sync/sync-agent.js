@@ -152,11 +152,19 @@ export class SyncAgent {
 
       const expected = new Set(pending.map(operation => operation.operationId));
       const acknowledgedIds = new Set(acknowledgements.map(item => item?.operationId));
+      let previousAcknowledgedSequence = 0;
+      const acknowledgementOrderInvalid = acknowledgements.some((item, index) => {
+        const valid = item?.operationId === pending[index]?.operationId
+          && expected.has(item.operationId)
+          && Number.isSafeInteger(item.sequence)
+          && item.sequence > previousAcknowledgedSequence;
+        if (valid) previousAcknowledgedSequence = item.sequence;
+        return !valid;
+      });
       if (acknowledgements.length !== pending.length
         || acknowledgedIds.size !== acknowledgements.length
-        || acknowledgements.some(item => !expected.has(item?.operationId)
-          || !Number.isSafeInteger(item?.sequence) || item.sequence < 1))
-        throw new Error("MG Sync API acknowledgement does not match the submitted batch.");
+        || acknowledgementOrderInvalid)
+        throw new Error("MG Sync API acknowledgement does not match the submitted batch or journal order.");
 
       await this.operationStore.acknowledge(acknowledgements);
       return { status: "synced", acknowledged: acknowledgements.length };
