@@ -325,6 +325,10 @@ class ApiIntegrationTests(unittest.TestCase):
             "id": "session-02", "deviceId": "pc-01", "playersCount": 1
         }, token)
         self.assertEqual(status, 409)
+        status, result = self.request("POST", "/api/gamenet/devices/pc-01", {
+            "name": "PC-01 Updated", "deviceType": "pc", "hourlyRate": 130000, "isFree": False
+        }, token)
+        self.assertEqual(status, 200)
         db = server.connect()
         try:
             db.execute("UPDATE game_sessions SET started_at=? WHERE id='session-01'", (int(__import__('time').time())-3600,))
@@ -334,6 +338,9 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status, 200)
         self.assertGreaterEqual(result["amountDue"], 120000)
+        self.assertLess(result["amountDue"], 130000)
+        status, result = self.request("GET", "/api/gamenet/devices", token=token)
+        self.assertEqual(result["items"][0]["name"], "PC-01 Updated")
         status, result = self.request("GET", "/api/customers", token=token)
         self.assertEqual(result["items"][0]["balance"], 155000)
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
