@@ -387,12 +387,6 @@ export class LocalOperationStore {
     const done = transactionDone(transaction);
     const index = transaction.objectStore(INBOX_STORE).index("byTenantApplied");
 
-    if (branchId === null) {
-      const count = await requestResult(index.count(IDBKeyRange.only([tenantId, false])));
-      await done;
-      return count;
-    }
-
     const count = await new Promise((resolve, reject) => {
       let matching = 0;
       const request = index.openCursor(IDBKeyRange.only([tenantId, false]));
@@ -426,12 +420,6 @@ export class LocalOperationStore {
     const done = transactionDone(transaction);
     const index = transaction.objectStore(INBOX_STORE).index("byTenantApplied");
     const range = IDBKeyRange.only([tenantId, false]);
-
-    if (branchId === null) {
-      const rows = await requestResult(index.getAll(range, boundedLimit));
-      await done;
-      return rows.sort((a, b) => a.sequence - b.sequence);
-    }
 
     const rows = await new Promise((resolve, reject) => {
       const matching = [];
