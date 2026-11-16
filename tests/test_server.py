@@ -393,6 +393,11 @@ class ApiIntegrationTests(unittest.TestCase):
             "id": "session-01", "deviceId": "pc-01", "customerId": "customer-1", "playersCount": 2
         }, token)
         self.assertEqual(status, 201)
+        status, retry_session = self.request("POST", "/api/gamenet/sessions", {
+            "id":"session-01","deviceId":"pc-01","customerId":"customer-1","playersCount":2
+        }, token)
+        self.assertEqual(status,200)
+        self.assertTrue(retry_session["duplicate"])
         status, result = self.request("POST", "/api/gamenet/sessions", {
             "id": "session-02", "deviceId": "pc-01", "playersCount": 1
         }, token)
