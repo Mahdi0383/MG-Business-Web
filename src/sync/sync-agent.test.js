@@ -487,3 +487,58 @@ test("runs pull and push independently without starving inbound sync", async () 
   const pushResult = await pushPromise;
   assert.equal(pushResult.status, "synced");
 });
+
+
+test("coalesces duplicate pull requests while one pull is in flight", async () => {
+  let release;
+  let requests = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const agent = new SyncAgent({
+    async get() { requests += 1; await gate; return { operations: [], nextSequence: 0, hasMore: false }; },
+    async post() { return {}; }
+  }, {
+    async getCursor() { return 0; },
+    async getDeviceId() { return "device-1"; },
+    async storeIncomingPage() {}
+  });
+  const first = agent.pullIncoming("tenant-1", { actorId: "actor-1" });
+  await Promise.resolve();
+  const second = await agent.pullIncoming("tenant-1", { actorId: "actor-1" });
+  assert.deepEqual(second, { status: "already-running", received: 0 });
+  assert.equal(requests, 1);
+  release();
+  assert.equal((await first).status, "pulled");
+});
+
+test("coalesces duplicate push requests while one push is in flight", async () => {
+  let release;
+  let requests = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const operation = {
+    operationId: "pending-op", tenantId: "tenant-1", deviceId: "device-1", branchId: null,
+    operationType: "test.created", schemaVersion: 1, authorityEpoch: 0,
+    occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson: "{}",
+    payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  };
+  const agent = new SyncAgent({
+    async post(path) {
+      if (path === "/api/sync/operations") {
+        requests += 1;
+        await gate;
+        return { accepted: [{ operationId: "pending-op", sequence: 1 }] };
+      }
+      return {};
+    }
+  }, {
+    async getDeviceId() { return "device-1"; },
+    async getPending() { return [operation]; },
+    async acknowledge() {}
+  });
+  const first = agent.pushPending("tenant-1", { actorId: "actor-1" });
+  await Promise.resolve();
+  const second = await agent.pushPending("tenant-1", { actorId: "actor-1" });
+  assert.deepEqual(second, { status: "already-running", acknowledged: 0 });
+  assert.equal(requests, 1);
+  release();
+  assert.equal((await first).status, "synced");
+});
