@@ -430,5 +430,6 @@ test("persists a duplicate customer creation as a conflict and stops later repla
   assert.equal(result.applied, 0);
   assert.equal(conflicts.length, 1);
   assert.equal(conflicts[0].sequence, 8);
+  assert.equal(conflicts[0].branchId, "branch-a");
   assert.deepEqual(applied, []);
 });
