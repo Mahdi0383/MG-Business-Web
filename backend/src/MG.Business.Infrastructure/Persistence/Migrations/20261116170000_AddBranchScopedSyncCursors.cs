@@ -35,6 +35,8 @@ public partial class AddBranchScopedSyncCursors : Migration
             });
 
         migrationBuilder.CreateIndex(name: "IX_sync_device_branch_cursors_ActorId", table: "sync_device_branch_cursors", column: "ActorId");
+        migrationBuilder.CreateIndex(name: "IX_sync_device_branch_cursor_branch",
+            table: "sync_device_branch_cursors", columns: new[] { "TenantId", "BranchId" });
         migrationBuilder.CreateIndex(name: "IX_sync_device_branch_cursor_scope_seq",
             table: "sync_device_branch_cursors", columns: new[] { "TenantId", "BranchId", "LastAcknowledgedSequence" });
     }
