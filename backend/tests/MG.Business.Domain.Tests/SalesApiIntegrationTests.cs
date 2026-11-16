@@ -159,6 +159,83 @@ public sealed class SalesApiIntegrationTests
         Assert.Equal(0m, trial.TotalCredit);
     }
 
+
+    [Fact]
+    public async Task BranchScopedCashierListsOnlySalesFromAssignedBranch()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"sales-owner-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Branch Sales",
+            slug = $"branch-sales-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var branchResponse = await owner.PostAsJsonAsync("/api/branches", new { name = "Second", code = "B02" });
+        Assert.Equal(HttpStatusCode.Created, branchResponse.StatusCode);
+        var branch = await branchResponse.Content.ReadFromJsonAsync<BranchCreated>();
+
+        var cash = await CreateAccountAsync(owner, "1000", "Cash", AccountType.Asset);
+        var revenue = await CreateAccountAsync(owner, "4000", "Sales Revenue", AccountType.Revenue);
+        var productResponse = await owner.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "SERVICE-01",
+            name = "Service Item",
+            baseUnit = "service",
+            tracksInventory = false,
+            defaultSalePrice = 25m
+        });
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
+
+        async Task<SaleResponse> CreateSaleAsync(string reference)
+        {
+            var response = await owner.PostAsJsonAsync("/api/sales/orders", new
+            {
+                customerId = (Guid?)null,
+                discount = 0m,
+                amountPaid = 25m,
+                paymentMethod = PaymentMethod.Cash,
+                revenueAccountId = revenue.Id,
+                paymentAccountId = cash.Id,
+                receivableAccountId = (Guid?)null,
+                inventoryAccountId = (Guid?)null,
+                costOfGoodsSoldAccountId = (Guid?)null,
+                paymentReference = reference,
+                lines = new[] { new { productId = product!.Id, quantity = 1m, unitPrice = 25m, discount = 0m } }
+            });
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await response.Content.ReadFromJsonAsync<SaleResponse>())!;
+        }
+
+        var mainSale = await CreateSaleAsync("MAIN-SALE");
+        owner.DefaultRequestHeaders.Remove("X-MG-Branch");
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", branch!.Id.ToString());
+        var secondSale = await CreateSaleAsync("SECOND-SALE");
+
+        var staffEmail = $"cashier-{Guid.NewGuid():N}@mg.test";
+        using var cashier = await RegisterAndLoginAsync(factory, staffEmail);
+        var membership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = staffEmail,
+            role = TenantRole.Cashier,
+            branchId = branch.Id
+        });
+        Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
+
+        cashier.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        cashier.DefaultRequestHeaders.Add("X-MG-Branch", branch.Id.ToString());
+        var orders = await cashier.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
+
+        Assert.Single(orders!);
+        Assert.Equal(secondSale.Id, orders[0].Id);
+        Assert.NotEqual(mainSale.Id, orders[0].Id);
+    }
+
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
@@ -202,6 +279,7 @@ public sealed class SalesApiIntegrationTests
 
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
+    private sealed record BranchCreated(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAtUtc);
     private sealed record AccountResponse(Guid Id, string Code, string Name, string Type, bool IsActive);
     private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
     private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
