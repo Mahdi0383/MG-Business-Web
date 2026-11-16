@@ -129,6 +129,7 @@ public static class InventoryEndpoints
                     valuation.QuantityOnHand,
                     valuation.AverageUnitCost,
                     valuation.InventoryValue,
+                    RawInventoryValue = pair.Value.Valuation.RawInventoryValue,
                     MovementCount = pair.Value.Count
                 };
             }).OrderBy(x => x.ProductId).ThenBy(x => x.BranchId).ToList();
