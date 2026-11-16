@@ -18,7 +18,11 @@ export class SyncAgent {
       const response = await this.apiClient.get(
         `/api/sync/operations?afterSequence=${afterSequence}&limit=${boundedPageSize}`
       );
-      if (!Array.isArray(response?.operations) || !Number.isSafeInteger(response?.nextSequence) || response.nextSequence < afterSequence)
+      if (!Array.isArray(response?.operations)
+        || response.operations.length > boundedPageSize
+        || !Number.isSafeInteger(response?.nextSequence)
+        || response.nextSequence < afterSequence
+        || typeof response.hasMore !== "boolean")
         throw new Error("MG Sync API returned an invalid pull page.");
       let previousSequence = afterSequence;
       for (const operation of response.operations) {
