@@ -8,7 +8,8 @@ export class SyncAgent {
   constructor(apiClient, operationStore) {
     this.apiClient = apiClient;
     this.operationStore = operationStore;
-    this.running = false;
+    this.runningPull = false;
+    this.runningPush = false;
   }
 
   async pullIncoming(tenantId, { pageSize = 100, branchId = null, actorId } = {}) {
@@ -19,8 +20,8 @@ export class SyncAgent {
     if (typeof actorId !== "string" || !actorId.trim())
       throw new TypeError("actorId is required for sync pull.");
     const boundedPageSize = Number.isInteger(pageSize) ? Math.max(1, Math.min(pageSize, 200)) : 100;
-    if (this.running) return { status: "already-running", received: 0 };
-    this.running = true;
+    if (this.runningPull) return { status: "already-running", received: 0 };
+    this.runningPull = true;
     try {
       const afterSequence = await this.operationStore.getCursor(tenantId, branchId);
       const response = await this.apiClient.get(
@@ -79,7 +80,7 @@ export class SyncAgent {
       if (isNetworkFailure(error)) return { status: "offline", received: 0, error };
       throw error;
     } finally {
-      this.running = false;
+      this.runningPull = false;
     }
   }
   async pushPending(tenantId, { batchSize = 100, branchId = null, allowTenantWide = false, actorId } = {}) {
@@ -92,8 +93,8 @@ export class SyncAgent {
     if (typeof actorId !== "string" || !actorId.trim())
       throw new TypeError("actorId is required for sync push.");
     const boundedBatchSize = Number.isInteger(batchSize) ? Math.max(1, Math.min(batchSize, 100)) : 100;
-    if (this.running) return { status: "already-running", acknowledged: 0 };
-    this.running = true;
+    if (this.runningPush) return { status: "already-running", acknowledged: 0 };
+    this.runningPush = true;
     try {
       const deviceId = await this.operationStore.getDeviceId(actorId);
       const pending = await this.operationStore.getPending(tenantId, boundedBatchSize, branchId, allowTenantWide, deviceId);
@@ -163,7 +164,7 @@ export class SyncAgent {
         return { status: "offline", acknowledged: 0, error };
       throw error;
     } finally {
-      this.running = false;
+      this.runningPush = false;
     }
   }
 }
