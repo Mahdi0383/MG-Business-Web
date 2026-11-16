@@ -440,6 +440,48 @@ public static class SyncEndpoints
                     continue;
                 }
 
+                if (item.Request.OperationType == "customer.profile.created")
+                {
+                    if (item.Request.SchemaVersion != 1 || item.Request.BranchId is null)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer creation requires schema version 1 and an explicit originating branch."]
+                        });
+
+                    CustomerCreatedCommand? command;
+                    try
+                    {
+                        command = JsonSerializer.Deserialize<CustomerCreatedCommand>(
+                            item.Request.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    }
+                    catch (JsonException)
+                    {
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer creation payload is invalid."]
+                        });
+                    }
+
+                    if (command is null || command.CustomerId == Guid.Empty || command.BaseVersion != 0)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["Customer creation requires a valid ID and baseVersion 0."]
+                        });
+
+                    try
+                    {
+                        db.Customers.Add(new Customer(command.CustomerId, tenantId, command.Code, command.Name,
+                            command.Phone, command.Email, command.Address, command.Notes));
+                    }
+                    catch (ArgumentException exception)
+                    {
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = [exception.Message]
+                        });
+                    }
+                }
+
                 var operation = new SyncOperation(tenantId, actorId, item.Request.DeviceId,
                     item.Request.BranchId, item.Request.OperationId, item.Request.OperationType,
                     item.Request.SchemaVersion, item.Request.AuthorityEpoch, item.Request.OccurredAtUtc,
@@ -538,6 +580,10 @@ public static class SyncEndpoints
     }
 
     public sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);
+    public sealed record CustomerCreatedCommand(
+        Guid CustomerId, string Code, string Name, string? Phone, string? Email,
+        string? Address, string? Notes, int BaseVersion);
+
     public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence, Guid? BranchId = null);
     public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
     public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
