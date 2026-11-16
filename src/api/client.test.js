@@ -119,6 +119,7 @@ test("classifies fetch failures as offline without hiding HTTP errors", () => {
   assert.equal(isNetworkUnavailable(new TypeError("Failed to fetch")), true);
   assert.equal(isNetworkUnavailable(new ApiError(503, "Service unavailable")), false);
   assert.equal(isNetworkUnavailable(new Error("Unexpected application error")), false);
+});
 
 test("signs sync requests using the exact serialized body and selected tenant branch", async () => {
   let signed;
@@ -159,5 +160,4 @@ test("does not require a device signature for enrollment bootstrap routes", asyn
   globalThis.fetch = async () => response(200, { ok: true });
   await client.post("/api/sync/enrollment/challenges", { deviceId: "device-1" });
   assert.equal(signed, false);
-});
 });
