@@ -34,6 +34,10 @@ export class IncomingOperationProcessor {
     let previousSequence = 0;
 
     for (const row of orderedRows) {
+      if (row.tenantId != null && row.tenantId !== tenantId)
+        throw new Error("Incoming inbox returned an operation outside the active tenant.");
+      if (row.branchId == null && !allowTenantWide)
+        throw new Error("Incoming inbox returned a tenant-wide operation without manager authority.");
       if (branchId !== null && row.branchId != null && row.branchId !== branchId)
         throw new Error("Incoming inbox returned an operation outside the active branch.");
       if (!Number.isSafeInteger(row.sequence) || row.sequence <= previousSequence
