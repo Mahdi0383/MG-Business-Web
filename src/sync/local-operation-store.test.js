@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload, normalizeLocalCustomer } from "./local-operation-store.js";
+import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload, normalizeLocalCustomer, isConflictVisible } from "./local-operation-store.js";
 
 
 
@@ -330,4 +330,18 @@ test("rejects invalid local customer fields before opening IndexedDB", () => {
     { code: "C-1", name: "Valid", email: "not-an-email" },
     { code: "C-1", name: "Valid", phone: 123 }
   ]) assert.throws(() => normalizeLocalCustomer(customer));
+});
+
+
+test("scopes unresolved conflicts to the active branch and tenant-wide authority", () => {
+  const branchConflict = { branchId: "branch-a" };
+  const otherBranchConflict = { branchId: "branch-b" };
+  const tenantWideConflict = { branchId: null };
+  assert.equal(isConflictVisible(branchConflict, "branch-a", false), true);
+  assert.equal(isConflictVisible(otherBranchConflict, "branch-a", false), false);
+  assert.equal(isConflictVisible(tenantWideConflict, "branch-a", false), false);
+  assert.equal(isConflictVisible(tenantWideConflict, "branch-a", true), true);
+  assert.equal(isConflictVisible(branchConflict, null, true), false);
+  assert.equal(isConflictVisible(tenantWideConflict, null, true), true);
+  assert.equal(isConflictVisible(branchConflict, null, false), false);
 });
