@@ -141,6 +141,11 @@ public static class InventoryEndpoints
                 await transaction.RollbackAsync(cancellationToken);
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["movement"] = [exception.Message] });
             }
+            catch (DbUpdateException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "تغییر هم‌زمان موجودی رخ داد؛ عملیات را دوباره بررسی کنید." });
+            }
             catch (DbException)
             {
                 await transaction.RollbackAsync(cancellationToken);
