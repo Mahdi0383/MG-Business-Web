@@ -113,6 +113,77 @@ public static class AccountingEndpoints
                 new AccountResponse(account.Id, account.Code, account.Name, account.Type.ToString(), account.IsActive));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
+        group.MapGet("/journal-entries", async (int? page, int? pageSize, DateOnly? from, DateOnly? to, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            var pageNumber = page ?? 1;
+            var take = pageSize ?? 50;
+            if (pageNumber < 1 || take is < 1 or > 200 || (from.HasValue && to.HasValue && from.Value > to.Value))
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["query"] = ["صفحه باید مثبت، اندازه صفحه بین ۱ تا ۲۰۰ و بازه تاریخ معتبر باشد."]
+                });
+
+            var query = db.JournalEntries.AsNoTracking()
+                .Where(x => x.TenantId == tenant.TenantId);
+            if (tenant.BranchId is Guid branchId)
+                query = query.Where(x => x.BranchId == branchId);
+            if (from is DateOnly fromDate)
+                query = query.Where(x => x.EntryDate >= fromDate);
+            if (to is DateOnly toDate)
+                query = query.Where(x => x.EntryDate <= toDate);
+
+            var totalCount = await query.CountAsync(cancellationToken);
+            var entries = await query.OrderByDescending(x => x.EntryDate)
+                .ThenByDescending(x => x.Id)
+                .Skip((pageNumber - 1) * take)
+                .Take(take)
+                .Select(x => new
+                {
+                    x.Id, x.BranchId, x.EntryDate, x.Description, x.Reference, x.CreatedAtUtc
+                })
+                .ToListAsync(cancellationToken);
+
+            var entryIds = entries.Select(x => x.Id).ToArray();
+            var lines = await db.JournalEntryLines.AsNoTracking()
+                .Where(x => x.TenantId == tenant.TenantId && entryIds.Contains(x.JournalEntryId))
+                .Join(db.Accounts.AsNoTracking().Where(x => x.TenantId == tenant.TenantId),
+                    line => new { line.TenantId, line.AccountId },
+                    account => new { account.TenantId, AccountId = account.Id },
+                    (line, account) => new
+                    {
+                        line.JournalEntryId, line.Id, line.AccountId,
+                        AccountCode = account.Code, AccountName = account.Name,
+                        line.Debit, line.Credit, line.Description
+                    })
+                .ToListAsync(cancellationToken);
+
+            var lineGroups = lines.GroupBy(x => x.JournalEntryId).ToDictionary(x => x.Key, x => x.ToArray());
+            var result = entries.Select(entry =>
+            {
+                var entryLines = lineGroups.GetValueOrDefault(entry.Id) ?? [];
+                return new
+                {
+                    entry.Id, entry.BranchId, entry.EntryDate, entry.Description, entry.Reference, entry.CreatedAtUtc,
+                    TotalDebit = entryLines.Sum(x => x.Debit),
+                    TotalCredit = entryLines.Sum(x => x.Credit),
+                    Lines = entryLines.Select(x => new
+                    {
+                        x.Id, x.AccountId, x.AccountCode, x.AccountName,
+                        x.Debit, x.Credit, x.Description
+                    })
+                };
+            }).ToList();
+
+            return Results.Ok(new
+            {
+                page = pageNumber,
+                pageSize = take,
+                totalCount,
+                totalPages = (int)Math.Ceiling(totalCount / (double)take),
+                items = result
+            });
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
         group.MapPost("/journal-entries", async (CreateJournalEntryRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
