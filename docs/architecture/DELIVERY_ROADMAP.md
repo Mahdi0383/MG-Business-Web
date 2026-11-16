@@ -95,6 +95,13 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Verified the current code head's Web CI and SQLite backend CI both completed successfully. Documentation-only updates do not substitute for code or security validation.
 - PR #3 remains open and Draft. Production financial use, merge and deployment remain blocked until all release gates have implementation and test evidence.
 
+### Inventory retry safety increment — 2026-11-17
+
+- Added optional stock-movement `Idempotency-Key` support with a SHA-256 request fingerprint and a unique tenant/branch/key constraint.
+- Exact retries return the originally committed movement; reusing a key with changed request content returns HTTP 409. A provider-backed integration test verifies no duplicate stock is posted.
+- Added the PostgreSQL migration and updated the EF model snapshot; model-snapshot validation, API build and PostgreSQL migration-script generation passed. The latest SQLite integration/domain run passed after normalizing the fingerprint representation.
+- The key is still optional and is not yet persisted by every stock-writing client. Mandatory idempotency and end-to-end offline stock command handling remain release blockers.
+
 ## Planning estimate
 
 The current repository is a foundation, not a finished commercial product. A focused solo development effort with AI-assisted implementation may need roughly 20–30 months for the full scope, depending on test environments, hardware, deployment infrastructure and user acceptance cycles. A narrower paid pilot may be possible earlier, but only after its release gate passes. Recalibrate estimates from measured delivery throughput and test results.
