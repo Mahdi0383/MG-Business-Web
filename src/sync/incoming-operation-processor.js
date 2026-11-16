@@ -16,10 +16,12 @@ export class IncomingOperationProcessor {
     this.classify = classify;
   }
 
-  async processBatch(tenantId, limit = 100) {
-    if (!tenantId) throw new TypeError("tenantId is required.");
+  async processBatch(tenantId, limit = 100, branchId = null) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
     const boundedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 100, 200));
-    const rows = await this.store.getUnappliedIncoming(tenantId, boundedLimit);
+    const rows = await this.store.getUnappliedIncoming(tenantId, boundedLimit, branchId);
     const orderedRows = [...rows].sort((left, right) => left.sequence - right.sequence);
     const results = [];
     let previousSequence = 0;
