@@ -31,8 +31,11 @@ export class SyncAgent {
         throw new Error("MG Sync API returned an invalid acknowledgement.");
 
       const expected = new Set(pending.map(operation => operation.operationId));
-      if (acknowledgements.some(item => !expected.has(item.operationId))
-        || acknowledgements.length !== pending.length)
+      const acknowledgedIds = new Set(acknowledgements.map(item => item?.operationId));
+      if (acknowledgements.length !== pending.length
+        || acknowledgedIds.size !== acknowledgements.length
+        || acknowledgements.some(item => !expected.has(item?.operationId)
+          || !Number.isSafeInteger(item?.sequence) || item.sequence < 1))
         throw new Error("MG Sync API acknowledgement does not match the submitted batch.");
 
       await this.operationStore.acknowledge(acknowledgements);
