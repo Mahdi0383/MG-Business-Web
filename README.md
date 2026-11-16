@@ -22,7 +22,9 @@ python server.py
 MG_HOST=0.0.0.0 python server.py
 ```
 
-فایل پایگاه داده بیرون از پوشه عمومی سایت و در `~/.mg-business-data/mg-business.sqlite3` نگهداری می‌شود. برای انتشار اینترنتی، این سرور را بدون HTTPS، فایروال و reverse proxy امن مستقیماً در معرض اینترنت قرار ندهید.
+فایل پایگاه داده بیرون از پوشه عمومی سایت و در `~/.mg-business-data/mg-business.sqlite3` نگهداری می‌شود. سرور به‌صورت خودکار هنگام اجرا و سپس هر ۲۴ ساعت یک snapshot سازگار SQLite در `~/.mg-business-data/backups` می‌سازد و ۱۴ نسخه آخر را نگه می‌دارد؛ فایل‌ها با دسترسی محدود سیستم‌عامل ذخیره می‌شوند. برای انتشار اینترنتی، این سرور را بدون HTTPS، فایروال و reverse proxy امن مستقیماً در معرض اینترنت قرار ندهید.
+
+تنظیمات پشتیبان خودکار از طریق متغیرهای محیطی `MG_BACKUP_INTERVAL_HOURS` (۱ تا ۱۶۸ ساعت)، `MG_BACKUP_RETENTION` (۱ تا ۳۶۵ نسخه) و `MG_BACKUP_DIR` قابل تغییر است. پوشه پشتیبان باید خارج از web root باشد. این snapshotها رمزنگاری‌شده نیستند؛ از دیسک/پوشه امن و در صورت نیاز رمزنگاری سطح سیستم‌عامل استفاده کنید.
 
 برای دریافت تغییرات بعدی در نشست جداگانه:
 
@@ -92,7 +94,7 @@ python server.py
 برای اجرای بررسی‌های محلی از ریشه مخزن:
 
 ```sh
-python -m py_compile server.py license_tool.py tests/test_server.py tests/check_project.py
+python -m py_compile server.py license_tool.py backup_manager.py tests/test_server.py tests/test_backup_manager.py tests/check_project.py
 python tests/check_project.py
 node --test tests/core.test.js
 python -m unittest discover -s tests -p 'test_*.py' -v
