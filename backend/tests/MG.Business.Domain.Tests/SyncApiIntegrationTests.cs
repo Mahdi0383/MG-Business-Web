@@ -83,6 +83,8 @@ public sealed class SyncApiIntegrationTests
 
         var unregisteredPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Forbidden, unregisteredPush.StatusCode);
+        var unregisteredAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new { deviceId, sequence = 0 });
+        Assert.Equal(HttpStatusCode.Forbidden, unregisteredAck.StatusCode);
 
         var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
         {
