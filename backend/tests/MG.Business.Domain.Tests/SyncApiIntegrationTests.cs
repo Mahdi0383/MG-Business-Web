@@ -91,8 +91,28 @@ public sealed class SyncApiIntegrationTests
 
         var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new { deviceId, deviceName = "Sync Test Device", platform = "Test", clientVersion = "0.1.0" });
         Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+        var secondDeviceId = Guid.NewGuid();
+        var secondHeartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = secondDeviceId,
+            deviceName = "Second Sync Device",
+            platform = "Test",
+            clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, secondHeartbeat.StatusCode);
+        var secondDeviceAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId = secondDeviceId,
+            sequence = 0
+        });
+        Assert.Equal(HttpStatusCode.OK, secondDeviceAck.StatusCode);
+
         var deviceInventory = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
-        Assert.Equal(firstAck.Accepted[0].Sequence, Assert.Single(deviceInventory!).LastAcknowledgedSequence);
+        Assert.Equal(2, deviceInventory!.Length);
+        Assert.Equal(firstAck.Accepted[0].Sequence,
+            deviceInventory.Single(device => device.DeviceId == deviceId).LastAcknowledgedSequence);
+        Assert.Equal(0,
+            deviceInventory.Single(device => device.DeviceId == secondDeviceId).LastAcknowledgedSequence);
 
         client.DefaultRequestHeaders.Remove("X-MG-Tenant");
         client.DefaultRequestHeaders.Add("X-MG-Tenant", Guid.NewGuid().ToString());
