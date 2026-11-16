@@ -96,3 +96,37 @@ test("stops ordered replay at the first unresolved conflict", async () => {
   assert.deepEqual(calls, [["conflict", 1]]);
   assert.equal(result.results[0].sequence, 1);
 });
+
+test("passes the active branch into the durable inbox query", async () => {
+  let query;
+  const processor = new IncomingOperationProcessor({
+    store: {
+      async getUnappliedIncoming(...args) { query = args; return []; }
+    },
+    adapter: {
+      async readConflictState() { return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() {}
+    },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  });
+
+  await processor.processBatch("tenant-1", 40, "branch-a");
+  assert.deepEqual(query, ["tenant-1", 40, "branch-a"]);
+});
+
+test("rejects invalid branch scope before reading the inbox", async () => {
+  let queried = false;
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { queried = true; return []; } },
+    adapter: {
+      async readConflictState() { return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() {}
+    },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  });
+
+  await assert.rejects(processor.processBatch("tenant-1", 100, " "), /branchId/);
+  assert.equal(queried, false);
+});
