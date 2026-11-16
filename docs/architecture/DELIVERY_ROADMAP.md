@@ -101,7 +101,7 @@ The current repository is a foundation, not a finished commercial product. A foc
 
 ### Incoming customer replay safety and conflict visibility — 2026-11-16
 
-- The local inbox processor now applies only the supported customer-create projection path. Customer profile/contact update command types remain fail-closed for manual review until a complete outbound edit workflow and version-precondition contract exist; this avoids accepting commands that the local product cannot safely originate or reconcile.
+- The local inbox processor supports versioned customer create and update projections. Other customer profile/contact command types remain fail-closed for manual review until separately specified and tested.
 - Incoming conflict records retain their originating branch. The local store exposes unresolved conflicts through the tenant/status/created-time index, and the workspace status line shows the open conflict count alongside pending outbox and unapplied inbox counts.
 - This is conflict visibility, not conflict resolution. Operators cannot yet merge or discard conflicts through a governed workflow, and unresolved entries intentionally block later journal replay in sequence order.
 
@@ -122,8 +122,8 @@ The current repository is a foundation, not a finished commercial product. A foc
 ### Customer edit concurrency contract — 2026-11-16
 
 - Added ADR-008 defining versioned customer updates, database-enforced optimistic concurrency, operation idempotency, origin-device echo handling and atomic local/inbound projection requirements.
-- The current API still lacks a required baseVersion and database concurrency token; inbound projection still supports customer creation only. Customer updates therefore remain disabled and fail-closed.
-- The next implementation increment must add the version migration and 409 stale-write behavior before wiring the browser outbox or inbound update handler.
+- Superseded by the customer update sync vertical slice below: the API now requires baseVersion and uses a database concurrency token; inbound update projection, browser outbox, origin echo handling and stale-version conflict persistence are implemented for the customer aggregate.
+- Remaining work is operational conflict reconciliation (review/resolve UI and governed actions), broader cross-domain command handlers, and production verification under multi-device concurrency and real network partitions.
 - Required two-device, duplicate-delivery, origin-echo, stale-version, crash-atomicity and SQLite/PostgreSQL tests are specified in ADR-008.
 
 ### Customer optimistic concurrency implementation — 2026-11-16
