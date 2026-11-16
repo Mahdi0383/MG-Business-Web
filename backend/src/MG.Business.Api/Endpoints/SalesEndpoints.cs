@@ -265,7 +265,8 @@ public static class SalesEndpoints
             x.TenantId == tenantId && x.Id == id && x.Type == type && x.IsActive, cancellationToken);
     }
 
-    public sealed record RecordPaymentRequest(decimal Amount, PaymentMethod PaymentMethod, Guid PaymentAccountId, Guid ReceivableAccountId, string? PaymentReference);\n    public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
+    public sealed record RecordPaymentRequest(decimal Amount, PaymentMethod PaymentMethod, Guid PaymentAccountId, Guid ReceivableAccountId, string? PaymentReference);
+    public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
         PaymentMethod PaymentMethod, Guid RevenueAccountId, Guid? PaymentAccountId, Guid? ReceivableAccountId,
         Guid? InventoryAccountId, Guid? CostOfGoodsSoldAccountId, string? PaymentReference, List<SaleLineRequest> Lines);
     public sealed record SaleLineRequest(Guid ProductId, decimal Quantity, decimal? UnitPrice, decimal Discount);
