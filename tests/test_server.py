@@ -132,6 +132,8 @@ class ApiIntegrationTests(unittest.TestCase):
         status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(trial["totalDebit"], trial["totalCredit"])
+        status, balance_sheet = self.request("GET", "/api/accounting/balance-sheet", token=token)
+        self.assertTrue(balance_sheet["balanced"])
         db = server.connect()
         try:
             totals = db.execute("""SELECT SUM(l.debit),SUM(l.credit) FROM journal_lines l
@@ -240,6 +242,8 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["balance"], 35000)
         status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
         self.assertEqual(trial["totalDebit"], trial["totalCredit"])
+        status, balance_sheet = self.request("GET", "/api/accounting/balance-sheet", token=token)
+        self.assertTrue(balance_sheet["balanced"])
 
         status, result = self.request("GET", "/api/public/menu")
         self.assertEqual(status, 200)
