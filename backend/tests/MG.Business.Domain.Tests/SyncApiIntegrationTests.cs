@@ -290,6 +290,67 @@ public sealed class SyncApiIntegrationTests
         Assert.Null(device.AlertCode);
     }
 
+    [Fact]
+    public async Task SyncPushRejectsDeviceIdentityOwnedByAnotherTenantMember()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"sync-owner-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Device Ownership Store",
+            slug = $"device-owner-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await owner.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId,
+            deviceName = "Owner Device",
+            platform = "Test",
+            clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var staffEmail = $"sync-staff-{Guid.NewGuid():N}@mg.test";
+        using var staff = await RegisterAndLoginAsync(factory, staffEmail);
+        var membership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = staffEmail,
+            role = 3,
+            branchId = tenant.BranchId
+        });
+        Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
+        staff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        staff.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var push = await staff.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId,
+                    branchId = tenant.BranchId,
+                    operationType = "test.device-spoof",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"note\\":\\"spoofed-device\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
