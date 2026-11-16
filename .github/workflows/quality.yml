@@ -32,5 +32,3 @@ jobs:
         run: node --test tests/core.test.js
       - name: Run backend integration tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
-      - name: Run backend API integration tests
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
