@@ -116,8 +116,32 @@ public sealed class SyncApiIntegrationTests
         Assert.True(retryAck!.Accepted.Single().Duplicate);
         Assert.Equal(firstAck.Accepted[0].Sequence, retryAck.Accepted[0].Sequence);
 
+        var duplicateCodePayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = Guid.NewGuid(),
+            code = "C-LOCAL-001",
+            name = "Different Customer",
+            baseVersion = 0
+        });
+        var duplicateCodePush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.created", schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = duplicateCodePayload, payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, duplicateCodePush.StatusCode);
         var customers = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse[]>("/api/customers");
         Assert.Single(customers!);
+        var afterDuplicate = await client.GetFromJsonAsync<SyncPullResponse>(
+            $"/api/sync/operations?afterSequence={firstAck.Accepted[0].Sequence}&limit=20");
+        Assert.Empty(afterDuplicate!.Operations);
     }
 
     [Fact]
