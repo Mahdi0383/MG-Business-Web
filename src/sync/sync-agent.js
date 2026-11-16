@@ -52,6 +52,10 @@ export class SyncAgent {
   async pushPending(tenantId, { batchSize = 100, branchId = null, allowTenantWide = false } = {}) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required for sync push.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof allowTenantWide !== "boolean")
+      throw new TypeError("allowTenantWide must be a boolean.");
     const boundedBatchSize = Number.isInteger(batchSize) ? Math.max(1, Math.min(batchSize, 100)) : 100;
     if (this.running) return { status: "already-running", acknowledged: 0 };
     this.running = true;
