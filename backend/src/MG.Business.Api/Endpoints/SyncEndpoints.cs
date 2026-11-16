@@ -317,6 +317,13 @@ public static class SyncEndpoints
                     && item.Request.BranchId != activeBranchId))
                 return Results.Forbid();
 
+            // A member without an active branch cannot publish into arbitrary
+            // branches. Only owners/managers may operate across branches from the
+            // tenant-wide context.
+            if (tenant.BranchId is null && tenant.Role is not ("Owner" or "Manager")
+                && prepared.Any(item => item.Request.BranchId.HasValue))
+                return Results.Forbid();
+
             // Tenant-wide journal entries affect every branch and are reserved for
             // owners/managers even when they have selected the tenant-wide context.
             if (tenant.Role is not ("Owner" or "Manager")
