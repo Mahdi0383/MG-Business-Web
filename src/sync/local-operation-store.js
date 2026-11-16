@@ -549,9 +549,8 @@ export class LocalOperationStore {
       throw new TypeError("actorId is required to store an authority lease.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
-    const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
     if (!lease || lease.tenantId !== tenantId || (lease.branchId || null) !== (branchId || null)
-      || lease.deviceId !== deviceId || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
+      || typeof lease.deviceId !== "string" || !lease.deviceId || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
       || typeof lease.signatureBase64 !== "string" || typeof lease.publicKeySpkiBase64 !== "string"
       || !Number.isFinite(Date.parse(lease.expiresAtUtc)) || Date.parse(lease.expiresAtUtc) <= Date.now())
       throw new TypeError("Only an active authority lease bound to this browser device and scope can be stored.");
@@ -588,13 +587,12 @@ export class LocalOperationStore {
     const lease = stored?.value;
     let valid = false;
     try {
-      const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
       const now = Date.now();
       const issuedAt = Date.parse(lease?.issuedAtUtc);
       const expiresAt = Date.parse(lease?.expiresAtUtc);
       const expectedScope = branchId ? branchId.replaceAll("-", "").toLowerCase() : "tenant-wide";
       if (lease?.tenantId === tenantId && (lease.branchId || null) === (branchId || null)
-        && lease.deviceId === deviceId && lease.scopeKey === expectedScope
+        && typeof lease.deviceId === "string" && lease.deviceId.length > 0 && lease.scopeKey === expectedScope
         && Number.isSafeInteger(lease.epoch) && lease.epoch > 0
         && Number.isFinite(issuedAt) && Number.isFinite(expiresAt)
         && issuedAt <= now + 30_000 && expiresAt > now && expiresAt > issuedAt
