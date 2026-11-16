@@ -47,6 +47,7 @@ Never commit production credentials, signing keys, or Data Protection key materi
 - `POST /api/inventory/movements`
 - `GET/POST /api/customers`, `GET/PUT /api/customers/{id}`
 - `GET/POST /api/accounting/accounts`
+- `POST /api/accounting/accounts/initialize-default-chart` — idempotently create the starter chart of accounts
 - `POST /api/accounting/journal-entries`
 - `GET /api/accounting/trial-balance`
 - `GET/POST /api/sales/orders`
@@ -80,7 +81,9 @@ Composite foreign keys and tenant-scoped indexes reinforce tenant isolation in t
 - Startup migration execution is opt-in and PostgreSQL-only through `Database__ApplyMigrations=true`. SQLite test databases use `EnsureCreated` only in tests; a separate SQLite migration set is still required before SQLite production deployments.
 - User registration is currently open; production must add email verification/invitation approval and abuse controls.
 - Password reset/email delivery, MFA, token revocation UI, audit trails, license activation/module enforcement, suppliers/purchase invoices, tax/VAT, customer credit subledger, online ordering, reservations, and the customer portal are not yet implemented.
-- The frontend is still a prototype using local browser storage and is not yet securely connected to this API.
+- The frontend now has an initial live API mode: bearer-token login, tenant/branch selection, product/customer management, starter chart setup, POS sale entry, kitchen ticket status handling, and game-net device/session start. The demo dashboard remains available when `VITE_API_BASE_URL` is not configured.
+- Browser tokens are held in `sessionStorage`; this is an initial integration, not the final production session architecture. Production should consider an HttpOnly secure-cookie flow, strict CSP, XSS protections, token revocation, and session/device management.
+- The live workspace is still incomplete: purchase invoices, full accounting screens/reports, game-session settlement UI, kitchen ticket creation from POS, online ordering, licensing, and customer portal are not finished.
 - Production requires persistent Data Protection keys, HTTPS, trusted CORS origins, secret management, PostgreSQL backups, migration/rollback testing, monitoring, audit logging, and a security review.
 
 Do not use this build for live financial records until these remaining controls and deployment steps are completed.
