@@ -475,6 +475,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
       <section className="mg-server-content">
         {error && <div className="mg-server-error" role="alert">{error}</div>}
         {loading && <div className="mg-server-loading">در حال دریافت اطلاعات از سرور...</div>}
+        {syncStatus === "offline" && <div className="mg-server-offline-warning" role="status"><b>اتصال اینترنت قطع است.</b> پوسته برنامه و صف محلی فعال‌اند، اما عملیات فروش، انبار و حسابداری هنوز به حالت آفلاین کامل متصل نشده‌اند؛ تا تکمیل این بخش، ثبت عملیات مالی را آفلاین انجام ندهید.</div>}
         {disconnectedDevices.length > 0 && <div className="mg-server-device-alert" role="alert"><b>هشدار قطع ارتباط دستگاه‌ها</b><p>{count(disconnectedDevices.length)} دستگاه در ۹۰ ثانیه اخیر heartbeat ارسال نکرده‌اند.</p><ul>{disconnectedDevices.map(device => <li key={device.deviceId}>{device.deviceName} — آخرین ارتباط: {dateTime(device.lastSeenAtUtc)}</li>)}</ul></div>}
 
         {page === "devices" && <section className="mg-server-panel">
