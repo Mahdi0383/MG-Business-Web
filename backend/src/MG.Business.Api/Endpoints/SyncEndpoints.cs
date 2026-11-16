@@ -31,6 +31,12 @@ public static class SyncEndpoints
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
 
+            var enrolledDevice = await db.DevicePresences.AsNoTracking().AnyAsync(
+                x => x.TenantId == tenantId && x.DeviceId == request.DeviceId && x.ActorId == actorId,
+                cancellationToken);
+            if (!enrolledDevice)
+                return Results.Forbid();
+
             if (request.Sequence > 0 && !await db.SyncOperations.AsNoTracking()
                 .AnyAsync(x => x.TenantId == tenantId && x.Sequence == request.Sequence, cancellationToken))
                 return Results.BadRequest(new { message = "Acknowledgement sequence does not belong to this tenant journal." });
