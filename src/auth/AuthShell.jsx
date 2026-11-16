@@ -240,7 +240,7 @@ function AuthShell({ apiBaseUrl }) {
       try {
         const branchId = selectedBranch?.id || null;
         const allowTenantWide = ["Owner", "Manager"].includes(selectedTenant?.role);
-        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, branchId);
         const [pending, incoming, conflicts] = await Promise.all([
           operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide, deviceId),
           operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide),
@@ -264,7 +264,7 @@ function AuthShell({ apiBaseUrl }) {
         }
 
         if (!syncDeviceRegistered) {
-          const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
+          const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, branchId);
           await client.post("/api/sync/heartbeat", {
             deviceId,
             deviceName: "MG Business Web",
@@ -340,7 +340,7 @@ function AuthShell({ apiBaseUrl }) {
       if (!active || heartbeatInFlight || document.visibilityState === "hidden") return;
       heartbeatInFlight = true;
       try {
-        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, branchId);
         await client.post("/api/sync/heartbeat", {
           deviceId,
           deviceName: "MG Business Web",
