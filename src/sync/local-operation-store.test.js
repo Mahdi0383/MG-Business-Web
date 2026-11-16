@@ -2,6 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { LocalOperationStore } from "./local-operation-store.js";
 
+
+test("validates branch context before reading local sync counters", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(store.getPendingCount("tenant-1", " "), /branchId/);
+  await assert.rejects(store.getPendingCount("tenant-1", null, "yes"), /allowTenantWide/);
+  await assert.rejects(store.getInboxCount("tenant-1", 123), /branchId/);
+});
+
 test("rejects non-object payloads before attempting IndexedDB access", async () => {
   const store = new LocalOperationStore();
   for (const payload of [undefined, null, "not-an-object", 42, [], false]) {
