@@ -55,8 +55,8 @@ export class DeviceEnrollmentClient {
     this.enrollmentInFlight = new Map();
   }
 
-  scope(tenantId, actorId) {
-    return `${tenantId}:${actorId}`;
+  scope(tenantId, actorId, branchId = null) {
+    return `${tenantId}:${branchId || "tenant-wide"}:${actorId}`;
   }
 
   async readCredential(scope) {
@@ -87,7 +87,7 @@ export class DeviceEnrollmentClient {
     if (!globalThis.crypto?.subtle || !globalThis.indexedDB)
       throw new Error("Secure browser cryptography and IndexedDB are required for device enrollment.");
 
-    const scope = this.scope(tenantId, actorId);
+    const scope = this.scope(tenantId, actorId, branchId);
     const existing = await this.readCredential(scope);
     if (existing?.privateKey && existing?.credential && existing?.deviceId)
       return existing;
@@ -104,7 +104,7 @@ export class DeviceEnrollmentClient {
   }
 
   async enroll({ tenantId, branchId, actorId, scope, existing }) {
-    const deviceId = await this.operationStore.getDeviceId(actorId);
+    const deviceId = await this.operationStore.getDeviceId(actorId, tenantId, branchId);
     let privateKey = existing?.privateKey || null;
     let publicKeySpkiBase64 = existing?.publicKeySpkiBase64 || null;
     if (!privateKey || !publicKeySpkiBase64) {
@@ -124,6 +124,7 @@ export class DeviceEnrollmentClient {
       scope,
       tenantId,
       actorId,
+      branchId,
       deviceId,
       privateKey,
       publicKeySpkiBase64,
@@ -138,7 +139,8 @@ export class DeviceEnrollmentClient {
       { tenantId, branchId }
     );
     if (!challengeResponse?.challengeId || typeof challengeResponse.challenge !== "string"
-      || challengeResponse.deviceId !== deviceId || challengeResponse.actorId !== actorId)
+      || challengeResponse.deviceId !== deviceId || challengeResponse.actorId !== actorId
+      || challengeResponse.tenantId !== tenantId || (challengeResponse.branchId || null) !== (branchId || null))
       throw new Error("MG server returned an invalid device enrollment challenge.");
 
     const branchText = branchId || "";
