@@ -226,13 +226,19 @@ export class LocalOperationStore {
         return;
       }
       for (const operation of operations) {
-        inbox.put({
-          ...operation,
-          tenantId,
-          applied: false,
-          appliedAtUtc: null,
-          receivedLocallyAtUtc: new Date().toISOString()
-        });
+        const existingRequest = inbox.get([tenantId, operation.sequence]);
+        existingRequest.onsuccess = () => {
+          // A tenant-wide operation can be encountered from more than one branch
+          // cursor. Preserve its existing applied/conflict state on duplicate pulls.
+          if (existingRequest.result) return;
+          inbox.add({
+            ...operation,
+            tenantId,
+            applied: false,
+            appliedAtUtc: null,
+            receivedLocallyAtUtc: new Date().toISOString()
+          });
+        };
       }
       metadata.put({ key: cursorKey, value: nextSequence });
     };
