@@ -38,7 +38,9 @@ API فعلی:
 - `POST /api/setup` برای ایجاد اولین کسب‌وکار و حساب مالک (رمز حداقل ۱۲ نویسه)
 - `POST /api/login` و `POST /api/logout`
 - `GET /api/me`
-- `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)\n- `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/inventory` و `POST /api/inventory/movements`\n- `GET /api/accounting/accounts`، `GET /api/accounting/journal` و `GET /api/accounting/profit-loss`
+- `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
+- `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/inventory` و `POST /api/inventory/movements`
+- `GET /api/accounting/accounts`، `GET /api/accounting/journal` و `GET /api/accounting/profit-loss`
 
 توکن نشست به‌صورت hash در SQLite نگهداری می‌شود؛ رمز عبور با PBKDF2-HMAC-SHA256 و salt تصادفی ذخیره می‌شود. ورود rate-limit پایه دارد؛ داده‌ها در API به tenant محدود هستند و تغییرات مهم در audit log ثبت می‌شوند. این API هنوز به بازبینی امنیتی مستقل، TLS، مدیریت کاربران و نقش‌های کامل و آزمون نفوذ قبل از انتشار عمومی نیاز دارد. برای دسترسی از شبکه عمومی، سرور را مستقیم بدون HTTPS و تنظیمات امنیتی در معرض اینترنت قرار ندهید.
 
@@ -56,8 +58,6 @@ API فعلی:
 - کاتالوگ کالا، پرونده پایه مشتری، گردش انبار، محاسبه موجودی و جلوگیری از موجودی منفی.
 - گزارش اولیه سود و زیان بر مبنای دفتر کل.
 
-<!-- legacy capability note -->
-- سرور API اولیه مبتنی بر Python stdlib و SQLite، ایجاد فضای کاری/مالک، ورود با نشست bearer، ثبت/خواندن/حذف تراکنش tenant-scoped و audit log.
 - پوسته PWA و cache فایل‌های اصلی برای بارگذاری آفلاین.
 - بررسی ساختار HTML و ارجاعات DOM و تست‌های واحد هسته دامنه در GitHub Actions.
 
