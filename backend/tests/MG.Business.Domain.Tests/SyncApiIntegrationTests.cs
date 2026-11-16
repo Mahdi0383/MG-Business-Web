@@ -145,6 +145,100 @@ public sealed class SyncApiIntegrationTests
     }
 
     [Fact]
+    public async Task CustomerUpdateCommandUsesBaseVersionAndIsIdempotent()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-customer-update-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Customer Update Store",
+            slug = $"customer-update-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var createResponse = await client.PostAsJsonAsync("/api/customers", new
+        {
+            code = "C-UPD-001", name = "Before", phone = "09120000000",
+            email = "before@example.com", address = "Old", notes = "Original"
+        });
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var customer = await createResponse.Content.ReadFromJsonAsync<CustomerEndpoints.CustomerResponse>();
+        Assert.NotNull(customer);
+        Assert.Equal(1, customer!.Version);
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Customer Update Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var operationId = Guid.NewGuid();
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = customer.Id, baseVersion = 1, name = "After",
+            phone = "09121111111", email = "after@example.com", address = "New", notes = "Updated"
+        });
+        var pushRequest = new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId, deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.updated", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc, payloadJson = payload, payloadSha256 = (string?)null
+                }
+            }
+        };
+
+        var push = await client.PostAsJsonAsync("/api/sync/operations", pushRequest);
+        Assert.Equal(HttpStatusCode.Accepted, push.StatusCode);
+        var acknowledgement = await push.Content.ReadFromJsonAsync<SyncPushResponse>();
+        Assert.False(acknowledgement!.Accepted.Single().Duplicate);
+
+        var updated = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse>($"/api/customers/{customer.Id}");
+        Assert.Equal(2, updated!.Version);
+        Assert.Equal("After", updated.Name);
+
+        var retry = await client.PostAsJsonAsync("/api/sync/operations", pushRequest);
+        Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+        var retryAck = await retry.Content.ReadFromJsonAsync<SyncPushResponse>();
+        Assert.True(retryAck!.Accepted.Single().Duplicate);
+        Assert.Equal(acknowledgement.Accepted.Single().Sequence, retryAck.Accepted.Single().Sequence);
+
+        var stalePayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = customer.Id, baseVersion = 1, name = "Stale",
+            phone = "09129999999", email = "stale@example.com", address = "Wrong", notes = "Must not apply"
+        });
+        var stale = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.updated", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = stalePayload, payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+
+        var unchanged = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse>($"/api/customers/{customer.Id}");
+        Assert.Equal(2, unchanged!.Version);
+        Assert.Equal("After", unchanged.Name);
+        Assert.Equal("after@example.com", unchanged.Email);
+    }
+
+    [Fact]
     public async Task CustomerCreationCommandRejectsInvalidVersionAndTenantWideScope()
     {
         using var factory = CreateFactory();
