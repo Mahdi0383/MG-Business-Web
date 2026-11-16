@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
+using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -176,26 +177,34 @@ public static class SyncEndpoints
                 .Where(x => x.TenantId == tenantId)
                 .Select(x => (long?)x.Sequence)
                 .MaxAsync(cancellationToken) ?? 0;
-            var pendingCounts = await db.SyncDeviceCursors.AsNoTracking()
-                .Where(x => x.TenantId == tenantId)
-                .Select(cursor => new
+            var pendingCounts = await (
+                from presence in db.DevicePresences.AsNoTracking()
+                join membership in db.TenantMemberships.AsNoTracking()
+                    on new { presence.TenantId, UserId = presence.ActorId }
+                    equals new { membership.TenantId, membership.UserId }
+                join cursor in db.SyncDeviceCursors.AsNoTracking()
+                    on new { presence.TenantId, presence.DeviceId }
+                    equals new { cursor.TenantId, cursor.DeviceId } into cursorGroup
+                from cursor in cursorGroup.DefaultIfEmpty()
+                where presence.TenantId == tenantId && membership.IsActive
+                select new
                 {
-                    cursor.DeviceId,
+                    presence.DeviceId,
                     Count = db.SyncOperations.AsNoTracking().LongCount(operation =>
                         operation.TenantId == tenantId
-                        && operation.Sequence > cursor.LastAcknowledgedSequence)
+                        && operation.Sequence > (cursor == null ? 0 : cursor.LastAcknowledgedSequence)
+                        && ((presence.BranchId.HasValue && operation.BranchId == presence.BranchId)
+                            || ((membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)
+                                && operation.BranchId == null)))
                 })
                 .ToDictionaryAsync(x => x.DeviceId, x => x.Count, cancellationToken);
-            var totalTenantOperations = await db.SyncOperations.AsNoTracking()
-                .LongCountAsync(x => x.TenantId == tenantId, cancellationToken);
 
             var inventory = new List<object>(devices.Count);
             foreach (var device in devices.OrderByDescending(device => device.LastSeenAtUtc))
             {
                 var lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0);
-                // Database-generated sequence values can contain gaps belonging to other tenants.
-                // Pending counts therefore use actual tenant journal rows, not sequence subtraction.
-                var pendingOperationCount = pendingCounts.GetValueOrDefault(device.DeviceId, totalTenantOperations);
+                // Count only journal rows this device's active membership is allowed to pull.
+                var pendingOperationCount = pendingCounts.GetValueOrDefault(device.DeviceId, 0);
 
                 inventory.Add(new
                 {
