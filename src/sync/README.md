@@ -8,8 +8,8 @@ The browser client has a durable IndexedDB operation store, a sync agent and a s
 - Commands carry tenant/branch, actor-owned device identity, schema version, authority epoch, operation ID, payload JSON and SHA-256 hash.
 - The client currently permits authority epoch zero only. Non-zero epochs fail closed until a signed lease verifier and fencing authority exist.
 - Pending operations survive page reloads and browser restarts. Network failures leave the outbox unchanged for retry.
-- Push batches are bounded and branch-aware. Tenant-wide commands are drained only for Owner/Manager roles.
-- Pull cursors are independent per tenant/branch. Server acknowledgement watermarks are also branch-scoped; a separate null-branch watermark is reserved for manager all-branches visibility. Neither acknowledgement nor receipt cursor proves that a business projection has been applied.
+- Push batches are bounded and branch-aware. Tenant-wide commands are drained only for Owner/Manager roles. The server rejects more than one new mutation for the same customer aggregate in a batch; dependent commands must be sent sequentially so each one is checked against the committed base version.
+- Pull cursors are independent per tenant/branch. A page that claims more data must advance its cursor; a stalled cursor is rejected before persistence or acknowledgement. Server acknowledgement watermarks are also branch-scoped; a separate null-branch watermark is reserved for manager all-branches visibility. Neither acknowledgement nor receipt cursor proves that a business projection has been applied.
 - Tenant-wide inbox reads require explicit manager authority. Branch views contain only their branch and permitted tenant-wide rows.
 - Incoming pages are validated as a whole: operation envelope, JSON payload shape, payload size and SHA-256 are checked before the inbox/cursor transaction commits. Persisted payload integrity is rechecked immediately before projection replay.
 
