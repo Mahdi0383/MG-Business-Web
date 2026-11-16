@@ -98,7 +98,7 @@ public sealed class SyncApiIntegrationTests
         var secondBranchResponse = await client.PostAsJsonAsync("/api/branches/", new
         {
             name = "Secondary",
-            code = $"B-{Guid.NewGuid():N}"[..10]
+            code = "B" + Guid.NewGuid().ToString("N")[..9]
         });
         Assert.Equal(HttpStatusCode.Created, secondBranchResponse.StatusCode);
         var secondBranch = await secondBranchResponse.Content.ReadFromJsonAsync<BranchCreated>();
@@ -116,7 +116,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "{\\"note\\":\\"wrong-branch\\"}",
+                    payloadJson = "{\"note\":\"wrong-branch\"}",
                     payloadSha256 = (string?)null
                 }
             }
