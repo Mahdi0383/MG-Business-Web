@@ -82,12 +82,12 @@ public sealed class SyncApiIntegrationTests
                 }
             });
 
-        using var nonZeroEpoch = await Push(1, "{\\"value\\":1}", null);
+        using var nonZeroEpoch = await Push(1, "{\"value\":1}", null);
         Assert.Equal(HttpStatusCode.Conflict, nonZeroEpoch.StatusCode);
         var fencingBody = await nonZeroEpoch.Content.ReadAsStringAsync();
         Assert.Contains("AUTHORITY_LEASE_NOT_CONFIGURED", fencingBody);
 
-        using var tamperedHash = await Push(0, "{\\"value\\":2}", new string('0', 64));
+        using var tamperedHash = await Push(0, "{\"value\":2}", new string('0', 64));
         Assert.Equal(HttpStatusCode.BadRequest, tamperedHash.StatusCode);
 
         var journal = await client.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
