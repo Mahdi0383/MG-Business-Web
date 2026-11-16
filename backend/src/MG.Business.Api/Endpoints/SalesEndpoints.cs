@@ -192,6 +192,25 @@ public static class SalesEndpoints
             }
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
+        group.MapGet("/orders/{orderId:guid}/payments", async (Guid orderId, ITenantContext tenant,
+            BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
+                return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
+
+            var orderExists = await db.SalesOrders.AsNoTracking().AnyAsync(x =>
+                x.TenantId == tenantId && x.BranchId == branchId && x.Id == orderId, cancellationToken);
+            if (!orderExists)
+                return Results.NotFound(new { message = "فاکتور در شعبه فعال پیدا نشد." });
+
+            var payments = await db.SalesPayments.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.SalesOrderId == orderId)
+                .OrderBy(x => x.CreatedAtUtc)
+                .Select(x => new SalesPaymentResponse(x.Id, x.Amount, x.Method.ToString(), x.Reference, x.CreatedAtUtc))
+                .ToListAsync(cancellationToken);
+            return Results.Ok(payments);
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
         group.MapPost("/orders/{orderId:guid}/payments", async (Guid orderId, RecordPaymentRequest request,
             ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
@@ -265,6 +284,7 @@ public static class SalesEndpoints
             x.TenantId == tenantId && x.Id == id && x.Type == type && x.IsActive, cancellationToken);
     }
 
+    public sealed record SalesPaymentResponse(Guid Id, decimal Amount, string Method, string? Reference, DateTimeOffset CreatedAtUtc);
     public sealed record RecordPaymentRequest(decimal Amount, PaymentMethod PaymentMethod, Guid PaymentAccountId, Guid ReceivableAccountId, string? PaymentReference);
     public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
         PaymentMethod PaymentMethod, Guid RevenueAccountId, Guid? PaymentAccountId, Guid? ReceivableAccountId,
