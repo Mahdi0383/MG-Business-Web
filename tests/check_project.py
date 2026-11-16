@@ -57,6 +57,8 @@ if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
+if "stableRequestId" not in app:
+    raise SystemExit("Idempotency keys must remain stable for retryable forms")
 if "offline-card" not in app or "همگام‌سازی آفلاین هنوز فعال نیست" not in app:
     raise SystemExit("Offline writes must be blocked clearly when the API is unavailable")
 if "userPasswordForm" not in app or "/password" not in app:
