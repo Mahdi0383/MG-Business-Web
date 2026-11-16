@@ -66,8 +66,8 @@ test("pulls remote operations and persists the page with its cursor", async () =
       requests.push(path);
       return {
         operations: [
-          { sequence: 4, operationId: "remote-4", operationType: "test.created" },
-          { sequence: 5, operationId: "remote-5", operationType: "test.updated" }
+          { sequence: 4, operationId: "remote-4", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) },
+          { sequence: 5, operationId: "remote-5", operationType: "test.updated", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) }
         ],
         nextSequence: 5,
         hasMore: false
@@ -98,7 +98,10 @@ test("does not persist a non-monotonic pull page", async () => {
   const api = {
     async get() {
       return {
-        operations: [{ sequence: 7, operationId: "seven" }, { sequence: 6, operationId: "six" }],
+        operations: [
+          { sequence: 7, operationId: "seven", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) },
+          { sequence: 6, operationId: "six", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) }
+        ],
         nextSequence: 6,
         hasMore: false
       };
