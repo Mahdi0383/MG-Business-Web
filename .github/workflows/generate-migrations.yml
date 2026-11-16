@@ -27,7 +27,7 @@ jobs:
         env:
           MG_DESIGN_CONNECTION: Host=localhost;Database=mg_business_design;Username=mg_design;Password=design-only
         run: >
-          dotnet ef migrations add InitialPlatformSchema
+          dotnet ef migrations add "PlatformUpdate_${GITHUB_RUN_NUMBER}"
           --project backend/src/MG.Business.Infrastructure/MG.Business.Infrastructure.csproj
           --startup-project backend/src/MG.Business.Api/MG.Business.Api.csproj
           --context BusinessDbContext
