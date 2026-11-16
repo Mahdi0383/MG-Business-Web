@@ -45,6 +45,56 @@ public sealed class SyncApiIntegrationTests
 
 
     [Fact]
+    public async Task SyncPushFailsClosedForUnconfiguredAuthorityEpochAndTamperedPayloadHash()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-fencing-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Sync Fencing Store",
+            slug = $"sync-fencing-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Fencing Test Device", platform = "Test", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        async Task<HttpResponseMessage> Push(long authorityEpoch, string payload, string? hash)
+            => await client.PostAsJsonAsync("/api/sync/operations", new
+            {
+                operations = new[]
+                {
+                    new
+                    {
+                        operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                        operationType = "test.fencing", schemaVersion = 1, authorityEpoch,
+                        occurredAtUtc = DateTimeOffset.UtcNow, payloadJson = payload, payloadSha256 = hash
+                    }
+                }
+            });
+
+        using var nonZeroEpoch = await Push(1, "{\\"value\\":1}", null);
+        Assert.Equal(HttpStatusCode.Conflict, nonZeroEpoch.StatusCode);
+        var fencingBody = await nonZeroEpoch.Content.ReadAsStringAsync();
+        Assert.Contains("AUTHORITY_LEASE_NOT_CONFIGURED", fencingBody);
+
+        using var tamperedHash = await Push(0, "{\\"value\\":2}", new string('0', 64));
+        Assert.Equal(HttpStatusCode.BadRequest, tamperedHash.StatusCode);
+
+        var journal = await client.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.Empty(journal!.Operations);
+    }
+
+    [Fact]
     public async Task KitchenStaffCannotReadCustomerSyncJournal()
     {
         using var factory = CreateFactory();
