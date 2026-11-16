@@ -15,3 +15,5 @@
 .mg-server-status{max-width:min(100%,520px);font-size:11px;line-height:1.7;white-space:normal}
 
 .mg-server-device-alert{margin:0 0 16px;padding:14px 16px;border:1px solid #e5a2a2;background:#fff1f1;color:#8e2929;border-radius:12px;font-size:12px;line-height:1.8}.mg-server-device-alert p{margin:4px 0}.mg-server-device-alert ul{margin:6px 0 0;padding-right:20px}
+
+.mg-server-device-count{padding:7px 11px;border-radius:9px;background:#eef3f9;color:#536b86;font-size:11px;white-space:nowrap}.mg-device-online,.mg-device-offline{display:inline-block;padding:5px 9px;border-radius:20px;font-size:10px;font-weight:700}.mg-device-online{background:#e6f8ef;color:#17804f}.mg-device-offline{background:#fff0f0;color:#b02d2d}
