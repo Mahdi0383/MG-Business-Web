@@ -321,6 +321,14 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
+    def test_public_static_server_hides_source_and_development_files(self):
+        with urllib.request.urlopen(self.base + "/", timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        for path in ("/server.py", "/license_tool.py", "/README.md", "/tests/test_server.py"):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(self.base + path, timeout=5)
+            self.assertEqual(caught.exception.code, 404)
+
     def test_password_hash_is_salted_and_verified(self):
         encoded = server.password_hash("a-long-test-password")
         self.assertTrue(server.verify_password("a-long-test-password", encoded))
