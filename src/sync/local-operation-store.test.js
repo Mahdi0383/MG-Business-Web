@@ -41,3 +41,28 @@ test("requires a normalized non-empty operation type", async () => {
     /operationType/
   );
 });
+
+test("rejects missing tenant IDs and invalid schema versions", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(
+    store.enqueue({ tenantId: "  ", operationType: "customer.profile.updated", payload: {} }),
+    /tenantId/
+  );
+  await assert.rejects(
+    store.enqueue({ tenantId: "tenant-1", operationType: "customer.profile.updated", payload: {}, schemaVersion: 0 }),
+    /schemaVersion/
+  );
+});
+
+test("rejects unverified authority epochs before accessing local storage", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(
+    store.enqueue({
+      tenantId: "tenant-1",
+      operationType: "inventory.stock.adjusted",
+      payload: { quantity: 2 },
+      authorityEpoch: 1
+    }),
+    /signed lease/
+  );
+});
