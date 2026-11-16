@@ -54,6 +54,9 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const [kitchenTickets, setKitchenTickets] = useState([]);
   const [devices, setDevices] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
+  const [gameQuote, setGameQuote] = useState(null);
+  const [gameSettlementAccounts, setGameSettlementAccounts] = useState([]);
+  const [closingSession, setClosingSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState("");
