@@ -148,7 +148,7 @@ export class LocalOperationStore {
       [tenantId, "pending", "\uffff"]
     );
 
-    if (branchId === null) {
+    if (branchId === null && allowTenantWide) {
       const rows = await requestResult(index.getAll(range, boundedLimit));
       await done;
       return rows;
@@ -167,7 +167,10 @@ export class LocalOperationStore {
           return;
         }
         const operation = cursor.value;
-        if (operation.branchId === branchId || (allowTenantWide && operation.branchId == null))
+        const matchesBranch = branchId === null
+          ? operation.branchId != null
+          : operation.branchId === branchId;
+        if (matchesBranch || (allowTenantWide && operation.branchId == null))
           matching.push(operation);
         cursor.continue();
       };
