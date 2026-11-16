@@ -184,6 +184,75 @@ export class DeviceEnrollmentClient {
     return record;
   }
 
+  async rotateCredential({ tenantId, branchId = null, actorId }) {
+    const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
+    let pendingRotation = record.pendingRotation;
+    if (!pendingRotation?.privateKey || !pendingRotation?.publicKeySpkiBase64) {
+      const pair = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]
+      );
+      pendingRotation = {
+        privateKey: pair.privateKey,
+        publicKeySpkiBase64: toBase64(new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)))
+      };
+      await this.writeCredential({ ...record, pendingRotation });
+    }
+
+    const challengeResponse = await this.apiClient.post(
+      "/api/sync/enrollment/challenges",
+      { deviceId: record.deviceId },
+      { tenantId, branchId }
+    );
+    if (!challengeResponse?.challengeId || typeof challengeResponse.challenge !== "string"
+      || challengeResponse.deviceId !== record.deviceId || challengeResponse.actorId !== actorId
+      || challengeResponse.tenantId !== tenantId
+      || (challengeResponse.branchId || null) !== (branchId || null))
+      throw new Error("MG server returned an invalid device key-rotation challenge.");
+
+    const canonical = [
+      "MG-DEVICE-ROTATION-V1",
+      tenantId,
+      branchId || "",
+      actorId,
+      record.deviceId,
+      challengeResponse.challengeId,
+      challengeResponse.challenge
+    ].join("\n");
+    const signature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      pendingRotation.privateKey,
+      new TextEncoder().encode(canonical)
+    );
+    const rotated = await this.apiClient.post(
+      "/api/sync/enrollment/rotate",
+      {
+        challengeId: challengeResponse.challengeId,
+        deviceId: record.deviceId,
+        challenge: challengeResponse.challenge,
+        publicKeySpkiBase64: pendingRotation.publicKeySpkiBase64,
+        signatureBase64: toBase64(new Uint8Array(signature))
+      },
+      { tenantId, branchId }
+    );
+    if (rotated?.deviceId !== record.deviceId || !Number.isInteger(rotated?.keyVersion)
+      || rotated.keyVersion <= record.keyVersion || typeof rotated?.credential !== "string")
+      throw new Error("MG server returned an invalid rotated device credential.");
+
+    const { pendingRotation: _pendingRotation, ...stableRecord } = record;
+    const updated = {
+      ...stableRecord,
+      privateKey: pendingRotation.privateKey,
+      publicKeySpkiBase64: pendingRotation.publicKeySpkiBase64,
+      credential: rotated.credential,
+      keyVersion: rotated.keyVersion,
+      authorityLease: null,
+      lastRotatedAtUtc: rotated.rotatedAtUtc
+    };
+    await this.writeCredential(updated);
+    await this.operationStore.clearAuthorityLease?.({ tenantId, branchId });
+    return updated;
+  }
+
   async ensureAuthorityLease({ tenantId, branchId = null, actorId, canAcquire = false }) {
     const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
     const now = Date.now();
