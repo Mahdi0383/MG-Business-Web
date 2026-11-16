@@ -253,7 +253,7 @@ export class LocalOperationStore {
       throw new TypeError("authorityEpoch must be a non-negative safe integer.");
     const verifiedEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
     if (authorityEpoch !== 0 && authorityEpoch !== verifiedEpoch)
-      throw new TypeError("The operation authority epoch does not match the verified local lease.");
+      throw new TypeError("The operation authority epoch does not match the verified signed lease.");
     const effectiveAuthorityEpoch = verifiedEpoch || authorityEpoch;
     if (REQUIRE_AUTHORITY_LEASES && effectiveAuthorityEpoch < 1)
       throw new Error("A verified authority lease is required before queuing offline operations.");
