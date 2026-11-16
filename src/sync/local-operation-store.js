@@ -205,7 +205,7 @@ function applyLocalStockMovement(balance, movement) {
   } else {
     if (Number(movement.quantity) > balance.quantity)
       throw new Error("موجودی محلی برای خروج کالا کافی نیست.");
-    const averageCost = balance.quantity === 0 ? 0 : roundInventoryAverage(roundInventoryValue(balance.value) / balance.quantity);
+    const averageCost = balance.quantity === 0 ? 0 : balance.value / balance.quantity;
     balance.quantity -= Number(movement.quantity);
     balance.value -= Number(movement.quantity) * averageCost;
   }
@@ -295,6 +295,7 @@ export class LocalOperationStore {
         tenantId, branchId, productId: product.id,
         quantityOnHand: Number(stock?.quantityOnHand || 0),
         inventoryValue: Number(stock?.inventoryValue || 0),
+        rawInventoryValue: Number(stock?.rawInventoryValue ?? stock?.inventoryValue ?? 0),
         averageUnitCost: Number(stock?.averageUnitCost || 0),
         cachedAtUtc
       });
@@ -336,7 +337,7 @@ export class LocalOperationStore {
     return baselines.map(baseline => {
       const balance = {
         quantity: Number(baseline.quantityOnHand || 0),
-        value: Number(baseline.inventoryValue || 0)
+        value: Number(baseline.rawInventoryValue ?? baseline.inventoryValue ?? 0)
       };
       const pending = (pendingByProduct.get(baseline.productId) || [])
         .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc));
@@ -347,6 +348,7 @@ export class LocalOperationStore {
         branchId,
         quantityOnHand: balance.quantity,
         inventoryValue: value,
+        rawInventoryValue: balance.value,
         averageUnitCost: balance.quantity === 0 ? 0 : roundInventoryAverage(value / balance.quantity),
         pendingMovementCount: pending.length,
         cachedAtUtc: baseline.cachedAtUtc
@@ -426,7 +428,7 @@ export class LocalOperationStore {
       .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc));
     const balance = {
       quantity: Number(baseline.quantityOnHand || 0),
-      value: Number(baseline.inventoryValue || 0)
+      value: Number(baseline.rawInventoryValue ?? baseline.inventoryValue ?? 0)
     };
     for (const localMovement of pendingMovements)
       applyLocalStockMovement(balance, localMovement);
@@ -461,6 +463,7 @@ export class LocalOperationStore {
       baseQuantityOnHand, baseInventoryValue,
       resultQuantityOnHand: nextBalance.quantity,
       resultInventoryValue: roundInventoryValue(nextBalance.value),
+      resultRawInventoryValue: nextBalance.value,
       state: "pending", createdAtUtc: now, serverSequence: null
     };
 
@@ -497,6 +500,7 @@ export class LocalOperationStore {
       cachedAtUtc: baseline.cachedAtUtc,
       quantityOnHand: baseline.quantityOnHand,
       inventoryValue: baseline.inventoryValue,
+      rawInventoryValue: baseline.rawInventoryValue,
       pending: pendingMovements.map(row => [
         row.operationId, row.type, row.quantity, row.unitCost, row.createdAtUtc, row.state
       ])
@@ -508,6 +512,7 @@ export class LocalOperationStore {
       cachedAtUtc: currentBaseline?.cachedAtUtc,
       quantityOnHand: currentBaseline?.quantityOnHand,
       inventoryValue: currentBaseline?.inventoryValue,
+      rawInventoryValue: currentBaseline?.rawInventoryValue,
       pending: currentPending.map(row => [
         row.operationId, row.type, row.quantity, row.unitCost, row.createdAtUtc, row.state
       ])
@@ -1158,6 +1163,7 @@ export class LocalOperationStore {
               && Number(baseline.inventoryValue) === Number(stockMovement.baseInventoryValue)) {
               baseline.quantityOnHand = stockMovement.resultQuantityOnHand;
               baseline.inventoryValue = stockMovement.resultInventoryValue;
+              baseline.rawInventoryValue = stockMovement.resultRawInventoryValue;
               baseline.averageUnitCost = baseline.quantityOnHand === 0
                 ? 0 : roundInventoryAverage(baseline.inventoryValue / baseline.quantityOnHand);
               baseline.cachedAtUtc = new Date().toISOString();
