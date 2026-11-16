@@ -1251,6 +1251,79 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(0, deviceInventory.Single(device => device.DeviceId == unassignedDeviceId).PendingOperationCount);
     }
 
+
+
+    [Fact]
+    public async Task SyncBatchRejectsMultipleMutationsOfTheSameCustomer()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-customer-batch-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Customer Batch Store",
+            slug = $"customer-batch-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var create = await client.PostAsJsonAsync("/api/customers", new
+        {
+            code = "C-BATCH-001", name = "Before"
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var customer = await create.Content.ReadFromJsonAsync<CustomerEndpoints.CustomerResponse>();
+        Assert.NotNull(customer);
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Batch Device", platform = "Test", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var operations = new[]
+        {
+            new
+            {
+                operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                operationType = "customer.profile.updated", schemaVersion = 1, authorityEpoch = 0,
+                occurredAtUtc = DateTimeOffset.UtcNow,
+                payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    customerId = customer!.Id, baseVersion = customer.Version, name = "First"
+                }),
+                payloadSha256 = (string?)null
+            },
+            new
+            {
+                operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                operationType = "customer.profile.updated", schemaVersion = 1, authorityEpoch = 0,
+                occurredAtUtc = DateTimeOffset.UtcNow,
+                payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    customerId = customer!.Id, baseVersion = customer.Version, name = "Second"
+                }),
+                payloadSha256 = (string?)null
+            }
+        };
+
+        var response = await client.PostAsJsonAsync("/api/sync/operations", new { operations });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var unchanged = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse>(
+            $"/api/customers/{customer!.Id}");
+        Assert.NotNull(unchanged);
+        Assert.Equal("Before", unchanged!.Name);
+        Assert.Equal(1, unchanged.Version);
+        var journal = await client.GetFromJsonAsync<SyncPullResponse>(
+            "/api/sync/operations?afterSequence=0&limit=20");
+        Assert.Empty(journal!.Operations);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
