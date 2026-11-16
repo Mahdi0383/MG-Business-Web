@@ -51,6 +51,15 @@ function AuthShell({ apiBaseUrl }) {
     try { return new URL(apiBaseUrl).host; } catch { return apiBaseUrl; }
   }, [apiBaseUrl]);
 
+  useEffect(() => {
+    if (!session && !["restoring", "login"].includes(stage)) {
+      client.setTenantContext(null, null);
+      setSelectedTenant(null);
+      setSelectedBranch(null);
+      setStage("login");
+    }
+  }, [session, stage, client]);
+
   const loadTenants = useCallback(async () => {
     const result = await client.get("/api/tenants/mine");
     setTenants(result || []);
