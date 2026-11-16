@@ -443,7 +443,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(200, {"plan":"trial","expiresAt":trial,
                         "status":"expired" if trial and trial <= int(time.time()) else "trial"})
                 status = "expired" if row["expires_at"] <= int(time.time()) else row["status"]
-                return self.send_json(200, {"plan":row["plan"],"expires_at":row["expires_at"],"status":status})
+                return self.send_json(200, {"plan":row["plan"],"expiresAt":row["expires_at"],"status":status})
             if path == "/api/backup":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان کامل دریافت کند."})
