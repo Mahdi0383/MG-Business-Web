@@ -284,6 +284,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
         {
             entity.ToTable("sync_device_cursors");
             entity.HasKey(x => new { x.TenantId, x.DeviceId });
+            entity.Property(x => x.LastAcknowledgedSequence).IsConcurrencyToken();
             entity.HasIndex(x => new { x.TenantId, x.LastAcknowledgedSequence });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
