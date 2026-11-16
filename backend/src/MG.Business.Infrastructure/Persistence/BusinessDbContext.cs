@@ -206,9 +206,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
         {
             entity.ToTable("sales_order_lines", table =>
             {
-                table.HasCheckConstraint("ck_sales_line_quantity_positive", "CAST("Quantity" AS NUMERIC) > 0");
-                table.HasCheckConstraint("ck_sales_line_price_non_negative", "CAST("UnitPrice" AS NUMERIC) >= 0");
-                table.HasCheckConstraint("ck_sales_line_discount_non_negative", "CAST("Discount" AS NUMERIC) >= 0");
+                table.HasCheckConstraint("ck_sales_line_quantity_positive", @"CAST(""Quantity"" AS NUMERIC) > 0");
+                table.HasCheckConstraint("ck_sales_line_price_non_negative", @"CAST(""UnitPrice"" AS NUMERIC) >= 0");
+                table.HasCheckConstraint("ck_sales_line_discount_non_negative", @"CAST(""Discount"" AS NUMERIC) >= 0");
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.ProductName).HasMaxLength(200).IsRequired();
