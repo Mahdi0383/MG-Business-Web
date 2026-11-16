@@ -160,7 +160,9 @@ public static class SyncEndpoints
 
             var cutoff = DateTimeOffset.UtcNow.AddSeconds(-90);
             var devices = await db.DevicePresences.AsNoTracking()
-                .Where(x => x.TenantId == tenantId)
+                .Where(x => x.TenantId == tenantId
+                    && (tenant.Role == "Owner" || tenant.BranchId == null
+                        || x.BranchId == tenant.BranchId || x.BranchId == null))
                 .Select(x => new
                 {
                     x.DeviceId, x.ActorId, x.BranchId, x.DeviceName, x.Platform,
