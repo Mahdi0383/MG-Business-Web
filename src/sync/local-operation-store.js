@@ -372,7 +372,8 @@ export class LocalOperationStore {
       request.onsuccess = () => {
         const current = request.result;
         // Never overwrite an unacknowledged local command with a server read.
-        if (current?.syncStatus === "pending") return;
+        if (current?.syncStatus === "pending"
+          || (Number.isSafeInteger(current?.version) && current.version > row.version)) return;
         customers.put({
           ...current,
           tenantId, id: row.id, ...normalized,
