@@ -106,6 +106,7 @@ test("branch-filtered pull acknowledges the scanned journal cursor", async () =>
   const operation = {
     sequence: 3,
     operationId: "operation-visible",
+    operationType: "customer.updated",
     payloadJson: "{\"name\":\"MG\"}",
     payloadSha256: "A".repeat(64),
     schemaVersion: 1
@@ -140,6 +141,7 @@ test("pull rejects a scan cursor preceding a visible operation", async () => {
       operations: [{
         sequence: 3,
         operationId: "operation-visible",
+        operationType: "customer.updated",
         payloadJson: "{}",
         payloadSha256: "A".repeat(64),
         schemaVersion: 1
