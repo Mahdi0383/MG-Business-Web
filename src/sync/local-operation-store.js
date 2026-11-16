@@ -44,7 +44,7 @@ export function isIncomingRowVisible(row, branchId, allowTenantWide) {
 }
 
 const DATABASE_NAME = "mg-business-local";
-const DATABASE_VERSION = 6;
+const DATABASE_VERSION = 7;
 const OPERATIONS_STORE = "operations";
 const META_STORE = "metadata";
 const INBOX_STORE = "inbox";
@@ -83,7 +83,20 @@ function openDatabase() {
           inbox = event.target.transaction.objectStore(INBOX_STORE);
         if (inbox.indexNames.contains("byTenantApplied"))
           inbox.deleteIndex("byTenantApplied");
-        inbox.createIndex("byTenantApplied", ["tenantId", "applied"]);
+        // IndexedDB keys cannot contain booleans. Backfill a numeric index key
+        // while preserving the public boolean applied flag used by the processor.
+        const backfill = inbox.openCursor();
+        backfill.onsuccess = () => {
+          const cursor = backfill.result;
+          if (cursor) {
+            const row = cursor.value;
+            row.appliedIndex = row.applied ? 1 : 0;
+            cursor.update(row);
+            cursor.continue();
+            return;
+          }
+          inbox.createIndex("byTenantApplied", ["tenantId", "appliedIndex"]);
+        };
         let customers;
         if (!database.objectStoreNames.contains(CUSTOMERS_STORE))
           customers = database.createObjectStore(CUSTOMERS_STORE, { keyPath: ["tenantId", "id"] });
@@ -507,6 +520,7 @@ export class LocalOperationStore {
         }
       }
       inboxRow.applied = true;
+      inboxRow.appliedIndex = 1;
       inboxRow.appliedAtUtc = now;
       inboxStore.put(inboxRow);
     };
@@ -718,6 +732,7 @@ export class LocalOperationStore {
             ...operation,
             tenantId,
             applied: false,
+            appliedIndex: 0,
             appliedAtUtc: null,
             receivedLocallyAtUtc: new Date().toISOString()
           });
@@ -749,7 +764,7 @@ export class LocalOperationStore {
 
     const count = await new Promise((resolve, reject) => {
       let matching = 0;
-      const request = index.openCursor(IDBKeyRange.only([tenantId, false]));
+      const request = index.openCursor(IDBKeyRange.only([tenantId, 0]));
       request.onerror = () => reject(request.error || new Error("Could not count incoming sync operations."));
       request.onsuccess = () => {
         const cursor = request.result;
@@ -817,6 +832,7 @@ export class LocalOperationStore {
     existing.forEach(row => {
       if (!row) return;
       row.applied = true;
+      row.appliedIndex = 1;
       row.appliedAtUtc = new Date().toISOString();
       writeStore.put(row);
     });
