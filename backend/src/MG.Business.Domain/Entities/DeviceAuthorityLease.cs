@@ -34,14 +34,14 @@ public sealed class DeviceAuthorityLease
         var now = nowUtc.ToUniversalTime();
         if (IsActiveAt(now) && DeviceId != deviceId)
             return false;
-        if (RevokedAtUtc is not null || (!IsActiveAt(now) && DeviceId != deviceId))
+        if (RevokedAtUtc is not null || !IsActiveAt(now))
         {
             Epoch = checked(Epoch + 1);
             LeaseId = Guid.NewGuid();
             DeviceId = deviceId;
             RevokedAtUtc = null;
+            IssuedAtUtc = now;
         }
-        IssuedAtUtc = now;
         ExpiresAtUtc = expiresAtUtc.ToUniversalTime();
         SignatureBase64 = string.Empty;
         return true;
