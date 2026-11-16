@@ -241,6 +241,7 @@ export class LocalOperationStore {
     };
     const localCustomer = {
       tenantId, id, ...normalized, version: 1,
+      isActive: true,
       syncStatus: "pending",
       createdAtUtc: now, updatedAtUtc: now,
       createdByActorId: actorId, originBranchId: branchId
