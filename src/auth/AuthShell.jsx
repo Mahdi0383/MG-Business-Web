@@ -225,23 +225,26 @@ function AuthShell({ apiBaseUrl }) {
       }
     };
 
+    let synchronizing = false;
     const synchronize = async () => {
-      if (!active) return;
-      if (typeof navigator !== "undefined" && !navigator.onLine) {
-        setSyncStatus("offline");
-        await refreshPendingCount();
-        return;
-      }
-
-      setSyncStatus("syncing");
+      if (!active || synchronizing) return;
+      synchronizing = true;
       try {
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          if (active) setSyncStatus("offline");
+          return;
+        }
+
+        if (active) setSyncStatus("syncing");
         await syncAgentRef.current.pullIncoming(tenantId);
         const result = await syncAgentRef.current.pushPending(tenantId);
         if (active) setSyncStatus(result.status);
       } catch {
         if (active) setSyncStatus("error");
+      } finally {
+        synchronizing = false;
+        await refreshPendingCount();
       }
-      await refreshPendingCount();
     };
 
     const handleOnline = () => { synchronize(); };
