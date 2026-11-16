@@ -9,7 +9,8 @@ namespace MG.Business.Api.Endpoints;
 
 public static class AccountingEndpoints
 {
-    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Viewer"];
+    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Viewer"];
+    private static readonly string[] AccountReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Viewer"];
     private static readonly string[] WriteRoles = ["Owner", "Manager", "Accountant"];
 
     public static IEndpointRouteBuilder MapAccountingEndpoints(this IEndpointRouteBuilder endpoints)
@@ -24,7 +25,7 @@ public static class AccountingEndpoints
                 .Select(x => new AccountResponse(x.Id, x.Code, x.Name, x.Type.ToString(), x.IsActive))
                 .ToListAsync(cancellationToken);
             return Results.Ok(accounts);
-        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(AccountReadRoles)));
 
         group.MapPost("/accounts/initialize-default-chart", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
