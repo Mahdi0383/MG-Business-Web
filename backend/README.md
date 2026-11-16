@@ -20,7 +20,7 @@ The default development configuration uses SQLite. Configure hosted environments
 - `ConnectionStrings__Business`
 - `DataProtection__KeysDirectory` — persistent, private storage for bearer-token protection keys
 - `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, ... — exact trusted frontend origins
-- `Database__ApplyMigrations=true` — intended for PostgreSQL after the reviewed migration files are committed
+- `Database__ApplyMigrations=true` — opt-in startup migration execution for PostgreSQL after reviewing the committed migration set
 
 Never commit production credentials, signing keys, or Data Protection key material.
 
@@ -76,8 +76,8 @@ Composite foreign keys and tenant-scoped indexes reinforce tenant isolation in t
 - Café kitchen tickets follow explicit preparation-state transitions and link to a sales order.
 
 ## Current limitations — not production-ready yet
-- The initial PostgreSQL EF migration has been generated and validated as a workflow artifact, but migration source/snapshot files are not yet committed to the repository. SQLite test databases use `EnsureCreated` only in tests.
-- PostgreSQL migrations are being scaffolded separately from the SQLite test provider; SQLite production migrations still need their own reviewed set.
+- An initial PostgreSQL EF Core migration and model snapshot are committed under `backend/src/MG.Business.Infrastructure/Persistence/Migrations`.
+- Startup migration execution is opt-in and PostgreSQL-only through `Database__ApplyMigrations=true`. SQLite test databases use `EnsureCreated` only in tests; a separate SQLite migration set is still required before SQLite production deployments.
 - User registration is currently open; production must add email verification/invitation approval and abuse controls.
 - Password reset/email delivery, MFA, token revocation UI, audit trails, license activation/module enforcement, suppliers/purchase invoices, tax/VAT, customer credit subledger, online ordering, reservations, and the customer portal are not yet implemented.
 - The frontend is still a prototype using local browser storage and is not yet securely connected to this API.
