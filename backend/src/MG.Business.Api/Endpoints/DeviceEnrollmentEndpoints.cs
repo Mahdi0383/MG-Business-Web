@@ -154,7 +154,7 @@ public static class DeviceEnrollmentEndpoints
             var credential = Convert.ToBase64String(credentialBytes);
             var credentialDigest = Convert.ToHexString(SHA256.HashData(credentialBytes)).ToLowerInvariant();
             db.DeviceCredentials.Add(new DeviceCredential(
-                tenantId, actorId, tenant.BranchId, request.DeviceId, request.PublicKeySpkiBase64,
+                tenantId, actorId, null, request.DeviceId, request.PublicKeySpkiBase64,
                 credentialDigest, now));
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
