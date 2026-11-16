@@ -87,12 +87,21 @@ Health checks:
 - `GET /health/live`
 - `GET /health/ready`
 
+### Device presence and connectivity alerts
+
+- `POST /api/sync/heartbeat` — authenticated tenant device heartbeat; stores device identity, last-seen time, branch, platform and client version.
+- `GET /api/sync/devices` — Owner/Manager-only tenant device inventory. A device is considered online while its last heartbeat is within 90 seconds; stale devices return `DEVICE_HEARTBEAT_MISSED`.
+- The web client sends a heartbeat every 30 seconds while a tenant workspace is open and displays stale-device alerts to Owners/Managers.
+
+This is tenant-API monitoring only. Alerts are currently surfaced by manager polling in the open web workspace; push notifications, background monitoring independent of an open session, relay to MG Master, and customer-central/MG-Master failover alert routing are not implemented yet. Device IDs are browser-profile identifiers and are not cryptographic device enrollment credentials.
+
 ### Durable synchronization journal (initial implementation)
 
 - `POST /api/sync/operations` — append up to 100 tenant-scoped operations per request. Payloads are limited to 64 KiB each, JSON-validated and SHA-256 fingerprinted. Repeating the same operation ID and envelope returns the original sequence; reusing an ID with a different envelope returns a conflict.
 - `GET /api/sync/operations?afterSequence=0&limit=100` — pull the tenant operation stream using a durable sequence cursor. The maximum page size is 200.
 - Every accepted record is associated with the authenticated tenant user and optional tenant branch. Cross-tenant branch references are rejected.
 - The journal is append-only and persisted by EF Core. PostgreSQL migration is included; SQLite development/test databases create the table from the EF model.
+- The browser client pulls the tenant journal into a durable IndexedDB inbox and commits the page cursor in the same transaction. Incoming operations are retained for inspection; they are **not yet applied** to local business projections.
 
 This is the first transport/storage slice, **not a complete offline synchronization engine**. It does not yet register or cryptographically authenticate devices, enforce authority leases/fencing epochs, apply journal commands to business aggregates, maintain per-device acknowledgements/cursors, resolve domain conflicts, monitor peer heartbeats, or perform CCS/MG Master failover and failback. Do not use this endpoint as a production replication protocol until those controls and failure tests are implemented.
 
