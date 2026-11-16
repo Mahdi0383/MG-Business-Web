@@ -21,6 +21,13 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const [modal, setModal] = useState("");
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const canViewCustomers = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "Viewer"].includes(tenant.role);
+  const canViewSales = ["Owner", "Manager", "Accountant", "Cashier", "Viewer"].includes(tenant.role);
+  const canCreateProduct = ["Owner", "Manager", "InventoryManager"].includes(tenant.role);
+  const canCreateCustomer = ["Owner", "Manager", "Cashier"].includes(tenant.role);
+  const visibleNavigation = navigation.filter(([id]) =>
+    id !== "customers" || canViewCustomers
+  ).filter(([id]) => id !== "sales" || canViewSales);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -30,21 +37,20 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
       else if (page === "customers") setCustomers(await client.get("/api/customers"));
       else if (page === "sales") setSales(await client.get("/api/sales/orders"));
       else {
-        const [productRows, customerRows, salesRows] = await Promise.all([
-          client.get("/api/inventory/products"),
-          client.get("/api/customers"),
-          client.get("/api/sales/orders")
-        ]);
-        setProducts(productRows);
-        setCustomers(customerRows);
-        setSales(salesRows);
+        const requests = [client.get("/api/inventory/products")];
+        if (canViewCustomers) requests.push(client.get("/api/customers"));
+        if (canViewSales) requests.push(client.get("/api/sales/orders"));
+        const results = await Promise.all(requests);
+        setProducts(results[0] || []);
+        setCustomers(canViewCustomers ? results[1] || [] : []);
+        setSales(canViewSales ? results[canViewCustomers ? 2 : 1] || [] : []);
       }
     } catch (loadError) {
       setError(formatApiError(loadError));
     } finally {
       setLoading(false);
     }
-  }, [client, page]);
+  }, [client, page, canViewCustomers, canViewSales]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -95,7 +101,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     <aside className="mg-server-sidebar">
       <div className="mg-server-brand"><div className="mg-brand-mark">MG</div><div><b>MG BUSINESS</b><small>LIVE WORKSPACE</small></div></div>
       <div className="mg-server-tenant"><span className="mg-server-dot" /><div><b>{tenant.name}</b><small>{branch.name}</small></div></div>
-      <nav>{navigation.map(([id, icon, title]) => <button key={id} className={page === id ? "active" : ""} onClick={() => setPage(id)}><i>{icon}</i>{title}</button>)}</nav>
+      <nav>{visibleNavigation.map(([id, icon, title]) => <button key={id} className={page === id ? "active" : ""} onClick={() => setPage(id)}><i>{icon}</i>{title}</button>)}</nav>
       <div className="mg-server-sidebar-bottom">
         <button onClick={onSwitchContext}>تغییر کسب‌وکار / شعبه</button>
         <button onClick={onLogout}>خروج از حساب</button>
@@ -115,22 +121,22 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         {page === "dashboard" && !loading && <>
           <div className="mg-server-stats">
             <div><small>کالاهای ثبت‌شده</small><b>{count(products.length)}</b></div>
-            <div><small>مشتریان</small><b>{count(customers.length)}</b></div>
-            <div><small>تعداد فاکتور</small><b>{count(sales.length)}</b></div>
-            <div><small>مبلغ فروش ثبت‌شده</small><b>{money(totalSales)}</b></div>
+            <div><small>مشتریان</small><b>{canViewCustomers ? count(customers.length) : "—"}</b></div>
+            <div><small>تعداد فاکتور</small><b>{canViewSales ? count(sales.length) : "—"}</b></div>
+            <div><small>مبلغ فروش ثبت‌شده</small><b>{canViewSales ? money(totalSales) : "—"}</b></div>
           </div>
           <div className="mg-server-panel"><h2>اتصال واقعی برقرار است</h2><p>این صفحه اطلاعات را از API و پایگاه داده کسب‌وکار دریافت می‌کند؛ برخلاف پیش‌نمایش، داده‌ها در مرورگر ذخیره نمی‌شوند.</p></div>
         </>}
 
         {page === "products" && <section className="mg-server-panel">
-          <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div><button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button></div>
+          <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button>}</div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد کالا</th><th>نام</th><th>واحد</th><th>قیمت پیش‌فرض</th><th>نوع موجودی</th><th>وضعیت</th></tr></thead>
             <tbody>{products.map(product => <tr key={product.id}><td>{product.sku}</td><td>{product.name}</td><td>{product.baseUnit}</td><td>{money(product.defaultSalePrice)}</td><td>{product.tracksInventory ? "انبارگردانی‌شونده" : "خدماتی"}</td><td>{product.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
           </table>{!products.length && <div className="mg-server-empty">هنوز کالایی ثبت نشده است.</div>}</div>
         </section>}
 
         {page === "customers" && <section className="mg-server-panel">
-          <div className="mg-server-panel-head"><div><h2>مشتریان</h2><p>{count(customers.length)} رکورد از پایگاه داده</p></div><button className="mg-primary-btn" onClick={() => openCreate("customer")}>＋ مشتری جدید</button></div>
+          <div className="mg-server-panel-head"><div><h2>مشتریان</h2><p>{count(customers.length)} رکورد از پایگاه داده</p></div>{canCreateCustomer && <button className="mg-primary-btn" onClick={() => openCreate("customer")}>＋ مشتری جدید</button>}</div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th></tr></thead>
             <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
           </table>{!customers.length && <div className="mg-server-empty">هنوز مشتری ثبت نشده است.</div>}</div>
