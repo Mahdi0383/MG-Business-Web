@@ -66,18 +66,30 @@ public static class InventoryEndpoints
             if (tenant.BranchId is Guid branchId)
                 query = query.Where(x => x.BranchId == branchId);
 
-            var movements = await query.ToListAsync(cancellationToken);
-            var result = movements.GroupBy(x => new { x.ProductId, x.BranchId }).Select(grouping =>
+            var totals = new Dictionary<(Guid ProductId, Guid BranchId), (InventoryValuationAccumulator Valuation, int Count)>();
+            await foreach (var movement in query
+                .OrderBy(x => x.ProductId).ThenBy(x => x.BranchId)
+                .ThenBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
+                .AsAsyncEnumerable().WithCancellation(cancellationToken))
             {
-                var valuation = InventoryValuation.Calculate(grouping);
+                var key = (movement.ProductId, movement.BranchId);
+                if (!totals.TryGetValue(key, out var state))
+                    state = (new InventoryValuationAccumulator(), 0);
+                state.Valuation.Apply(movement);
+                totals[key] = (state.Valuation, state.Count + 1);
+            }
+
+            var result = totals.Select(pair =>
+            {
+                var valuation = pair.Value.Valuation.ToValuation();
                 return new
                 {
-                    grouping.Key.ProductId,
-                    grouping.Key.BranchId,
+                    ProductId = pair.Key.ProductId,
+                    BranchId = pair.Key.BranchId,
                     valuation.QuantityOnHand,
                     valuation.AverageUnitCost,
                     valuation.InventoryValue,
-                    MovementCount = grouping.Count()
+                    MovementCount = pair.Value.Count
                 };
             }).OrderBy(x => x.ProductId).ThenBy(x => x.BranchId).ToList();
 
