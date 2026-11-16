@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
@@ -63,7 +63,7 @@ if "offline-card" not in app or "همگام‌سازی آفلاین هنوز ف�
     raise SystemExit("Offline writes must be blocked clearly when the API is unavailable")
 if "userPasswordForm" not in app or "/password" not in app:
     raise SystemExit("User password reset UI is missing")
-if "customerLedgerPanel" not in app or "data-customer-ledger" not in app:
+if "customerLedgerPanel" not in app or "data-customer-ledger" not in app or "supplierLedgerPanel" not in app or "supplierStatementForm" not in app:
     raise SystemExit("Customer account statement UI is missing")
 if "reservationForm" not in app or "data-reservation-cancel" not in app:
     raise SystemExit("GameNet reservation management UI is missing")
