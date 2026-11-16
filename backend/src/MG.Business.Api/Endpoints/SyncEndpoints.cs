@@ -314,6 +314,12 @@ public static class SyncEndpoints
                 && item.Request.BranchId != tenant.BranchId))
                 return Results.Forbid();
 
+            // Tenant-wide journal entries affect every branch. Branch-scoped staff
+            // cannot create them by omitting BranchId from an otherwise valid command.
+            if (tenant.BranchId is not null && tenant.Role is not ("Owner" or "Manager")
+                && prepared.Any(item => item.Request.BranchId is null))
+                return Results.Forbid();
+
             var operationIds = prepared.Select(x => x.Request.OperationId).ToArray();
             var existing = await db.SyncOperations.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
