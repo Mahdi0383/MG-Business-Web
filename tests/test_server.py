@@ -64,6 +64,25 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["tenant"]["name"], "MG Test Shop")
 
+        status, result = self.request("POST", "/api/users", {
+            "username": "cashier", "password": "cashier-long-password", "role": "cashier"
+        }, token)
+        self.assertEqual(status, 201)
+        cashier_id = result["id"]
+        status, result = self.request("POST", "/api/login", {
+            "username": "cashier", "password": "cashier-long-password"
+        })
+        self.assertEqual(status, 200)
+        cashier_token = result["token"]
+        status, result = self.request("POST", "/api/products", {
+            "name": "Forbidden", "sellPrice": 100, "costPrice": 20
+        }, cashier_token)
+        self.assertEqual(status, 403)
+        status, result = self.request("DELETE", "/api/users/" + cashier_id, token=token)
+        self.assertEqual(status, 200)
+        status, result = self.request("GET", "/api/me", token=cashier_token)
+        self.assertEqual(status, 401)
+
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-test-1", "title": "Cafe sale", "amount": 150000,
             "kind": "income", "category": "Cafe",
