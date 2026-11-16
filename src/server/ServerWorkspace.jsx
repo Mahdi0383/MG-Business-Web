@@ -396,6 +396,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         client.get(`/api/gamenet/sessions/${session.id}/quote`),
         client.get("/api/gamenet/settlement-accounts")
       ]);
+      setAccounts(settlementAccounts || []);
       const assets = settlementAccounts.filter(account => account.type === "Asset");
       const revenues = settlementAccounts.filter(account => account.type === "Revenue");
       const revenue = revenues.find(account => account.code === "4000") || revenues[0];
