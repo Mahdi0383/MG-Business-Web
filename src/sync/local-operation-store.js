@@ -282,13 +282,13 @@ export class LocalOperationStore {
     const metadata = transaction.objectStore(META_STORE);
     const cursorKey = `cursor:${tenantId}:${branchId || "all"}`;
     const cursorRequest = metadata.get(cursorKey);
+    let integrityConflict = null;
     cursorRequest.onsuccess = () => {
       const storedCursor = Number.isSafeInteger(cursorRequest.result?.value) ? cursorRequest.result.value : 0;
       if (nextSequence < storedCursor) {
         transaction.abort();
         return;
       }
-      let integrityConflict = null;
       for (const operation of operations) {
         const existingRequest = inbox.get([tenantId, operation.sequence]);
         existingRequest.onsuccess = () => {
@@ -316,13 +316,14 @@ export class LocalOperationStore {
         };
       }
       metadata.put({ key: cursorKey, value: nextSequence });
-      try {
-        await done;
-      } catch (error) {
-        if (integrityConflict) throw integrityConflict;
-        throw error;
-      }
-      return operations.length;
+    };
+    try {
+      await done;
+    } catch (error) {
+      if (integrityConflict) throw integrityConflict;
+      throw error;
+    }
+    return operations.length;
   }
 
   async getInboxCount(tenantId, branchId = null) {
