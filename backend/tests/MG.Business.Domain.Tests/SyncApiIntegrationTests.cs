@@ -342,7 +342,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "{\\"note\\":\\"spoofed-device\\"}",
+                    payloadJson = "{\"note\":\"spoofed-device\"}",
                     payloadSha256 = (string?)null
                 }
             }
