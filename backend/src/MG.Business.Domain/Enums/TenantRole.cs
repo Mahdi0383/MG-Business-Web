@@ -9,5 +9,6 @@ public enum TenantRole
     Waiter = 5,
     GameOperator = 6,
     InventoryManager = 7,
-    Viewer = 8
+    Viewer = 8,
+    KitchenStaff = 9
 }
