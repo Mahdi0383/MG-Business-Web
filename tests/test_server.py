@@ -168,9 +168,10 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        order_number = result["orderNumber"]
         status, result = self.request("GET", "/api/orders", token=token)
         self.assertEqual(status, 200)
-        self.assertEqual(result["items"][0]["orderNumber"], result["orderNumber"] if "orderNumber" in result else result["items"][0]["orderNumber"])
+        self.assertEqual(result["items"][0]["orderNumber"], order_number)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(result["items"][0]["quantity"], 13)
 
