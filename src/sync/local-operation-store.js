@@ -298,12 +298,6 @@ export class LocalOperationStore {
     if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError("schemaVersion must be a positive integer.");
     if (!Number.isSafeInteger(authorityEpoch) || authorityEpoch < 0)
       throw new TypeError("authorityEpoch must be a non-negative safe integer.");
-    const verifiedEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
-    if (authorityEpoch !== 0 && authorityEpoch !== verifiedEpoch)
-      throw new TypeError("The operation authority epoch does not match the verified signed lease.");
-    const effectiveAuthorityEpoch = verifiedEpoch || authorityEpoch;
-    if (REQUIRE_AUTHORITY_LEASES && effectiveAuthorityEpoch < 1)
-      throw new Error("A verified authority lease is required before queuing offline operations.");
     if (!payload || typeof payload !== "object" || Array.isArray(payload))
       throw new TypeError("Offline operation payload must be a JSON object.");
 
@@ -316,6 +310,12 @@ export class LocalOperationStore {
       throw new RangeError("Offline operation payload exceeds 64 KiB.");
     if (typeof actorId !== "string" || !actorId.trim())
       throw new TypeError("actorId is required to enqueue an authenticated offline operation.");
+    const verifiedEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
+    if (authorityEpoch !== 0 && authorityEpoch !== verifiedEpoch)
+      throw new TypeError("The operation authority epoch does not match the verified signed lease.");
+    const effectiveAuthorityEpoch = verifiedEpoch || authorityEpoch;
+    if (REQUIRE_AUTHORITY_LEASES && effectiveAuthorityEpoch < 1)
+      throw new Error("A verified authority lease is required before queuing offline operations.");
 
     const operation = {
       operationId: crypto.randomUUID(),
@@ -347,7 +347,7 @@ export class LocalOperationStore {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (typeof branchId !== "string" || !branchId.trim()) throw new TypeError("branchId is required for a branch-originated customer command.");
     if (typeof actorId !== "string" || !actorId.trim()) throw new TypeError("actorId is required.");
-    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
     const normalized = normalizeLocalCustomer(customer);
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
@@ -397,7 +397,7 @@ export class LocalOperationStore {
     if (!Number.isSafeInteger(initial.version) || initial.version < 1)
       throw new Error("Customer projection has no valid server-confirmed version.");
 
-    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
     const normalized = normalizeLocalCustomer({ ...initial, ...customer, code: initial.code });
     const baseVersion = initial.version;
     const payload = {
@@ -468,7 +468,7 @@ export class LocalOperationStore {
     if (!Number.isSafeInteger(initial.version) || initial.version < 1)
       throw new Error("Customer projection has no valid server-confirmed version.");
 
-    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
     const baseVersion = initial.version;
     const now = new Date().toISOString();
     const payloadJson = JSON.stringify({ customerId, baseVersion });
