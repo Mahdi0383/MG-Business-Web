@@ -50,6 +50,17 @@ export class SyncAgent {
           || typeof operation.payloadSha256 !== "string" || !/^[0-9a-f]{64}$/i.test(operation.payloadSha256)
           || !Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1)
           throw new Error("MG Sync API returned an invalid operation envelope.");
+        let payload;
+        try { payload = JSON.parse(operation.payloadJson); }
+        catch { throw new Error("MG Sync API returned invalid JSON in an operation payload."); }
+        if (!payload || typeof payload !== "object" || Array.isArray(payload))
+          throw new Error("MG Sync API returned a non-object operation payload.");
+        if (!globalThis.crypto?.subtle)
+          throw new Error("Secure cryptography is unavailable; incoming sync payloads cannot be verified.");
+        const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(operation.payloadJson));
+        const actualHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+        if (actualHash !== operation.payloadSha256.toLowerCase())
+          throw new Error("MG Sync API returned an operation whose payload hash does not match.");
         previousSequence = operation.sequence;
       }
       // A branch-scoped pull may omit other branches' rows while still advancing
