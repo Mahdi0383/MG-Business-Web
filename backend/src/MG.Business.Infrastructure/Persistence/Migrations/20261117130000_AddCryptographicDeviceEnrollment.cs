@@ -54,6 +54,7 @@ public sealed class AddCryptographicDeviceEnrollment : Migration
                 table.ForeignKey("FK_device_enrollment_challenges_branches_TenantId_BranchId", x => new { x.TenantId, x.BranchId }, "branches", new[] { "TenantId", "Id" }, onDelete: ReferentialAction.Cascade);
             });
 
+        migrationBuilder.CreateIndex(name: "IX_device_credentials_ActorId", table: "device_credentials", column: "ActorId");
         migrationBuilder.CreateIndex(name: "IX_device_credentials_TenantId_ActorId", table: "device_credentials", columns: new[] { "TenantId", "ActorId" });
         migrationBuilder.CreateIndex(name: "IX_device_enrollment_challenges_ActorId", table: "device_enrollment_challenges", column: "ActorId");
         migrationBuilder.CreateIndex(name: "IX_device_enrollment_challenges_TenantId_ActorId_DeviceId_ExpiresAtUtc", table: "device_enrollment_challenges", columns: new[] { "TenantId", "ActorId", "DeviceId", "ExpiresAtUtc" });
