@@ -383,3 +383,64 @@ test("acknowledges a pulled page within the same branch cursor scope", async () 
     branchId: "branch-a"
   });
 });
+
+
+test("refuses to transmit a locally tampered pending payload", async () => {
+  let transmitted = false;
+  let acknowledged = false;
+  const api = { async post() { transmitted = true; return { accepted: [] }; } };
+  const store = {
+    async getDeviceId() { return "device-1"; },
+    async getPending() {
+      return [{
+        operationId: "tampered-outgoing",
+        tenantId: "tenant-1",
+        deviceId: "device-1",
+        branchId: null,
+        operationType: "test.created",
+        schemaVersion: 1,
+        authorityEpoch: 0,
+        occurredAtUtc: "2026-11-16T10:00:00.000Z",
+        payloadJson: JSON.stringify({ changed: true }),
+        payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }];
+    },
+    async acknowledge() { acknowledged = true; }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pushPending("tenant-1", { actorId: "actor-1" }),
+    /payload hash does not match/
+  );
+  assert.equal(transmitted, false);
+  assert.equal(acknowledged, false);
+});
+
+test("refuses to transmit a pending operation belonging to another device", async () => {
+  let transmitted = false;
+  const api = { async post() { transmitted = true; return { accepted: [] }; } };
+  const store = {
+    async getDeviceId() { return "device-1"; },
+    async getPending() {
+      return [{
+        operationId: "foreign-device",
+        tenantId: "tenant-1",
+        deviceId: "device-2",
+        branchId: null,
+        operationType: "test.created",
+        schemaVersion: 1,
+        authorityEpoch: 0,
+        occurredAtUtc: "2026-11-16T10:00:00.000Z",
+        payloadJson: "{}",
+        payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }];
+    },
+    async acknowledge() { assert.fail("foreign-device operations must not be acknowledged"); }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pushPending("tenant-1", { actorId: "actor-1" }),
+    /invalid or unauthorized operation envelope/
+  );
+  assert.equal(transmitted, false);
+});
