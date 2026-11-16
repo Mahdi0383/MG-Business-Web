@@ -107,6 +107,26 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Conflict, unverifiedEpochPush.StatusCode);
 
+        var malformedHashPush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId,
+                    branchId = tenant.BranchId,
+                    operationType = "test.invalid-hash",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\"note\":\"invalid-hash\"}",
+                    payloadSha256 = new string('A', 4096)
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, malformedHashPush.StatusCode);
+
         var retryPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Accepted, retryPush.StatusCode);
         var retryAck = await retryPush.Content.ReadFromJsonAsync<SyncPushResponse>();
