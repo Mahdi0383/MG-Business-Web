@@ -22,6 +22,7 @@ public static class SalesEndpoints
             var orders = await db.SalesOrders.AsNoTracking()
                 .Where(x => x.TenantId == tenant.TenantId
                     && (tenant.BranchId == null || x.BranchId == tenant.BranchId))
+                .OrderByDescending(x => x.CreatedAtUtc)
                 .Take(100)
                 .Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
                     x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc))
