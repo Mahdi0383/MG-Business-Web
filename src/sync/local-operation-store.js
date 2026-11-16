@@ -36,10 +36,11 @@ export function isIncomingRowVisible(row, branchId, allowTenantWide) {
 }
 
 const DATABASE_NAME = "mg-business-local";
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
 const OPERATIONS_STORE = "operations";
 const META_STORE = "metadata";
 const INBOX_STORE = "inbox";
+const CUSTOMERS_STORE = "customers";
 
 let databasePromise;
 
@@ -74,6 +75,15 @@ function openDatabase() {
         if (inbox.indexNames.contains("byTenantApplied"))
           inbox.deleteIndex("byTenantApplied");
         inbox.createIndex("byTenantApplied", ["tenantId", "applied"]);
+        let customers;
+        if (!database.objectStoreNames.contains(CUSTOMERS_STORE))
+          customers = database.createObjectStore(CUSTOMERS_STORE, { keyPath: ["tenantId", "id"] });
+        else
+          customers = event.target.transaction.objectStore(CUSTOMERS_STORE);
+        if (!customers.indexNames.contains("byTenantCode"))
+          customers.createIndex("byTenantCode", ["tenantId", "code"], { unique: true });
+        if (!customers.indexNames.contains("byTenantUpdatedAt"))
+          customers.createIndex("byTenantUpdatedAt", ["tenantId", "updatedAtUtc"]);
       };
       request.onsuccess = () => {
         const database = request.result;
@@ -115,6 +125,31 @@ async function sha256(value) {
     throw new Error("Secure cryptography is unavailable. Open MG Business over HTTPS or localhost.");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+export function normalizeLocalCustomer(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new TypeError("Customer input must be an object.");
+  const code = typeof input.code === "string" ? input.code.trim().toUpperCase() : "";
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!code || code.length > 40) throw new TypeError("Customer code must contain 1–40 characters.");
+  if (!name || name.length > 160) throw new TypeError("Customer name must contain 1–160 characters.");
+  const normalizeOptional = (value, field, maxLength) => {
+    if (value == null || value === "") return null;
+    if (typeof value !== "string") throw new TypeError("Customer " + field + " must be text.");
+    const normalized = value.trim();
+    if (normalized.length > maxLength) throw new TypeError("Customer " + field + " cannot exceed " + maxLength + " characters.");
+    return normalized || null;
+  };
+  const phone = normalizeOptional(input.phone, "phone", 40);
+  const email = (normalizeOptional(input.email, "email", 254) || null)?.toLowerCase() ?? null;
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    throw new TypeError("Customer email address is invalid.");
+  return {
+    code, name, phone, email,
+    address: normalizeOptional(input.address, "address", 500),
+    notes: normalizeOptional(input.notes, "notes", 1000)
+  };
 }
 
 export class LocalOperationStore {
@@ -182,6 +217,67 @@ export class LocalOperationStore {
     transaction.objectStore(OPERATIONS_STORE).add(operation);
     await done;
     return operation;
+  }
+
+  async createCustomer({ tenantId, branchId, actorId, customer }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (typeof branchId !== "string" || !branchId.trim()) throw new TypeError("branchId is required for a branch-originated customer command.");
+    if (typeof actorId !== "string" || !actorId.trim()) throw new TypeError("actorId is required.");
+    const normalized = normalizeLocalCustomer(customer);
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ customerId: id, ...normalized, baseVersion: 0 });
+    const operation = {
+      operationId: crypto.randomUUID(),
+      deviceId: await this.getDeviceId(actorId),
+      tenantId, branchId,
+      operationType: "customer.profile.created",
+      schemaVersion: 1, authorityEpoch: 0,
+      occurredAtUtc: now,
+      payloadJson,
+      payloadSha256: await sha256(payloadJson),
+      state: "pending", attempts: 0,
+      createdAtUtc: now, acknowledgedAtUtc: null, serverSequence: null
+    };
+    const localCustomer = {
+      tenantId, id, ...normalized, version: 1,
+      syncStatus: "pending",
+      createdAtUtc: now, updatedAtUtc: now,
+      createdByActorId: actorId, originBranchId: branchId
+    };
+    const database = await openDatabase();
+    const transaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    transaction.objectStore(CUSTOMERS_STORE).add(localCustomer);
+    transaction.objectStore(OPERATIONS_STORE).add(operation);
+    await done;
+    return localCustomer;
+  }
+
+  async getCustomers(tenantId, limit = 500) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 1000)) : 500;
+    const database = await openDatabase();
+    const transaction = database.transaction(CUSTOMERS_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const index = transaction.objectStore(CUSTOMERS_STORE).index("byTenantUpdatedAt");
+    const range = IDBKeyRange.bound([tenantId, ""], [tenantId, "\uffff"]);
+    const rows = await new Promise((resolve, reject) => {
+      const values = [];
+      const request = index.openCursor(range, "prev");
+      request.onerror = () => reject(request.error || new Error("Could not read local customers."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || values.length >= boundedLimit) {
+          resolve(values);
+          return;
+        }
+        values.push(cursor.value);
+        cursor.continue();
+      };
+    });
+    await done;
+    return rows;
   }
 
   async getPending(tenantId, limit = 100, branchId = null, allowTenantWide = false, deviceId) {
