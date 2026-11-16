@@ -262,6 +262,19 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["amountDue"], 0)
 
+        status, snapshot = self.request("GET", "/api/backup", token=token)
+        self.assertEqual(status, 200)
+        altered = json.loads(json.dumps(snapshot))
+        altered["tenant"]["id"] = "different-workspace"
+        status, result = self.request("POST", "/api/backup/restore", altered, token)
+        self.assertEqual(status, 400)
+        status, result = self.request("POST", "/api/backup/restore", snapshot, token)
+        self.assertEqual(status, 200)
+        self.assertGreater(result["restoredRows"], 0)
+        status, result = self.request("GET", "/api/gamenet/sessions", token=token)
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(len(result["items"]), 2)
+
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
