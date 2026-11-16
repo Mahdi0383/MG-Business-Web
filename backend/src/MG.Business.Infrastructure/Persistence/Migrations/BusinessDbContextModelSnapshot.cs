@@ -207,7 +207,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("MG.Business.Domain.Entities.DeviceEnrollmentChallenge", b =>
                 {
-                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
                     b.Property<Guid>("ActorId").HasColumnType("uuid");
                     b.Property<Guid?>("BranchId").HasColumnType("uuid");
                     b.Property<string>("ChallengeSha256").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
