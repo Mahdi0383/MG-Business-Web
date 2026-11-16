@@ -213,3 +213,13 @@ The current repository is a foundation, not a finished commercial product. A foc
 ### Device trust protocol design — 2026-11-17
 
 A security ADR now defines the target cryptographic enrollment and signed-request protocol, including explicit threat-model limitations for browser-held keys and adversarial tests. This is not implementation evidence; device enrollment, request authentication, lease issuance, and fencing remain unimplemented blockers.
+
+
+## Cryptographic device request authentication
+
+- Browser enrollment creates a Web Crypto ECDSA P-256 key pair. The private key is non-extractable and persisted as a structured-clone CryptoKey in IndexedDB; the server stores the public SPKI key and only a SHA-256 digest of the one-time-returned device credential.
+- Enrollment challenges are random, short-lived, single-use and bound to the authenticated tenant, actor, branch context and device ID. A proof-of-possession signature is required to complete enrollment.
+- Authenticated sync heartbeat, pull, push and acknowledgement requests are signed over method, path/query, tenant, branch, actor, device, key version, timestamp, UUID nonce and exact serialized body SHA-256. The server checks credential digest, active status, actor scope, key version, ECDSA signature and a two-minute timestamp window, then persists the nonce under a unique key before executing the endpoint.
+- Device credentials are tenant-scoped so one browser identity can be used in the tenant's authorized branches; enrollment proof itself remains branch-context-bound. A future branch-restricted credential can set an explicit branch scope.
+- Production startup now fails unless `SyncSecurity:RequireDeviceSignatures=true`. Enrollment bootstrap routes are excluded from request-signature middleware but still require authenticated tenant membership and challenge proof.
+- This closes device request authentication and replay protection at the API boundary; key rotation/revocation APIs, expired nonce cleanup, browser key recovery, signed authority leases/fencing and end-to-end multi-node recovery tests remain open release gates.
