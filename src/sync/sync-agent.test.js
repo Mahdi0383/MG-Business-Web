@@ -17,11 +17,12 @@ test("pushes the durable pending batch and acknowledges only matching operation 
     }
   };
   const store = {
-    async getPending(tenantId, limit) { assert.equal(tenantId, "tenant-1"); assert.equal(limit, 100); return operations; },
+    async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
+    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(tenantId, "tenant-1"); assert.equal(limit, 100); assert.equal(deviceId, "device-1"); return operations; },
     async acknowledge(items) { acknowledged.push(...items); }
   };
 
-  const result = await new SyncAgent(api, store).pushPending("tenant-1");
+  const result = await new SyncAgent(api, store).pushPending("tenant-1", { actorId: "actor-1" });
 
   assert.deepEqual(result, { status: "synced", acknowledged: 1 });
   assert.equal(sent[0].path, "/api/sync/operations");
@@ -33,7 +34,8 @@ test("keeps pending operations untouched when the network is unavailable", async
   let acknowledgeCalled = false;
   const api = { async post() { throw new TypeError("Failed to fetch"); } };
   const store = {
-    async getPending() { return [{ operationId: "offline-op" }]; },
+    async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
+    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(deviceId, "device-1"); return [{ operationId: "offline-op" }]; },
     async acknowledge() { acknowledgeCalled = true; }
   };
 
@@ -47,12 +49,13 @@ test("keeps pending operations untouched when the network is unavailable", async
 test("rejects acknowledgements that do not match the submitted batch", async () => {
   const api = { async post() { return { accepted: [{ operationId: "unexpected", sequence: 2 }] }; } };
   const store = {
-    async getPending() { return [{ operationId: "expected" }]; },
+    async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
+    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(deviceId, "device-1"); return [{ operationId: "expected" }]; },
     async acknowledge() { assert.fail("invalid acknowledgements must not be committed"); }
   };
 
   await assert.rejects(
-    new SyncAgent(api, store).pushPending("tenant-1"),
+    new SyncAgent(api, store).pushPending("tenant-1", { actorId: "actor-1" }),
     /acknowledgement does not match/
   );
 });
@@ -172,8 +175,9 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
     }
   };
   const store = {
-    async getPending(tenantId, limit, branchId, allowTenantWide) {
-      pendingContext = { tenantId, limit, branchId, allowTenantWide };
+    async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
+    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) {
+      pendingContext = { tenantId, limit, branchId, allowTenantWide, deviceId };
       return [operation];
     },
     async acknowledge() {}
@@ -185,7 +189,8 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
     tenantId: "tenant-1",
     limit: 100,
     branchId: "branch-a",
-    allowTenantWide: false
+    allowTenantWide: false,
+    deviceId: "device-1"
   });
   assert.equal(requestContext.path, "/api/sync/operations");
   assert.deepEqual(requestContext.options, { tenantId: "tenant-1", branchId: "branch-a" });
@@ -341,4 +346,10 @@ test("rejects an incoming payload whose SHA-256 does not match before persistenc
     /payload hash does not match/
   );
   assert.equal(persisted, false);
+});
+
+test("requires an authenticated actor before starting sync push", async () => {
+  const api = { async post() { assert.fail("missing actor must be rejected before network access"); } };
+  const store = { async getPending() { assert.fail("missing actor must be rejected before storage access"); } };
+  await assert.rejects(new SyncAgent(api, store).pushPending("tenant-1"), /actorId is required/);
 });
