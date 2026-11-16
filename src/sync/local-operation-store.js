@@ -81,18 +81,21 @@ async function sha256(value) {
 }
 
 export class LocalOperationStore {
-  async getDeviceId() {
+  async getDeviceId(actorId) {
+    if (typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("actorId is required to identify a registered browser device.");
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readwrite");
     const done = transactionDone(transaction);
     const store = transaction.objectStore(META_STORE);
-    const existing = await requestResult(store.get("device-id"));
+    const key = `device-id:${actorId}`;
+    const existing = await requestResult(store.get(key));
     if (existing?.value) {
       await done;
       return existing.value;
     }
     const deviceId = crypto.randomUUID();
-    store.put({ key: "device-id", value: deviceId });
+    store.put({ key, value: deviceId });
     await done;
     return deviceId;
   }
