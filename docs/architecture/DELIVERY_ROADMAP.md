@@ -26,7 +26,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 
 ### C. Offline-first and high availability
 - [ ] Local durable database and operation journal on every supported client.
-- [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation only; not yet applied to business domain projections).
+- [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation; customer creation is the first applied business vertical slice below).
 - [x] Per-device, per-branch server acknowledgement watermarks; tenant-wide manager acknowledgement remains separately scoped.
 - [x] Atomic IndexedDB customer creation: local customer projection and branch-originated outbox command commit in one transaction; server-side customer creation replay is implemented; inbound projection on other devices remains pending.
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
@@ -85,7 +85,7 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Added the first local business projection store for customers with validated input and an atomic projection-plus-outbox write; this does not yet enable offline customer reconciliation on the server.
 - Added a regression integration test that acknowledges a later operation in Branch A, switches the same device to Branch B, and verifies Branch B's earlier operation remains pending.
 - Hardened sales settlement validation so overpayments and partial payments without a customer return validation errors rather than surfacing domain exceptions as server errors.
-- Added regression tests for the above. This remains transport/security hardening: no claim is made that business projections are offline-wired.
+- Added regression tests for the above. Customer creation is now the first real local-first business vertical slice across local projection, outbox, authoritative server replay and inbound projection. Sales, accounting, inventory, café and game-net workflows are not yet offline-ready.
 
 ## Planning estimate
 
