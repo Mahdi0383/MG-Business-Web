@@ -4,11 +4,12 @@ public sealed class SyncOperation
 {
     private SyncOperation() { }
 
-    public SyncOperation(Guid tenantId, Guid deviceId, Guid? branchId, Guid operationId,
+    public SyncOperation(Guid tenantId, Guid actorId, Guid deviceId, Guid? branchId,
         string operationType, int schemaVersion, long authorityEpoch,
         DateTimeOffset occurredAtUtc, string payloadJson, string payloadSha256)
     {
         if (tenantId == Guid.Empty) throw new ArgumentException("Tenant is required.", nameof(tenantId));
+        if (actorId == Guid.Empty) throw new ArgumentException("Actor is required.", nameof(actorId));
         if (deviceId == Guid.Empty) throw new ArgumentException("Device is required.", nameof(deviceId));
         if (operationId == Guid.Empty) throw new ArgumentException("Operation ID is required.", nameof(operationId));
         if (string.IsNullOrWhiteSpace(operationType) || operationType.Length > 100)
@@ -21,6 +22,7 @@ public sealed class SyncOperation
 
         Id = Guid.NewGuid();
         TenantId = tenantId;
+        ActorId = actorId;
         DeviceId = deviceId;
         BranchId = branchId;
         OperationId = operationId;
@@ -36,6 +38,7 @@ public sealed class SyncOperation
     public Guid Id { get; private set; }
     public long Sequence { get; private set; }
     public Guid TenantId { get; private set; }
+    public Guid ActorId { get; private set; }
     public Guid DeviceId { get; private set; }
     public Guid? BranchId { get; private set; }
     public Guid OperationId { get; private set; }
