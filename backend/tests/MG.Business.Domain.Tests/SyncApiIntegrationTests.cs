@@ -127,6 +127,27 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.BadRequest, malformedHashPush.StatusCode);
 
+        var nullOperationPush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new object?[]
+            {
+                null,
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId,
+                    branchId = tenant.BranchId,
+                    operationType = "test.valid-entry",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\"note\":\"valid-entry\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, nullOperationPush.StatusCode);
+
         var retryPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Accepted, retryPush.StatusCode);
         var retryAck = await retryPush.Content.ReadFromJsonAsync<SyncPushResponse>();
