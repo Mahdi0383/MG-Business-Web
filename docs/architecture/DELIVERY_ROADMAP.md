@@ -100,7 +100,7 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Added optional stock-movement `Idempotency-Key` support with a SHA-256 request fingerprint and a unique tenant/branch/key constraint.
 - Exact retries return the originally committed movement; reusing a key with changed request content returns HTTP 409. A provider-backed integration test verifies no duplicate stock is posted.
 - Added the PostgreSQL migration and updated the EF model snapshot; model-snapshot validation, API build and PostgreSQL migration-script generation passed. The latest SQLite integration/domain run passed after normalizing the fingerprint representation.
-- The key is still optional and is not yet persisted by every stock-writing client. Mandatory idempotency and end-to-end offline stock command handling remain release blockers.
+- The manual inventory movement API now rejects requests without an `Idempotency-Key`; exact retries replay the original movement and changed-payload reuse is rejected. Sales-order-originated stock writes, local/offline stock commands and their cross-domain idempotency remain release blockers.
 - Web CI, SQLite integration/domain tests and PostgreSQL migration + integration/domain CI all passed on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09`.
 
 ## Planning estimate
