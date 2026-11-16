@@ -62,6 +62,19 @@ public sealed class TenantOnboardingAndInventoryTests
         Assert.Single(catalog.Items);
         Assert.Equal("TEA-002", catalog.Items[0].Sku);
 
+        var skuSearch = await client.GetFromJsonAsync<ProductCatalogPage>(
+            "/api/inventory/products/catalog?page=1&pageSize=10&search=ESP-001&activeOnly=false");
+        Assert.NotNull(skuSearch);
+        Assert.Equal(1, skuSearch.TotalCount);
+        Assert.Equal("ESP-001", Assert.Single(skuSearch.Items).Sku);
+
+        var secondPage = await client.GetFromJsonAsync<ProductCatalogPage>(
+            "/api/inventory/products/catalog?page=2&pageSize=1&activeOnly=false");
+        Assert.NotNull(secondPage);
+        Assert.Equal(2, secondPage.TotalCount);
+        Assert.Equal(2, secondPage.TotalPages);
+        Assert.Single(secondPage.Items);
+
         var invalidCatalog = await client.GetAsync("/api/inventory/products/catalog?page=0&pageSize=201");
         Assert.Equal(HttpStatusCode.BadRequest, invalidCatalog.StatusCode);
 
