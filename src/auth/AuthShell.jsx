@@ -240,7 +240,7 @@ function AuthShell({ apiBaseUrl }) {
         const [pending, incoming, conflicts] = await Promise.all([
           operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide, deviceId),
           operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide),
-          operationStoreRef.current.getOpenConflicts(tenantId, branchId)
+          operationStoreRef.current.getOpenConflicts(tenantId, branchId, allowTenantWide)
         ]);
         if (active) { setPendingOperations(pending); setIncomingOperations(incoming); setOpenSyncConflicts(conflicts.length); }
       } catch {
