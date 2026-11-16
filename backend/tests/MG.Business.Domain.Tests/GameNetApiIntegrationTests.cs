@@ -68,6 +68,24 @@ public sealed class GameNetApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
 
+        var quote = await client.GetFromJsonAsync<SessionQuote>($"/api/gamenet/sessions/{session!.Id}/quote");
+        Assert.Equal(15, quote!.BilledMinutes);
+        Assert.Equal(15m, quote.TotalAmount);
+        var settlementAccounts = await client.GetFromJsonAsync<SettlementAccountResponse[]>("/api/gamenet/settlement-accounts");
+        Assert.Contains(settlementAccounts!, account => account.Id == cash.Id);
+        Assert.Contains(settlementAccounts!, account => account.Id == revenue.Id);
+
+        var invalidOnAccount = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = 0m,
+            paymentMethod = PaymentMethod.OnAccount,
+            revenueAccountId = revenue.Id,
+            paymentAccountId = (Guid?)null,
+            receivableAccountId = cash.Id,
+            paymentReference = "GAME-CREDIT"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidOnAccount.StatusCode);
+
         var disableBranch = await client.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.Conflict, disableBranch.StatusCode);
 
@@ -139,6 +157,8 @@ public sealed class GameNetApiIntegrationTests
     private sealed record DeviceResponse(Guid Id, string Code, string Name, decimal HourlyRate, int BillingIntervalMinutes, Guid BranchId, bool HasActiveSession);
     private sealed record StartedSession(Guid Id, Guid DeviceId, Guid? CustomerId, DateTimeOffset StartedAtUtc, decimal HourlyRate, int BillingIntervalMinutes);
     private sealed record ClosedSession(Guid Id, Guid DeviceId, DateTimeOffset StartedAtUtc, DateTimeOffset EndedAtUtc, int BilledMinutes, decimal HourlyRate, decimal TotalAmount, Guid SalesOrderId, decimal PaidAmount, decimal BalanceDue);
+    private sealed record SessionQuote(Guid SessionId, Guid? CustomerId, DateTimeOffset QuotedAtUtc, int BilledMinutes, decimal TotalAmount);
+    private sealed record SettlementAccountResponse(Guid Id, string Code, string Name, string Type);
     private sealed record TrialBalanceResponse(TrialAccount[] Accounts, decimal TotalDebit, decimal TotalCredit, bool IsBalanced);
     private sealed record TrialAccount(Guid Id, string Code, string Name, string Type, decimal Debit, decimal Credit, decimal NetDebit, decimal NetCredit);
 }
