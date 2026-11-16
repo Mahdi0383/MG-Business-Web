@@ -147,3 +147,39 @@ test("uses an independent pull cursor for each selected branch", async () => {
     { tenantId: "tenant-1", sequence: 12, branchId: "branch-b" }
   ]);
 });
+
+test("pushes only the active branch queue with an explicit tenant context", async () => {
+  let pendingContext;
+  let requestContext;
+  const operation = {
+    operationId: "branch-op",
+    deviceId: "device-1",
+    branchId: "branch-a",
+    operationType: "customer.profile.updated",
+    schemaVersion: 1,
+    authorityEpoch: 0,
+    occurredAtUtc: "2026-11-16T10:00:00.000Z",
+    payloadJson: "{}",
+    payloadSha256: "A".repeat(64)
+  };
+  const api = {
+    async post(path, body, options) {
+      requestContext = { path, options, operation: body.operations[0] };
+      return { accepted: [{ operationId: "branch-op", sequence: 22, duplicate: false }] };
+    }
+  };
+  const store = {
+    async getPending(tenantId, limit, branchId) {
+      pendingContext = { tenantId, limit, branchId };
+      return [operation];
+    },
+    async acknowledge() {}
+  };
+
+  const result = await new SyncAgent(api, store).pushPending("tenant-1", { branchId: "branch-a" });
+  assert.equal(result.status, "synced");
+  assert.deepEqual(pendingContext, { tenantId: "tenant-1", limit: 100, branchId: "branch-a" });
+  assert.equal(requestContext.path, "/api/sync/operations");
+  assert.deepEqual(requestContext.options, { tenantId: "tenant-1", branchId: "branch-a" });
+  assert.equal(requestContext.operation.branchId, "branch-a");
+});
