@@ -31,6 +31,10 @@ if "importData" not in parser.ids or "importFile" not in parser.ids:
 worker = (root / "service-worker.js").read_text(encoding="utf-8")
 if "url.pathname.startsWith('/api/')" not in worker:
     raise SystemExit("service worker must never cache API responses")
+if "confirmOverlay" not in parser.ids or "toastRegion" not in parser.ids:
+    raise SystemExit("branded feedback dialogs are missing")
+if "window.alert=showToast" not in js or "confirm(" in js:
+    raise SystemExit("native dialogs must be replaced by branded feedback UI")
 server = (root / "server.py").read_text(encoding="utf-8")
 if "def translate_path(self, path):" not in server or "def list_directory(self, path):" not in server:
     raise SystemExit("static server must block private files and directory listing")
