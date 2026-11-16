@@ -291,17 +291,6 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         setError("این فاکتور قبلاً تسویه شده است.");
         return;
       }
-      const intentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${order.id}`;
-      try {
-        const pendingIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
-        const pendingPayload = pendingIntent?.fingerprint ? JSON.parse(pendingIntent.fingerprint) : null;
-        const methodName = ({ 1: "Cash", 2: "Card", 3: "BankTransfer", 4: "Wallet" })[pendingPayload?.paymentMethod];
-        const alreadyRecorded = pendingPayload && (paymentRows || []).some(payment =>
-          Number(payment.amount) === Number(pendingPayload.amount)
-          && payment.method === methodName
-          && (payment.reference || null) === (pendingPayload.paymentReference || null));
-        if (alreadyRecorded) window.localStorage.removeItem(intentStorageKey);
-      } catch { /* Keep the pending idempotency intent when its status cannot be verified. */ }
       const activeAssets = (accountRows || []).filter(account => account.type === "Asset" && account.isActive);
       const cash = activeAssets.find(account => account.code === "1000") || activeAssets[0];
       const receivable = activeAssets.find(account => account.code === "1100" && account.id !== cash?.id)
