@@ -36,6 +36,7 @@ function AuthShell({ apiBaseUrl }) {
   const [branches, setBranches] = useState([]);
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  const [activeActorId, setActiveActorId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -66,6 +67,7 @@ function AuthShell({ apiBaseUrl }) {
       client.setTenantContext(null, null);
       setSelectedTenant(null);
       setSelectedBranch(null);
+      setActiveActorId(null);
       setStage("login");
     }
   }, [session, stage, client]);
@@ -75,6 +77,7 @@ function AuthShell({ apiBaseUrl }) {
     setTenants(result || []);
     setSelectedTenant(null);
     setSelectedBranch(null);
+    setActiveActorId(null);
     setBranches([]);
     setStage(result?.length ? "tenant" : "create-tenant");
   }, [client]);
@@ -165,6 +168,7 @@ function AuthShell({ apiBaseUrl }) {
       client.setTenantContext(tenant.id, null);
       const result = await client.get("/api/branches/");
       setSelectedTenant(tenant);
+      setActiveActorId(null);
       setBranches(result || []);
       setSelectedBranch(null);
       setStage("branch");
@@ -180,7 +184,10 @@ function AuthShell({ apiBaseUrl }) {
     setError("");
     try {
       client.setTenantContext(selectedTenant.id, branch.id);
-      await client.get("/api/context");
+      const context = await client.get("/api/context");
+      if (typeof context?.userId !== "string" || !context.userId.trim())
+        throw new Error("شناسه کاربر از سرور دریافت نشد؛ دستگاه همگام‌سازی ثبت نمی‌شود.");
+      setActiveActorId(context.userId);
       setSelectedBranch(branch);
       setStage("workspace");
     } catch (contextError) {
@@ -198,6 +205,7 @@ function AuthShell({ apiBaseUrl }) {
     setBranches([]);
     setSelectedTenant(null);
     setSelectedBranch(null);
+    setActiveActorId(null);
     setPassword("");
     setStage("login");
   };
@@ -206,6 +214,7 @@ function AuthShell({ apiBaseUrl }) {
     client.setTenantContext(null, null);
     setSelectedTenant(null);
     setSelectedBranch(null);
+    setActiveActorId(null);
     setStage("tenant");
   };
 
@@ -240,7 +249,7 @@ function AuthShell({ apiBaseUrl }) {
         }
 
         if (!syncDeviceRegistered) {
-          const deviceId = await operationStoreRef.current.getDeviceId();
+          const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
           await client.post("/api/sync/heartbeat", {
             deviceId,
             deviceName: "MG Business Web",
@@ -253,7 +262,7 @@ function AuthShell({ apiBaseUrl }) {
         if (active) setSyncStatus("syncing");
         let pullResult = null;
         for (let page = 0; page < 5; page += 1) {
-          pullResult = await syncAgentRef.current.pullIncoming(tenantId, { branchId: selectedBranch?.id || null });
+          pullResult = await syncAgentRef.current.pullIncoming(tenantId, { branchId: selectedBranch?.id || null, actorId: activeActorId });
           if (pullResult.status !== "more-available") break;
         }
         const result = await syncAgentRef.current.pushPending(tenantId, {
@@ -288,7 +297,7 @@ function AuthShell({ apiBaseUrl }) {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [stage, selectedTenant?.id, selectedTenant?.role, selectedBranch?.id]);
+  }, [stage, selectedTenant?.id, selectedTenant?.role, selectedBranch?.id, activeActorId]);
 
   useEffect(() => {
     if (stage !== "workspace" || !selectedTenant?.id) return undefined;
@@ -298,7 +307,7 @@ function AuthShell({ apiBaseUrl }) {
       if (!active || heartbeatInFlight || document.visibilityState === "hidden") return;
       heartbeatInFlight = true;
       try {
-        const deviceId = await operationStoreRef.current.getDeviceId();
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
         await client.post("/api/sync/heartbeat", {
           deviceId,
           deviceName: "MG Business Web",
@@ -331,7 +340,7 @@ function AuthShell({ apiBaseUrl }) {
       window.removeEventListener("focus", sendHeartbeat);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [stage, selectedTenant?.id, selectedTenant?.role, client]);
+  }, [stage, selectedTenant?.id, selectedTenant?.role, selectedBranch?.id, activeActorId, client]);
 
   const workspaceContext = useMemo(() => ({
     tenant: selectedTenant,
