@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using MG.Business.Api.Endpoints;
 using MG.Business.Domain.Entities;
+using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -236,6 +237,60 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(2, unchanged!.Version);
         Assert.Equal("After", unchanged.Name);
         Assert.Equal("after@example.com", unchanged.Email);
+    }
+
+    [Fact]
+    public async Task CustomerSyncCommandsRequireCustomerWriteRole()
+    {
+        using var factory = CreateFactory();
+        var ownerEmail = $"sync-owner-{Guid.NewGuid():N}@mg.test";
+        using var owner = await RegisterAndLoginAsync(factory, ownerEmail);
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Customer Role Store",
+            slug = $"customer-role-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+
+        var viewerEmail = $"sync-viewer-{Guid.NewGuid():N}@mg.test";
+        using var viewer = await RegisterAndLoginAsync(factory, viewerEmail);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            var user = await db.Users.SingleAsync(x => x.Email == viewerEmail);
+            db.TenantMemberships.Add(new TenantMembership(tenant!.TenantId, user.Id, TenantRole.Viewer, tenant.BranchId));
+            await db.SaveChangesAsync();
+        }
+
+        viewer.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        viewer.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await viewer.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Viewer Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = Guid.NewGuid(), code = "VIEWER-1", name = "Forbidden", baseVersion = 0
+        });
+        var push = await viewer.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.created", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = payload, payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
     }
 
     [Fact]
