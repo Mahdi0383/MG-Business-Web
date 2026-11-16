@@ -354,13 +354,14 @@ export class LocalOperationStore {
     if (!operation || typeof operation !== "object" || !operation.payload)
       throw new TypeError("A validated incoming operation is required.");
     const payload = operation.payload;
-    if (!["customer.profile.created", "customer.profile.updated", "customer.contact.updated"].includes(operation.operationType))
+    if (operation.operationType !== "customer.profile.created")
       throw new Error("No local projection handler is registered for " + operation.operationType + ".");
+    const isCreate = true;
     if (typeof payload.customerId !== "string" || !payload.customerId.trim())
       throw new TypeError("Customer command requires a customerId.");
 
     const isCreate = operation.operationType === "customer.profile.created";
-    if (isCreate && payload.baseVersion !== 0)
+    if (payload.baseVersion !== 0)
       throw new TypeError("Customer creation requires baseVersion 0.");
     const database = await openDatabase();
     const transaction = database.transaction([INBOX_STORE, CUSTOMERS_STORE], "readwrite");
@@ -402,30 +403,6 @@ export class LocalOperationStore {
             serverSequence: sequence
           });
         }
-      } else {
-        if (!existingCustomer || existingCustomer.version !== payload.baseVersion) {
-          integrityError = new Error("Customer version changed before the incoming update could be committed.");
-          transaction.abort();
-          return;
-        }
-        const fieldValue = field => Object.prototype.hasOwnProperty.call(payload, field)
-          ? payload[field] : existingCustomer[field];
-        const normalized = normalizeLocalCustomer({
-          code: existingCustomer.code,
-          name: fieldValue("name"),
-          phone: fieldValue("phone"),
-          email: fieldValue("email"),
-          address: fieldValue("address"),
-          notes: fieldValue("notes")
-        });
-        Object.assign(existingCustomer, normalized, {
-          version: existingCustomer.version + 1,
-          syncStatus: "synced",
-          updatedAtUtc: now,
-          lastOperationId: operation.operationId,
-          serverSequence: sequence
-        });
-        customerStore.put(existingCustomer);
       }
       inboxRow.applied = true;
       inboxRow.appliedAtUtc = now;
