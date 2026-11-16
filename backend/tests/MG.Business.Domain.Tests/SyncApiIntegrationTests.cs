@@ -103,12 +103,23 @@ public sealed class SyncApiIntegrationTests
             clientVersion = "0.1.0"
         });
         Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+        await Task.Delay(20);
+        var secondHeartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId,
+            deviceName = "MG Test Browser Updated",
+            platform = "Test",
+            clientVersion = "0.1.1"
+        });
+        Assert.Equal(HttpStatusCode.OK, secondHeartbeat.StatusCode);
 
         var devices = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
         Assert.NotNull(devices);
         var device = Assert.Single(devices!);
         Assert.Equal(deviceId, device.DeviceId);
-        Assert.Equal("MG Test Browser", device.DeviceName);
+        Assert.Equal("MG Test Browser Updated", device.DeviceName);
+        Assert.Equal("0.1.1", device.ClientVersion);
+        Assert.True(device.LastSeenAtUtc >= device.FirstSeenAtUtc);
         Assert.True(device.IsOnline);
         Assert.Null(device.AlertCode);
     }
