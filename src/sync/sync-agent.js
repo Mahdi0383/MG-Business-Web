@@ -5,11 +5,11 @@ export class SyncAgent {
     this.running = false;
   }
 
-  async pullIncoming(tenantId, { pageSize = 100 } = {}) {
+  async pullIncoming(tenantId, { pageSize = 100, branchId = null } = {}) {
     if (this.running) return { status: "already-running", received: 0 };
     this.running = true;
     try {
-      const afterSequence = await this.operationStore.getCursor(tenantId);
+      const afterSequence = await this.operationStore.getCursor(tenantId, branchId);
       const response = await this.apiClient.get(
         `/api/sync/operations?afterSequence=${afterSequence}&limit=${Math.max(1, Math.min(pageSize, 200))}`
       );
@@ -25,7 +25,7 @@ export class SyncAgent {
       // over them in the tenant journal. The scan cursor can exceed the last visible row.
       if (response.nextSequence < previousSequence)
         throw new Error("MG Sync API cursor precedes the last returned operation.");
-      await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence);
+      await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence, branchId);
       const deviceId = await this.operationStore.getDeviceId();
       await this.apiClient.post("/api/sync/acknowledgements", {
         deviceId,
