@@ -48,15 +48,13 @@ if re.search(r"\bdata(?:\.get|\[)", get_handler):
     raise SystemExit("GET handler must not read mutation request data")
 if 'if path.startswith("/api/gamenet/devices/")' not in post_handler:
     raise SystemExit("game device updates must be routed through POST")
-if 'if path == "/api/suppliers":' not in server or 'if path == "/api/purchase-invoices":' not in server or 'path.endswith("/payments")' not in server:
+if 'if path == "/api/suppliers":' not in server or 'path.endswith("/ledger")' not in server or 'if path == "/api/purchase-invoices":' not in server or 'path.endswith("/payments")' not in server:
     raise SystemExit("supplier and purchase invoice workflows are missing")
 if any(name not in server for name in ("purchase_invoice_items","supplier_payments","suppliers")):
     raise SystemExit("purchase records must be included in backup support")
 app = (root / "app.js").read_text(encoding="utf-8")
 if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
-if "purchaseLines" not in app or "supplierPaymentForm" not in app:
-    raise SystemExit("purchase editor and payment form are missing")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
 if "offline-card" not in app or "همگام‌سازی آفلاین هنوز فعال نیست" not in app:
