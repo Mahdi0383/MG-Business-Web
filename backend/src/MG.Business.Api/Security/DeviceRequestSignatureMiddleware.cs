@@ -36,7 +36,7 @@ public sealed class DeviceRequestSignatureMiddleware
         }
 
         if (tenant.TenantId is not Guid tenantId || tenant.UserId is not Guid actorId
-            || !context.User.Identity?.IsAuthenticated == true)
+            || context.User.Identity?.IsAuthenticated != true)
         {
             await Reject(context, StatusCodes.Status401Unauthorized, "DEVICE_AUTH_REQUIRED");
             return;
@@ -153,7 +153,6 @@ public sealed class DeviceRequestSignatureMiddleware
         {
             db.DeviceRequestNonces.Add(new(
                 tenantId, deviceId, nonce.ToString("D"), now, now.AddMinutes(5)));
-            credential.LastUsedAtUtc = now;
             await db.SaveChangesAsync(context.RequestAborted);
         }
         catch (DbUpdateException)
