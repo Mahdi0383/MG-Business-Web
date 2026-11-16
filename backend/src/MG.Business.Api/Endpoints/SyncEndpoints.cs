@@ -422,6 +422,9 @@ public static class SyncEndpoints
                 .ToDictionaryAsync(x => x.OperationId, cancellationToken);
 
             var acknowledgements = new Dictionary<Guid, SyncOperationAck>();
+            // One aggregate may only be mutated once per batch. Otherwise two commands
+            // with the same base version could both be accepted against one tracked entity.
+            var customerCommandIds = new HashSet<Guid>();
             var inserted = new List<SyncOperation>();
             foreach (var item in prepared)
             {
@@ -471,6 +474,11 @@ public static class SyncEndpoints
                         {
                             ["customer"] = ["Customer update requires a valid ID and positive baseVersion."]
                         });
+                    if (!customerCommandIds.Add(command.CustomerId))
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["A customer can only be changed once in a sync batch. Split dependent commands into sequential batches."]
+                        });
 
                     var customer = await db.Customers.SingleOrDefaultAsync(
                         x => x.TenantId == tenantId && x.Id == command.CustomerId && x.IsActive,
@@ -515,6 +523,11 @@ public static class SyncEndpoints
                         return Results.ValidationProblem(new Dictionary<string, string[]>
                         {
                             ["customer"] = ["Customer creation requires a valid ID and baseVersion 0."]
+                        });
+                    if (!customerCommandIds.Add(command.CustomerId))
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["customer"] = ["A customer can only be changed once in a sync batch. Split dependent commands into sequential batches."]
                         });
 
                     try
