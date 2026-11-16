@@ -123,6 +123,30 @@ CREATE TABLE IF NOT EXISTS orders(
  FOREIGN KEY(customer_id) REFERENCES customers(id)
 );
 CREATE INDEX IF NOT EXISTS idx_orders_tenant_date ON orders(tenant_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS game_devices(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100),
+ device_type TEXT NOT NULL CHECK(device_type IN ('pc','console','other')),
+ hourly_rate INTEGER NOT NULL CHECK(hourly_rate>=0),
+ is_free INTEGER NOT NULL DEFAULT 0 CHECK(is_free IN (0,1)),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ created_at INTEGER NOT NULL, UNIQUE(tenant_id,name)
+);
+CREATE TABLE IF NOT EXISTS game_sessions(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ device_id TEXT NOT NULL REFERENCES game_devices(id),
+ customer_id TEXT REFERENCES customers(id),
+ started_by TEXT NOT NULL REFERENCES users(id),
+ started_at INTEGER NOT NULL, ended_at INTEGER,
+ status TEXT NOT NULL CHECK(status IN ('running','ended','cancelled')),
+ players_count INTEGER NOT NULL CHECK(players_count BETWEEN 1 AND 16),
+ rate_per_hour INTEGER NOT NULL CHECK(rate_per_hour>=0),
+ is_free INTEGER NOT NULL CHECK(is_free IN (0,1)),
+ amount_due INTEGER NOT NULL DEFAULT 0 CHECK(amount_due>=0),
+ created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_game_sessions_tenant_start ON game_sessions(tenant_id,started_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_game_one_running_per_device ON game_sessions(tenant_id,device_id) WHERE status='running';
 CREATE TABLE IF NOT EXISTS order_items(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, order_id TEXT NOT NULL,
  product_id TEXT NOT NULL, product_name TEXT NOT NULL,
@@ -375,6 +399,22 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
                     WHERE o.tenant_id=? ORDER BY o.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/gamenet/devices":
+                rows = db.execute("""SELECT d.id,d.name,d.device_type AS deviceType,d.hourly_rate AS hourlyRate,d.is_free AS isFree,
+                    d.active,gs.id AS sessionId,gs.customer_id AS customerId,gs.started_at AS startedAt,gs.players_count AS playersCount
+                    FROM game_devices d LEFT JOIN game_sessions gs
+                    ON gs.device_id=d.id AND gs.tenant_id=d.tenant_id AND gs.status='running'
+                    WHERE d.tenant_id=? ORDER BY d.name""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/gamenet/sessions":
+                rows = db.execute("""SELECT s.id,s.device_id AS deviceId,d.name AS deviceName,
+                    s.customer_id AS customerId,c.full_name AS customerName,s.started_at AS startedAt,
+                    s.ended_at AS endedAt,s.status,s.players_count AS playersCount,
+                    s.rate_per_hour AS ratePerHour,s.is_free AS isFree,s.amount_due AS amountDue
+                    FROM game_sessions s JOIN game_devices d ON d.id=s.device_id
+                    LEFT JOIN customers c ON c.id=s.customer_id
+                    WHERE s.tenant_id=? ORDER BY s.started_at DESC LIMIT 500""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/accounting/accounts":
                 rows = db.execute("SELECT code,name,account_type AS accountType,normal_balance AS normalBalance FROM accounts WHERE tenant_id=? AND active=1 ORDER BY code",
                                   (user["tenant_id"],)).fetchall()
@@ -413,6 +453,24 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path.startswith("/api/gamenet/devices/"):
+                device_id = path.rsplit("/", 1)[-1]
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error": "فقط مدیر می‌تواند دستگاه را غیرفعال کند."})
+                db.execute("BEGIN IMMEDIATE")
+                running = db.execute("SELECT 1 FROM game_sessions WHERE tenant_id=? AND device_id=? AND status='running'",
+                                     (user["tenant_id"],device_id)).fetchone()
+                if running:
+                    db.rollback()
+                    return self.send_json(409, {"error": "ابتدا نشست فعال دستگاه را پایان دهید."})
+                changed = db.execute("UPDATE game_devices SET active=0 WHERE id=? AND tenant_id=? AND active=1",
+                                     (device_id,user["tenant_id"])).rowcount
+                if not changed:
+                    db.rollback()
+                    return self.send_json(404, {"error": "دستگاه فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"gamenet.device.deactivated","game_device",device_id)
+                db.commit()
+                return self.send_json(200, {"ok": True})
             if path.startswith("/api/orders/"):
                 order_id = path.rsplit("/", 1)[-1]
                 if user["role"] not in ("owner","manager"):
@@ -537,6 +595,72 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
                 db.commit()
                 return self.send_json(200, {"ok": True})
+            if path == "/api/gamenet/devices":
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error": "دسترسی مدیریت دستگاه‌ها ندارید."})
+                name, device_type = data.get("name"), data.get("deviceType","pc")
+                hourly_rate, is_free = data.get("hourlyRate",0), data.get("isFree",False)
+                if not isinstance(name,str) or not 1 <= len(name.strip()) <= 100:
+                    return self.send_json(400, {"error": "نام دستگاه معتبر نیست."})
+                if device_type not in ("pc","console","other") or type(hourly_rate) is not int or hourly_rate < 0 or type(is_free) is not bool:
+                    return self.send_json(400, {"error": "نوع یا تعرفه دستگاه معتبر نیست."})
+                device_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                db.execute("INSERT INTO game_devices(id,tenant_id,name,device_type,hourly_rate,is_free,created_at) VALUES(?,?,?,?,?,?,?)",
+                           (device_id,user["tenant_id"],name.strip(),device_type,hourly_rate,int(is_free),now))
+                audit(db,user["tenant_id"],user["id"],"gamenet.device.created","game_device",device_id)
+                db.commit()
+                return self.send_json(201, {"id":device_id,"ok":True})
+            if path == "/api/gamenet/sessions":
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی شروع نشست بازی ندارید."})
+                device_id, customer_id = data.get("deviceId"), data.get("customerId")
+                players = data.get("playersCount",1)
+                if not isinstance(device_id,str) or type(players) is not int or not 1 <= players <= 16:
+                    return self.send_json(400, {"error": "دستگاه یا تعداد بازیکنان معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                device = db.execute("SELECT * FROM game_devices WHERE id=? AND tenant_id=? AND active=1",
+                                    (device_id,user["tenant_id"])).fetchone()
+                if not device:
+                    db.rollback()
+                    return self.send_json(404, {"error": "دستگاه فعال پیدا نشد."})
+                if customer_id is not None and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",
+                                                               (customer_id,user["tenant_id"])).fetchone():
+                    db.rollback()
+                    return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
+                session_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                db.execute("""INSERT INTO game_sessions(id,tenant_id,device_id,customer_id,started_by,started_at,status,
+                    players_count,rate_per_hour,is_free,created_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?)""",
+                    (session_id,user["tenant_id"],device_id,customer_id,user["id"],now,players,device["hourly_rate"],device["is_free"],now))
+                audit(db,user["tenant_id"],user["id"],"gamenet.session.started","game_session",session_id,
+                      {"deviceId":device_id,"playersCount":players})
+                db.commit()
+                return self.send_json(201, {"id":session_id,"startedAt":now,"ok":True})
+            if path.startswith("/api/gamenet/sessions/") and path.endswith("/end"):
+                session_id = path.split("/")[-2]
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی پایان نشست بازی ندارید."})
+                db.execute("BEGIN IMMEDIATE")
+                session = db.execute("SELECT * FROM game_sessions WHERE id=? AND tenant_id=? AND status='running'",
+                                     (session_id,user["tenant_id"])).fetchone()
+                if not session:
+                    db.rollback()
+                    return self.send_json(404, {"error": "نشست فعال پیدا نشد."})
+                now = int(time.time())
+                elapsed = max(0,now-session["started_at"])
+                amount = 0 if session["is_free"] else (session["rate_per_hour"]*elapsed+3599)//3600
+                db.execute("UPDATE game_sessions SET status='ended',ended_at=?,amount_due=? WHERE id=? AND tenant_id=?",
+                           (now,amount,session_id,user["tenant_id"]))
+                if amount > 0:
+                    tx_id = "game-"+session_id
+                    title = "هزینه بازی "+session_id
+                    occurred_at = time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now))
+                    db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
+                        VALUES(?,?,?,?,?,'income','گیم‌نت',?,?)""", (tx_id,user["tenant_id"],user["id"],title,amount,occurred_at,now))
+                    post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at)
+                audit(db,user["tenant_id"],user["id"],"gamenet.session.ended","game_session",session_id,
+                      {"amount":amount,"elapsedSeconds":elapsed})
+                db.commit()
+                return self.send_json(200, {"ok":True,"amountDue":amount,"elapsedSeconds":elapsed})
             if path == "/api/orders":
                 if user["role"] not in ("owner","manager","cashier"):
                     return self.send_json(403, {"error": "دسترسی ثبت سفارش ندارید."})
