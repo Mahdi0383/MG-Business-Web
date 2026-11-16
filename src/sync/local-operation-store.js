@@ -145,7 +145,7 @@ export class LocalOperationStore {
     const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantStateCreatedAt");
     const range = IDBKeyRange.bound(
       [tenantId, "pending", ""],
-      [tenantId, "pending", "\\uffff"]
+      [tenantId, "pending", "\uffff"]
     );
 
     if (branchId === null) {
