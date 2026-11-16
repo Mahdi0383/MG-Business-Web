@@ -606,9 +606,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT d.id,d.name,d.device_type AS deviceType,d.hourly_rate AS hourlyRate,d.is_free AS isFree,
-                    d.active,gs.id AS sessionId,gs.customer_id AS customerId,gs.started_at AS startedAt,gs.players_count AS playersCount
+                    d.active,gs.id AS sessionId,gs.customer_id AS customerId,c.full_name AS customerName,
+                    gs.started_at AS startedAt,gs.players_count AS playersCount
                     FROM game_devices d LEFT JOIN game_sessions gs
                     ON gs.device_id=d.id AND gs.tenant_id=d.tenant_id AND gs.status='running'
+                    LEFT JOIN customers c ON c.id=gs.customer_id AND c.tenant_id=gs.tenant_id
                     WHERE d.tenant_id=? ORDER BY d.name""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/gamenet/sessions":
