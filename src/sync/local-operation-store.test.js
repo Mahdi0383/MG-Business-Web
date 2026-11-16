@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LocalOperationStore } from "./local-operation-store.js";
+import { LocalOperationStore, isIncomingRowVisible } from "./local-operation-store.js";
 
 
 
@@ -236,4 +236,19 @@ test("does not expose tenant-wide incoming rows without manager authority", asyn
     store.getUnappliedIncoming("tenant-1", 100, null, "true"),
     /allowTenantWide/
   );
+});
+
+
+test("incoming inbox visibility is restricted to the selected branch unless manager-authorized", () => {
+  const branchRow = { branchId: "branch-a" };
+  const otherBranchRow = { branchId: "branch-b" };
+  const tenantWideRow = { branchId: null };
+
+  assert.equal(isIncomingRowVisible(branchRow, "branch-a", false), true);
+  assert.equal(isIncomingRowVisible(otherBranchRow, "branch-a", false), false);
+  assert.equal(isIncomingRowVisible(tenantWideRow, "branch-a", false), false);
+  assert.equal(isIncomingRowVisible(tenantWideRow, "branch-a", true), true);
+  assert.equal(isIncomingRowVisible(otherBranchRow, "branch-a", true), false);
+  assert.equal(isIncomingRowVisible(tenantWideRow, null, false), false);
+  assert.equal(isIncomingRowVisible(tenantWideRow, null, true), true);
 });
