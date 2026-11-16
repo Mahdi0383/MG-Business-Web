@@ -29,3 +29,7 @@ test('calculates income and expense totals without mutating input', () => {
 test('returns zeroed totals for an empty ledger', () => {
   assert.deepEqual(core.totals([]), { income: 0, expense: 0 });
 });
+
+test('accepts a correctly versioned empty backup', () => {
+  assert.deepEqual(core.validateBackup({ schema: 'mg-business-backup', version: 1, transactions: [] }), { ok: true, value: [] });
+});
