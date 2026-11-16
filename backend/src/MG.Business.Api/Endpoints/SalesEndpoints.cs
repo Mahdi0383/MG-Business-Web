@@ -192,6 +192,66 @@ public static class SalesEndpoints
             }
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
+        group.MapPost("/orders/{orderId:guid}/payments", async (Guid orderId, RecordPaymentRequest request,
+            ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
+                return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
+            if (request.Amount <= 0m || decimal.Round(request.Amount, 2) != request.Amount)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["amount"] = ["مبلغ دریافت باید مثبت و حداکثر تا دو رقم اعشار باشد."] });
+            if (!Enum.IsDefined(request.PaymentMethod) || request.PaymentMethod == PaymentMethod.OnAccount)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش دریافت وجه معتبر نیست."] });
+            if (request.PaymentReference?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
+
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+            try
+            {
+                var order = await db.SalesOrders.SingleOrDefaultAsync(x =>
+                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == orderId, cancellationToken);
+                if (order is null)
+                    return Results.NotFound(new { message = "فاکتور در شعبه فعال پیدا نشد." });
+                if (request.Amount > order.BalanceDue)
+                    return Results.Conflict(new { message = "مبلغ دریافت از مانده فاکتور بیشتر است.", balanceDue = order.BalanceDue });
+
+                var paymentAccount = await FindAccount(db, tenantId, request.PaymentAccountId, AccountType.Asset, cancellationToken);
+                if (paymentAccount is null)
+                    return Results.BadRequest(new { message = "حساب دریافت وجه معتبر نیست." });
+                var receivableAccount = await FindAccount(db, tenantId, request.ReceivableAccountId, AccountType.Asset, cancellationToken);
+                if (receivableAccount is null)
+                    return Results.BadRequest(new { message = "حساب دریافتنی معتبر نیست." });
+
+                order.SetPaidAmount(order.PaidAmount + request.Amount);
+                db.SalesPayments.Add(new SalesPayment(tenantId, branchId, order.Id,
+                    request.Amount, request.PaymentMethod, request.PaymentReference));
+                db.JournalEntries.Add(new JournalEntry(tenantId, branchId, DateOnly.FromDateTime(DateTime.UtcNow),
+                    $"Payment for {order.Number}",
+                    [
+                        new JournalEntryLine(tenantId, paymentAccount.Id, request.Amount, 0m, "Customer payment received"),
+                        new JournalEntryLine(tenantId, receivableAccount.Id, 0m, request.Amount, "Customer receivable settled")
+                    ], request.PaymentReference));
+
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return Results.Ok(new { order.Id, order.Number, order.Total, order.PaidAmount, order.BalanceDue });
+            }
+            catch (ArgumentException exception)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["payment"] = [exception.Message] });
+            }
+            catch (DbUpdateException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "ثبت دریافت با تعارض داده‌ها انجام نشد؛ مانده فاکتور را دوباره بررسی کنید." });
+            }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "تغییر هم‌زمان اطلاعات رخ داد؛ مانده فاکتور را دوباره بررسی کنید." });
+            }
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
+
         return endpoints;
     }
 
@@ -205,7 +265,7 @@ public static class SalesEndpoints
             x.TenantId == tenantId && x.Id == id && x.Type == type && x.IsActive, cancellationToken);
     }
 
-    public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
+    public sealed record RecordPaymentRequest(decimal Amount, PaymentMethod PaymentMethod, Guid PaymentAccountId, Guid ReceivableAccountId, string? PaymentReference);\n    public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
         PaymentMethod PaymentMethod, Guid RevenueAccountId, Guid? PaymentAccountId, Guid? ReceivableAccountId,
         Guid? InventoryAccountId, Guid? CostOfGoodsSoldAccountId, string? PaymentReference, List<SaleLineRequest> Lines);
     public sealed record SaleLineRequest(Guid ProductId, decimal Quantity, decimal? UnitPrice, decimal Discount);
