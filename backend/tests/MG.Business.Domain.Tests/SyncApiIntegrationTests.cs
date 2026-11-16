@@ -87,6 +87,26 @@ public sealed class SyncApiIntegrationTests
         Assert.False(firstAck.Accepted[0].Duplicate);
         Assert.True(firstAck.Accepted[0].Sequence > 0);
 
+        var unverifiedEpochPush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId,
+                    branchId = tenant.BranchId,
+                    operationType = "test.unverified-epoch",
+                    schemaVersion = 1,
+                    authorityEpoch = 1,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\"note\":\"must-be-rejected\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, unverifiedEpochPush.StatusCode);
+
         var retryPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Accepted, retryPush.StatusCode);
         var retryAck = await retryPush.Content.ReadFromJsonAsync<SyncPushResponse>();
