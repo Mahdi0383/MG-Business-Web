@@ -104,8 +104,18 @@ public sealed class GameNetApiIntegrationTests
             receivableAccountId = (Guid?)null,
             paymentReference = "GAME-PRECISION"
         });
+        using var excessiveReference = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = 15m,
+            paymentMethod = PaymentMethod.Cash,
+            revenueAccountId = revenue.Id,
+            paymentAccountId = cash.Id,
+            receivableAccountId = (Guid?)null,
+            paymentReference = new string('R', 101)
+        });
         Assert.Equal(HttpStatusCode.BadRequest, negativePayment.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, excessivePrecisionPayment.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, excessiveReference.StatusCode);
 
         var disableBranch = await client.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.Conflict, disableBranch.StatusCode);
