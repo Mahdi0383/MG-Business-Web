@@ -395,7 +395,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           reference: form.reference.trim() || null
         }, { headers: { "Idempotency-Key": form.idempotencyKey } });
         successNotice = "گردش انبار با موفقیت ثبت شد.";
-      if (modal === "product") {
+      } else if (modal === "product") {
         await client.post("/api/inventory/products", {
           sku: form.sku.trim(),
           name: form.name.trim(),
