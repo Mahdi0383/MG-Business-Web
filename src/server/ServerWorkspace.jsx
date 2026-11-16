@@ -181,7 +181,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     } finally {
       setLoading(false);
     }
-  }, [client, operationStore, tenant.id, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
+  }, [client, operationStore, tenant.id, tenant.role, branch.id, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
