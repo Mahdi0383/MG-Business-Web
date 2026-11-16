@@ -1600,7 +1600,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "بهای واحد معتبر نیست."})
                 if not isinstance(note,str) or len(note) > 300:
                     return self.send_json(400, {"error": "یادداشت بیش از حد طولانی است."})
+                movement_id=str(data.get("id") or secrets.token_urlsafe(18))
+                if not 1<=len(movement_id)<=100: return self.send_json(400,{"error":"شناسه گردش انبار معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                existing=db.execute("""SELECT product_id,movement_type,quantity_delta,unit_cost,note
+                    FROM inventory_movements WHERE id=? AND tenant_id=?""",(movement_id,user["tenant_id"])).fetchone()
+                if existing:
+                    if (existing["product_id"]==product_id and existing["movement_type"]==movement_type and
+                        existing["quantity_delta"]==delta and existing["unit_cost"]==unit_cost and existing["note"]==note):
+                        db.commit()
+                        return self.send_json(200,{"id":movement_id,"ok":True,"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه گردش انبار قبلاً برای اطلاعات متفاوت استفاده شده است."})
                 product = db.execute("SELECT id FROM products WHERE id=? AND tenant_id=? AND active=1",
                                      (product_id,user["tenant_id"])).fetchone()
                 if not product:
@@ -1611,7 +1622,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if current + delta < 0:
                     db.rollback()
                     return self.send_json(409, {"error": "موجودی کافی نیست؛ موجودی فعلی: %s" % current})
-                movement_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                now = int(time.time())
                 db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,user["tenant_id"],product_id,user["id"],movement_type,delta,unit_cost,note,now))
                 post_inventory_movement_journal(db,user["tenant_id"],user["id"],movement_id,movement_type,delta,unit_cost,note)
