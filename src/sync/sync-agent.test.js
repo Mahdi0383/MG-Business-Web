@@ -574,8 +574,8 @@ test("rejects duplicate or out-of-order server journal sequences without acknowl
       operationType: "test.created", schemaVersion: 1, authorityEpoch: 0,
       occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson,
       payloadSha256: index === 0
-        ? "0eb5b8d6f8a1a0e7a1c0b1a3e8e4b8e9b4e4e5d6f7a8b9c0d1e2f3a4b5c6d7e8"
-        : "f1d2d2f924e986ac86fdf7b36c94bcdf32beec15eaf6a9b0e8b1f3a9b5e3a4d7"
+        ? "ffbf81d654b1b5c8d67a4459f25003c9434e10d05ffea0708e825ece8f9976c6"
+        : "29219e41f7d3be520df73c53a60c5b096e3984e06f48d6048c5cd44077c27380"
     };
   });
   let acknowledged = false;
