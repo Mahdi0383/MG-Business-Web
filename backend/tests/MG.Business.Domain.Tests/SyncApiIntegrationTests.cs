@@ -95,6 +95,34 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
 
+        var secondBranchResponse = await client.PostAsJsonAsync("/api/branches/", new
+        {
+            name = "Secondary",
+            code = $"B-{Guid.NewGuid():N}"[..10]
+        });
+        Assert.Equal(HttpStatusCode.Created, secondBranchResponse.StatusCode);
+        var secondBranch = await secondBranchResponse.Content.ReadFromJsonAsync<BranchCreated>();
+        Assert.NotNull(secondBranch);
+        var crossBranchPush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId,
+                    branchId = secondBranch!.Id,
+                    operationType = "test.cross-branch",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"note\\":\\"wrong-branch\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, crossBranchPush.StatusCode);
+
         var firstPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Accepted, firstPush.StatusCode);
         var firstAck = await firstPush.Content.ReadFromJsonAsync<SyncPushResponse>();
@@ -393,7 +421,7 @@ public sealed class SyncApiIntegrationTests
     }
 
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
-    private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
+    private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);\n    private sealed record BranchCreated(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAtUtc);
     private sealed record SyncPushResponse(SyncAck[] Accepted);
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
