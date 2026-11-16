@@ -356,16 +356,18 @@ export class LocalOperationStore {
   async cacheServerCustomers(tenantId, rows) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (!Array.isArray(rows)) throw new TypeError("Server customer rows must be an array.");
+    const prepared = rows.map(row => {
+      if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id.trim()
+        || !Number.isSafeInteger(row.version) || row.version < 1)
+        throw new TypeError("Server customer row has an invalid identity or version.");
+      return { row, normalized: normalizeLocalCustomer(row) };
+    });
     const database = await openDatabase();
     const transaction = database.transaction(CUSTOMERS_STORE, "readwrite");
     const done = transactionDone(transaction);
     const customers = transaction.objectStore(CUSTOMERS_STORE);
     const now = new Date().toISOString();
-    for (const row of rows) {
-      if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id.trim()
-        || !Number.isSafeInteger(row.version) || row.version < 1)
-        throw new TypeError("Server customer row has an invalid identity or version.");
-      const normalized = normalizeLocalCustomer(row);
+    for (const { row, normalized } of prepared) {
       const request = customers.get([tenantId, row.id]);
       request.onsuccess = () => {
         const current = request.result;
