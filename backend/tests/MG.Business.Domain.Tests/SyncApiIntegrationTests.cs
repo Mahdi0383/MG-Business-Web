@@ -1591,4 +1591,52 @@ public sealed class SyncApiIntegrationTests
     private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
         string OperationType, int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
         DateTimeOffset ReceivedAtUtc, string PayloadJson, string PayloadSha256);
+
+    [Fact]
+    public void DeviceEnrollmentChallengeIsSingleUseAndBoundToItsSecurityContext()
+    {
+        var tenantId = Guid.NewGuid();
+        var actorId = Guid.NewGuid();
+        var branchId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var digest = new string('a', 64);
+        var challenge = new DeviceEnrollmentChallenge(Guid.NewGuid(), tenantId, actorId,
+            branchId, deviceId, digest, now, now.AddMinutes(5));
+
+        Assert.False(challenge.TryConsume(Guid.NewGuid(), actorId, branchId, deviceId, digest, now.AddSeconds(1)));
+        Assert.False(challenge.TryConsume(tenantId, actorId, null, deviceId, digest, now.AddSeconds(1)));
+        Assert.False(challenge.TryConsume(tenantId, actorId, branchId, Guid.NewGuid(), digest, now.AddSeconds(1)));
+        Assert.False(challenge.TryConsume(tenantId, actorId, branchId, deviceId, new string('b', 64), now.AddSeconds(1)));
+        Assert.True(challenge.TryConsume(tenantId, actorId, branchId, deviceId, digest, now.AddSeconds(1)));
+        Assert.False(challenge.TryConsume(tenantId, actorId, branchId, deviceId, digest, now.AddSeconds(2)));
+    }
+
+    [Fact]
+    public void DeviceEnrollmentChallengeExpiresClosed()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var challenge = new DeviceEnrollmentChallenge(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            null, Guid.NewGuid(), new string('c', 64), now, now.AddMinutes(1));
+
+        Assert.False(challenge.TryConsume(challenge.TenantId, challenge.ActorId, null,
+            challenge.DeviceId, new string('c', 64), now.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void DeviceCredentialRevocationIsIdempotent()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var credential = new DeviceCredential(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Convert.ToBase64String(new byte[] { 1, 2, 3 }), new string('d', 64), now);
+
+        Assert.True(credential.IsActive);
+        credential.Revoke(now.AddSeconds(1));
+        var revokedAt = credential.RevokedAtUtc;
+        credential.Revoke(now.AddSeconds(2));
+
+        Assert.False(credential.IsActive);
+        Assert.Equal(revokedAt, credential.RevokedAtUtc);
+        Assert.Equal(1, credential.KeyVersion);
+    }
 }
