@@ -374,7 +374,10 @@ export class LocalOperationStore {
     const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
     if (REQUIRE_AUTHORITY_LEASES && authorityEpoch < 1)
       throw new Error("A verified authority lease is required before queuing offline inventory movements.");
-    const operationId = crypto.randomUUID();
+    const idempotencyKey = movement.idempotencyKey;
+    if (idempotencyKey !== undefined && (typeof idempotencyKey !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)))
+      throw new TypeError("Offline stock movement idempotency key must be a UUID.");
+    const operationId = idempotencyKey || crypto.randomUUID();
     const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
     const now = new Date().toISOString();
     const database = await openDatabase();
@@ -386,6 +389,24 @@ export class LocalOperationStore {
     const productStore = transaction.objectStore(INVENTORY_PRODUCTS_STORE);
     const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
     const movementStore = transaction.objectStore(STOCK_MOVEMENTS_STORE);
+    const operationsStore = transaction.objectStore(OPERATIONS_STORE);
+    if (idempotencyKey) {
+      const priorOperation = await requestResult(operationsStore.get(operationId));
+      if (priorOperation) {
+        const priorMovement = await requestResult(movementStore.get([tenantId, branchId, operationId]));
+        transaction.abort();
+        await done.catch(() => {});
+        const sameRequest = priorMovement
+          && priorMovement.productId === productId
+          && Number(priorMovement.type) === type
+          && Number(priorMovement.quantity) === quantity
+          && (inbound ? Number(priorMovement.unitCost) === unitCost : true)
+          && (priorMovement.reference || null) === reference;
+        if (!sameRequest)
+          throw new Error("این کلید یکتا قبلاً برای گردش انبار دیگری استفاده شده است.");
+        return priorMovement;
+      }
+    }
     const product = await requestResult(productStore.get([tenantId, productId]));
     if (!product || !product.isActive || !product.tracksInventory) {
       transaction.abort();
@@ -443,7 +464,7 @@ export class LocalOperationStore {
       state: "pending", createdAtUtc: now, serverSequence: null
     };
     movementStore.add(localMovement);
-    transaction.objectStore(OPERATIONS_STORE).add(operation);
+    operationsStore.add(operation);
     await done;
     return localMovement;
   }
