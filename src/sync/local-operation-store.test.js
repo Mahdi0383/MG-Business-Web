@@ -39,6 +39,15 @@ test("validates tenant and branch before accepting an incoming page", async () =
   await assert.rejects(store.storeIncomingPage("tenant-1", [], 0, " "), /branchId/);
 });
 
+
+test("requires the authenticated actor before creating an offline operation", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(
+    store.enqueue({ tenantId: "tenant-1", operationType: "customer.updated", payload: {} }),
+    /actorId is required/
+  );
+});
+
 test("rejects non-object payloads before attempting IndexedDB access", async () => {
   const store = new LocalOperationStore();
   for (const payload of [undefined, null, "not-an-object", 42, [], false]) {
