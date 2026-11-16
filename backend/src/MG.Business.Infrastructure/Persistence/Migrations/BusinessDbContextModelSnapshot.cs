@@ -1228,7 +1228,44 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                 {
                     b.Navigation("Lines");
                 });
-#pragma warning restore 612, 618
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
+                {
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Sequence"));
+
+                    b.Property<long>("AuthorityEpoch").HasColumnType("bigint");
+                    b.Property<Guid?>("BranchId").HasColumnType("uuid");
+                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
+                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<Guid>("OperationId").HasColumnType("uuid");
+                    b.Property<string>("OperationType").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
+                    b.Property<string>("PayloadJson").IsRequired().HasColumnType("text");
+                    b.Property<string>("PayloadSha256").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<DateTimeOffset>("OccurredAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset>("ReceivedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<int>("SchemaVersion").HasColumnType("integer");
+                    b.Property<Guid>("TenantId").HasColumnType("uuid");
+
+                    b.HasKey("Sequence");
+                    b.HasIndex("TenantId", "DeviceId", "Sequence");
+                    b.HasIndex("TenantId", "Sequence");
+                    b.HasIndex("TenantId", "OperationId").IsUnique();
+                    b.ToTable("sync_operations", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
+                {
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            #pragma warning restore 612, 618
         }
     }
 }
