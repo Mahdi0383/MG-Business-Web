@@ -1567,14 +1567,151 @@ public sealed class SyncApiIntegrationTests
         return client;
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(bool requireDeviceSignatures = false)
+
+    [Fact]
+    public async Task SignedAuthorityLeaseIsVerifiableAndOnlyOneDeviceCanHoldBranchAuthority()
+    {
+        using var serverSigningKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var serverPrivateKey = Convert.ToBase64String(serverSigningKey.ExportPkcs8PrivateKey());
+        using var factory = CreateFactory(
+            requireDeviceSignatures: true,
+            requireAuthorityLeases: true,
+            authoritySigningPrivateKeyBase64: serverPrivateKey);
+        using var client = await RegisterAndLoginAsync(factory, $"authority-lease-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Authority Lease Store",
+            slug = $"authority-lease-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var actorId = Guid.Empty;
+        async Task<(Guid DeviceId, ECDsa Key, string Credential)> EnrollDevice()
+        {
+            var deviceId = Guid.NewGuid();
+            var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var challengeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/challenges", new { deviceId });
+            Assert.Equal(HttpStatusCode.OK, challengeResponse.StatusCode);
+            var challenge = await challengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+            Assert.NotNull(challenge);
+            actorId = challenge!.ActorId;
+            var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
+            var message = string.Join("\\n",
+                "MG-DEVICE-ENROLLMENT-V1",
+                tenant.TenantId.ToString("D"),
+                tenant.BranchId.ToString("D"),
+                actorId.ToString("D"),
+                deviceId.ToString("D"),
+                challenge.ChallengeId.ToString("D"),
+                challenge.Challenge);
+            var proof = Convert.ToBase64String(key.SignData(
+                Encoding.UTF8.GetBytes(message),
+                HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+            var completed = await client.PostAsJsonAsync("/api/sync/enrollment/complete", new
+            {
+                challengeId = challenge.ChallengeId,
+                deviceId,
+                challenge = challenge.Challenge,
+                publicKeySpkiBase64 = publicKey,
+                signatureBase64 = proof
+            });
+            Assert.Equal(HttpStatusCode.Created, completed.StatusCode);
+            var credential = await completed.Content.ReadFromJsonAsync<DeviceEnrollmentResult>();
+            Assert.NotNull(credential);
+            return (deviceId, key, credential!.Credential);
+        }
+
+        var first = await EnrollDevice();
+        var second = await EnrollDevice();
+
+        async Task<HttpResponseMessage> SendSigned(string method, string path,
+            (Guid DeviceId, ECDsa Key, string Credential) device, string body = "")
+        {
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var nonce = Guid.NewGuid();
+            var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
+            var canonical = string.Join("\\n",
+                "MG-DEVICE-REQUEST-V1",
+                method.ToUpperInvariant(),
+                path,
+                tenant.TenantId.ToString("D"),
+                tenant.BranchId.ToString("D"),
+                actorId.ToString("D"),
+                device.DeviceId.ToString("D"),
+                "1",
+                timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                nonce.ToString("D"),
+                bodyHash);
+            var signature = Convert.ToBase64String(device.Key.SignData(
+                Encoding.UTF8.GetBytes(canonical),
+                HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+            using var request = new HttpRequestMessage(new HttpMethod(method), path);
+            if (method.Equals("POST", StringComparison.Ordinal))
+                request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Id", device.DeviceId.ToString("D"));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Key-Version", "1");
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Credential", device.Credential);
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Timestamp", timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Nonce", nonce.ToString("D"));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Signature", signature);
+            return await client.SendAsync(request);
+        }
+
+        using var acquired = await SendSigned("POST", "/api/sync/authority-lease", first, "{}");
+        Assert.Equal(HttpStatusCode.OK, acquired.StatusCode);
+        var lease = await acquired.Content.ReadFromJsonAsync<AuthorityLeaseResponse>();
+        Assert.NotNull(lease);
+        Assert.Equal(1, lease!.Epoch);
+        Assert.Equal(first.DeviceId, lease.DeviceId);
+        Assert.Equal(tenant.BranchId, lease.BranchId);
+
+        using var publicKey = ECDsa.Create();
+        publicKey.ImportSubjectPublicKeyInfo(Convert.FromBase64String(lease.PublicKeySpkiBase64), out _);
+        var leaseMessage = string.Join("\\n",
+            "MG-AUTHORITY-LEASE-V1",
+            lease.TenantId.ToString("D"),
+            lease.BranchId?.ToString("D") ?? string.Empty,
+            lease.ScopeKey,
+            lease.DeviceId.ToString("D"),
+            lease.LeaseId.ToString("D"),
+            lease.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            lease.IssuedAtUtc.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            lease.ExpiresAtUtc.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.True(publicKey.VerifyData(
+            Encoding.UTF8.GetBytes(leaseMessage),
+            Convert.FromBase64String(lease.SignatureBase64),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+
+        using var secondRead = await SendSigned("GET", "/api/sync/authority-lease", second);
+        Assert.Equal(HttpStatusCode.OK, secondRead.StatusCode);
+        var observed = await secondRead.Content.ReadFromJsonAsync<AuthorityLeaseResponse>();
+        Assert.NotNull(observed);
+        Assert.Equal(lease.LeaseId, observed!.LeaseId);
+        Assert.Equal(lease.Epoch, observed.Epoch);
+
+        using var competingAcquire = await SendSigned("POST", "/api/sync/authority-lease", second, "{}");
+        Assert.Equal(HttpStatusCode.Conflict, competingAcquire.StatusCode);
+
+        first.Key.Dispose();
+        second.Key.Dispose();
+    }
+
+    private static WebApplicationFactory<Program> CreateFactory(bool requireDeviceSignatures = false, bool requireAuthorityLeases = false, string? authoritySigningPrivateKeyBase64 = null)
     {
         var connection = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
         connection.Open();
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?> { ["SyncSecurity:RequireDeviceSignatures"] = requireDeviceSignatures.ToString() }));
+                new Dictionary<string, string?> { ["SyncSecurity:RequireDeviceSignatures"] = requireDeviceSignatures.ToString(), ["SyncSecurity:RequireAuthorityLeases"] = requireAuthorityLeases.ToString(), ["SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64"] = authoritySigningPrivateKeyBase64 }));
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<DbContextOptions<BusinessDbContext>>();
@@ -1806,6 +1943,7 @@ public sealed class SyncApiIntegrationTests
         Guid DeviceId, DateTimeOffset ExpiresAtUtc, string Algorithm);
 
     private sealed record DeviceEnrollmentResult(Guid DeviceId, int KeyVersion, string Credential);
+    private sealed record AuthorityLeaseResponse(Guid LeaseId, Guid TenantId, Guid? BranchId, string ScopeKey, Guid DeviceId, long Epoch, DateTimeOffset IssuedAtUtc, DateTimeOffset ExpiresAtUtc, string SignatureBase64, string PublicKeySpkiBase64);
 
     [Fact]
     public async Task SignedSyncRequestsRejectReplayAndBodyTampering()
