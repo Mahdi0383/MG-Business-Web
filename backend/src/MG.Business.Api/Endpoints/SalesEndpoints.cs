@@ -294,8 +294,14 @@ public static class SalesEndpoints
                 if (db.Database.CurrentTransaction is { } activeTransaction)
                     await activeTransaction.RollbackAsync(cancellationToken);
                 db.ChangeTracker.Clear();
-                var racedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
-                    x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                SalesPayment? racedPayment = null;
+                for (var attempt = 0; attempt < 5 && racedPayment is null; attempt++)
+                {
+                    racedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                    if (racedPayment is null && attempt < 4)
+                        await Task.Delay(40, cancellationToken);
+                }
                 if (racedPayment is not null)
                 {
                     if (!string.Equals(racedPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
@@ -312,8 +318,14 @@ public static class SalesEndpoints
                 if (db.Database.CurrentTransaction is { } activeTransaction)
                     await activeTransaction.RollbackAsync(cancellationToken);
                 db.ChangeTracker.Clear();
-                var committedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
-                    x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                SalesPayment? committedPayment = null;
+                for (var attempt = 0; attempt < 5 && committedPayment is null; attempt++)
+                {
+                    committedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                    if (committedPayment is null && attempt < 4)
+                        await Task.Delay(40, cancellationToken);
+                }
                 if (committedPayment is not null)
                 {
                     if (!string.Equals(committedPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
