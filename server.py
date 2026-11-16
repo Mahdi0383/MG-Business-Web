@@ -590,6 +590,21 @@ class Handler(SimpleHTTPRequestHandler):
                     snapshot["tables"][name] = [dict(row) for row in db.execute(query,(tenant_id,)).fetchall()]
                 db.commit()
                 return self.send_json(200, snapshot)
+            if path == "/api/audit-log":
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"دسترسی مشاهده گزارش ممیزی ندارید."})
+                rows=db.execute("""SELECT a.id,u.username AS actorUsername,a.action,
+                    a.entity_type AS entityType,a.entity_id AS entityId,a.details_json AS detailsJson,
+                    a.created_at AS createdAt FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id
+                    WHERE a.tenant_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 500""",
+                    (user["tenant_id"],)).fetchall()
+                items=[]
+                for row in rows:
+                    item=dict(row)
+                    try: item["details"]=json.loads(item.pop("detailsJson") or "{}")
+                    except (TypeError,ValueError): item["details"]={}
+                    items.append(item)
+                return self.send_json(200,{"items":items})
             if path == "/api/users":
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403, {"error": "دسترسی مشاهده کاربران ندارید."})
