@@ -26,12 +26,15 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 
 ### C. Offline-first and high availability
 - [ ] Local durable database and operation journal on every supported client.
-- [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation only; not yet applied to business domain projections).\n- [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
+- [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation only; not yet applied to business domain projections).
+- [x] Per-device, per-branch server acknowledgement watermarks; tenant-wide manager acknowledgement remains separately scoped.
+- [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
 - [x] Revalidate persisted inbox payload SHA-256 immediately before replay; missing, malformed or tampered hashes fail closed.
 - [x] Enforce branch/tenant/manager visibility in local inbox reads and processing, including unassigned tenant-wide context.
 - [x] Scope device backlog telemetry to the active membership's authorized branch and tenant-wide visibility.
 - [ ] Per-domain conflict policy and operator reconciliation UI.
-- [x] Initial tenant device heartbeat, Owner/Manager connectivity inventory and stale-heartbeat alerts in the open workspace.\n- [ ] Independent CCS heartbeat service, peer health monitoring, durable alert queue and MG Master relay.
+- [x] Initial tenant device heartbeat, Owner/Manager connectivity inventory and stale-heartbeat alerts in the open workspace.
+- [ ] Independent CCS heartbeat service, peer health monitoring, durable alert queue and MG Master relay.
 - [ ] Optional tenant-isolated MG Master failover data plane.
 - [ ] Fencing epochs, failover lease, split-brain prevention and tested failback.
 - [ ] LAN-only, WAN-only, total partition and recovery test suites.
@@ -73,6 +76,8 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Hardened incoming replay so persisted payload bytes are re-hashed immediately before projection processing; tampering, missing hashes and unavailable secure cryptography stop replay before projection reads.
 - Corrected tenant-wide inbox reads for unassigned manager context so branch-scoped rows are not exposed.
 - Corrected per-device backlog telemetry to count only journal rows visible to that device's active membership and branch.
+- Replaced the misleading single per-device acknowledgement watermark with durable branch-specific cursors; switching branches no longer suppresses another branch's older pending operations.
+- Added a regression integration test that acknowledges a later operation in Branch A, switches the same device to Branch B, and verifies Branch B's earlier operation remains pending.
 - Hardened sales settlement validation so overpayments and partial payments without a customer return validation errors rather than surfacing domain exceptions as server errors.
 - Added regression tests for the above. This remains transport/security hardening: no claim is made that business projections are offline-wired.
 
