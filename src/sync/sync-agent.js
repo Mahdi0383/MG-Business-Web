@@ -49,14 +49,14 @@ export class SyncAgent {
       this.running = false;
     }
   }
-  async pushPending(tenantId, { batchSize = 100, branchId = null } = {}) {
+  async pushPending(tenantId, { batchSize = 100, branchId = null, allowTenantWide = false } = {}) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required for sync push.");
     const boundedBatchSize = Number.isInteger(batchSize) ? Math.max(1, Math.min(batchSize, 100)) : 100;
     if (this.running) return { status: "already-running", acknowledged: 0 };
     this.running = true;
     try {
-      const pending = await this.operationStore.getPending(tenantId, boundedBatchSize, branchId);
+      const pending = await this.operationStore.getPending(tenantId, boundedBatchSize, branchId, allowTenantWide);
       if (pending.length === 0) return { status: "idle", acknowledged: 0 };
 
       const response = await this.apiClient.post("/api/sync/operations", {
