@@ -57,6 +57,10 @@ if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
 if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("purchase editor and payment form are missing")
+if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
+    raise SystemExit("GameNet reservation API and backup support are missing")
+if "reservationForm" not in app or "data-reservation-cancel" not in app:
+    raise SystemExit("GameNet reservation management UI is missing")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
