@@ -11,6 +11,9 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [x] Sales receipt creation and journal posting are transactional.
 - [x] Partial and full customer-balance settlement API exists.
 - [x] Payment history is tenant/branch scoped.
+- [x] Payment collection persists idempotency keys and request fingerprints; exact retries replay the original receipt and changed payloads are rejected.
+- [x] Game-session closure replays the committed invoice after a lost response and rejects changed settlement payloads.
+- [x] Inventory movement validates the active stock-tracked product and stock ledger inside the serializable write transaction.
 - [x] Public ordering rejects ambiguous multi-tenant routing.
 - [x] Sync journal validates payload integrity, actor scope, idempotency envelopes and monotonic cursors.
 - [x] PWA shell does not cache authentication, API or synchronization traffic.
@@ -38,8 +41,8 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [ ] Verify that accounting, stock, sales, café and game-session operations remain balanced and consistent during offline replay.
 
 ### Financial correctness and retry safety
-- [ ] Add persisted idempotency keys and request fingerprints to payment collection.
-- [ ] Prove concurrent collection cannot overpay an invoice under the production database.
+- [x] Add persisted idempotency keys and request fingerprints to payment collection.
+- [ ] Prove concurrent collection cannot overpay an invoice under the production database (SQLite concurrency regression exists; production PostgreSQL race proof remains required).
 - [ ] Add retry/replay tests for timeouts after commit and client reconnect.
 - [ ] Add immutable audit trails, period controls, reversal/credit-note workflows and reconciliation.
 - [ ] Validate tax, currency, rounding and fiscal requirements for each deployment jurisdiction.
