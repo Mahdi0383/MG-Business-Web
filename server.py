@@ -1294,7 +1294,23 @@ class Handler(SimpleHTTPRequestHandler):
                     if not isinstance(product_id,str) or type(quantity) is not int or not 1 <= quantity <= 100000:
                         return self.send_json(400, {"error": "کالا یا تعداد سفارش معتبر نیست."})
                     normalized[product_id] = normalized.get(product_id,0) + quantity
+                order_id=data.get("id") or secrets.token_urlsafe(18)
+                if not isinstance(order_id,str) or not 1<=len(order_id)<=100:
+                    return self.send_json(400,{"error":"شناسه سفارش معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                existing=db.execute("""SELECT id,order_number,customer_id,discount,total,payment_method
+                    FROM orders WHERE id=? AND tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
+                if existing:
+                    old_items={row["product_id"]:row["quantity"] for row in db.execute(
+                        "SELECT product_id,quantity FROM order_items WHERE tenant_id=? AND order_id=?",
+                        (user["tenant_id"],order_id)).fetchall()}
+                    if (old_items==normalized and existing["customer_id"]==customer_id and
+                        existing["discount"]==discount and existing["payment_method"]==payment):
+                        db.commit()
+                        return self.send_json(200,{"id":existing["id"],"orderNumber":existing["order_number"],
+                            "total":existing["total"],"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه سفارش قبلاً برای اطلاعات متفاوتی استفاده شده است."})
                 if customer_id and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone():
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
@@ -1332,10 +1348,7 @@ class Handler(SimpleHTTPRequestHandler):
                     db.rollback()
                     return self.send_json(400, {"error": "تخفیف باید از مبلغ سفارش کمتر باشد."})
                 total = subtotal - discount
-                order_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
-                if len(order_id) > 100:
-                    db.rollback()
-                    return self.send_json(400, {"error": "شناسه سفارش معتبر نیست."})
+                now = int(time.time())
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
                     VALUES(?,?,?,?,?,'paid',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
