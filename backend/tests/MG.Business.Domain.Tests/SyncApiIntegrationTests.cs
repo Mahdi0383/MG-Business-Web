@@ -116,7 +116,7 @@ public sealed class SyncApiIntegrationTests
         Assert.True(retryAck!.Accepted.Single().Duplicate);
         Assert.Equal(firstAck.Accepted[0].Sequence, retryAck.Accepted[0].Sequence);
 
-        var customers = await client.GetFromJsonAsync<CustomerResponse[]>("/api/customers");
+        var customers = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse[]>("/api/customers");
         Assert.Single(customers!);
     }
 
