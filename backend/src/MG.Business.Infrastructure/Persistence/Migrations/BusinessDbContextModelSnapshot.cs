@@ -186,6 +186,11 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasDefaultValue(1)
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
