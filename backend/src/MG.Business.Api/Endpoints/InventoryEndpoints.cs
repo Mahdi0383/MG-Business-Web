@@ -225,7 +225,7 @@ public static class InventoryEndpoints
                 request.UnitCost,
                 Reference = normalizedReference
             });
-            var requestFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintInput)));
+            var requestFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintInput))).ToLowerInvariant();
 
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
