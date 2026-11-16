@@ -498,6 +498,8 @@ class Handler(SimpleHTTPRequestHandler):
                                   (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/transactions":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT id,title,amount,kind,category,occurred_at AS createdAt
                     FROM transactions WHERE tenant_id=? AND status='posted' ORDER BY created_at DESC LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
