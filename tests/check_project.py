@@ -21,7 +21,7 @@ dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", 
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
-for asset in ("styles.css", "app.js", "core.js", "server.py", "manifest.webmanifest", "service-worker.js", "icon.svg", "tests/test_server.py"):
+for asset in ("styles.css", "app.js", "core.js", "server.py", "manifest.webmanifest", "service-worker.js", "icon.svg", "order.html", "public-order.js", "tests/test_server.py"):
     if not (root / asset).is_file():
         raise SystemExit(f"missing required asset: {asset}")
 if "./core.js" not in html:
