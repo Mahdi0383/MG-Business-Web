@@ -1045,10 +1045,12 @@ export class LocalOperationStore {
     const existing = await Promise.all(acknowledgements.map(item => requestResult(readStore.get(item.operationId))));
     await readDone;
 
-    const writeTransaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE], "readwrite");
+    const writeTransaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE], "readwrite");
     const writeDone = transactionDone(writeTransaction);
     const writeStore = writeTransaction.objectStore(OPERATIONS_STORE);
     const customerStore = writeTransaction.objectStore(CUSTOMERS_STORE);
+    const baselineStore = writeTransaction.objectStore(INVENTORY_BASELINES_STORE);
+    const stockMovementStore = writeTransaction.objectStore(STOCK_MOVEMENTS_STORE);
     let integrityError = null;
     for (let index = 0; index < existing.length; index += 1) {
       const operation = existing[index];
@@ -1060,6 +1062,36 @@ export class LocalOperationStore {
       operation.serverSequence = acknowledgement.sequence;
       operation.acknowledgedAtUtc = new Date().toISOString();
       writeStore.put(operation);
+
+      if (operation.operationType === "inventory.stock.movement.created" && operation.branchId) {
+        const stockRequest = stockMovementStore.get([
+          operation.tenantId, operation.branchId, operation.operationId
+        ]);
+        stockRequest.onsuccess = () => {
+          const stockMovement = stockRequest.result;
+          if (!stockMovement || stockMovement.state !== "pending") return;
+          const baselineRequest = baselineStore.get([
+            operation.tenantId, operation.branchId, stockMovement.productId
+          ]);
+          baselineRequest.onsuccess = () => {
+            const baseline = baselineRequest.result;
+            if (baseline
+              && Number(baseline.quantityOnHand) === Number(stockMovement.baseQuantityOnHand)
+              && Number(baseline.inventoryValue) === Number(stockMovement.baseInventoryValue)) {
+              baseline.quantityOnHand = stockMovement.resultQuantityOnHand;
+              baseline.inventoryValue = stockMovement.resultInventoryValue;
+              baseline.averageUnitCost = baseline.quantityOnHand === 0
+                ? 0 : roundInventoryAverage(baseline.inventoryValue / baseline.quantityOnHand);
+              baseline.cachedAtUtc = new Date().toISOString();
+              baselineStore.put(baseline);
+            }
+            stockMovement.state = "acknowledged";
+            stockMovement.serverSequence = acknowledgement.sequence;
+            stockMovement.acknowledgedAtUtc = new Date().toISOString();
+            stockMovementStore.put(stockMovement);
+          };
+        };
+      }
 
       if (operation.operationType === "customer.profile.created"
         || operation.operationType === "customer.profile.updated"
