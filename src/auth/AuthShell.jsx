@@ -346,14 +346,15 @@ function AuthShell({ apiBaseUrl }) {
 
   const workspaceContext = useMemo(() => ({
     tenant: selectedTenant,
-    branch: selectedBranch
-  }), [selectedTenant, selectedBranch]);
+    branch: selectedBranch,
+    actorId: activeActorId
+  }), [selectedTenant, selectedBranch, activeActorId]);
 
   if (stage === "restoring")
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} disconnectedDevices={disconnectedDevices} deviceStatuses={deviceStatuses} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} actorId={activeActorId} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} disconnectedDevices={disconnectedDevices} deviceStatuses={deviceStatuses} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">
