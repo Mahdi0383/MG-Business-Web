@@ -25,7 +25,7 @@ public sealed class DevicePresence
         string clientVersion, DateTimeOffset nowUtc)
     {
         if (actorId == Guid.Empty) throw new ArgumentException("Actor is required.", nameof(actorId));
-        ActorId = actorId;
+        if (actorId != ActorId) throw new UnauthorizedAccessException("A device presence record is bound to its enrolling actor.");
         BranchId = branchId;
         DeviceName = Normalize(deviceName, 100, DeviceName);
         Platform = Normalize(platform, 40, Platform);
