@@ -220,25 +220,21 @@ export class LocalOperationStore {
     await writeDone;
   }
 
-  async getPendingCount(tenantId, branchId = null, allowTenantWide = false) {
+  async getPendingCount(tenantId, branchId = null, allowTenantWide = false, deviceId) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
     if (typeof allowTenantWide !== "boolean")
       throw new TypeError("allowTenantWide must be a boolean.");
+    if (typeof deviceId !== "string" || !deviceId.trim())
+      throw new TypeError("deviceId is required to count the authenticated device outbox.");
     if (branchId === null && !allowTenantWide) return 0;
+
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
     const done = transactionDone(transaction);
     const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantState");
-
-    if (branchId === null && allowTenantWide) {
-      const count = await requestResult(index.count(IDBKeyRange.only([tenantId, "pending"])));
-      await done;
-      return count;
-    }
-
     const count = await new Promise((resolve, reject) => {
       let matching = 0;
       const request = index.openCursor(IDBKeyRange.only([tenantId, "pending"]));
@@ -250,11 +246,11 @@ export class LocalOperationStore {
           return;
         }
         const operation = cursor.value;
+        const matchesDevice = operation.deviceId === deviceId;
         const matchesBranch = branchId === null
-          ? operation.branchId != null
-          : operation.branchId === branchId;
-        if (matchesBranch || (allowTenantWide && operation.branchId == null))
-          matching += 1;
+          ? allowTenantWide || operation.branchId != null
+          : operation.branchId === branchId || (allowTenantWide && operation.branchId == null);
+        if (matchesDevice && matchesBranch) matching += 1;
         cursor.continue();
       };
     });
