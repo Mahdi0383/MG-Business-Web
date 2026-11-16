@@ -284,3 +284,38 @@ test("requires all transactional adapter methods at construction", () => {
     classify: () => ({ disposition: "apply", reason: "test" })
   }), /complete transactional adapter/);
 });
+
+
+test("rejects tenant-wide rows returned by an untrusted store for a branch member", async () => {
+  const { processor, calls } = setup([{
+    tenantId: "tenant-1",
+    branchId: null,
+    sequence: 1,
+    schemaVersion: 1,
+    operationId: "tenant-wide",
+    operationType: "customer.profile.updated",
+    payloadJson: JSON.stringify({ name: "MG" })
+  }]);
+  await assert.rejects(
+    processor.processBatch("tenant-1", 100, "branch-a", false),
+    /tenant-wide operation without manager authority/
+  );
+  assert.deepEqual(calls, []);
+});
+
+test("rejects inbox rows belonging to another tenant before reading or applying", async () => {
+  const { processor, calls } = setup([{
+    tenantId: "tenant-2",
+    branchId: "branch-a",
+    sequence: 1,
+    schemaVersion: 1,
+    operationId: "foreign-tenant",
+    operationType: "customer.profile.updated",
+    payloadJson: JSON.stringify({ name: "MG" })
+  }]);
+  await assert.rejects(
+    processor.processBatch("tenant-1", 100, "branch-a", false),
+    /outside the active tenant/
+  );
+  assert.deepEqual(calls, []);
+});
