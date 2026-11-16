@@ -28,7 +28,8 @@ def make_license(modules, license_id):
 class ApiIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        os.environ['MG_LICENSE_SECRET'] = 'integration-test-secret-which-is-long-enough-123456'\n        cls.temp = tempfile.TemporaryDirectory()
+        os.environ['MG_LICENSE_SECRET'] = 'integration-test-secret-which-is-long-enough-123456'
+        cls.temp = tempfile.TemporaryDirectory()
         server.DATA_DIR = Path(cls.temp.name)
         server.DB_PATH = Path(cls.temp.name) / "test.sqlite3"
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
