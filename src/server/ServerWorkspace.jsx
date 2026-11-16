@@ -46,7 +46,7 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, openSyncConflicts = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [stockRows, setStockRows] = useState([]);
@@ -501,7 +501,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     <main className="mg-server-main">
       <header className="mg-server-topbar">
         <div><small>MG BUSINESS PLATFORM / {tenant.slug}</small><h1>{heading}</h1></div>
-        <div className={`mg-server-status ${syncClass}`} title="وضعیت صف عملیات محلی"><i /> {syncLabel} · صف ارسال: {count(pendingOperations)} · دریافتیِ بررسی‌نشده: {count(incomingOperations)}</div>
+        <div className={`mg-server-status ${syncClass}`} title="وضعیت صف عملیات محلی"><i /> {syncLabel} · صف ارسال: {count(pendingOperations)} · دریافتیِ بررسی‌نشده: {count(incomingOperations)} · تعارض‌های باز: {count(openSyncConflicts)}</div>
       </header>
 
       <section className="mg-server-content">
