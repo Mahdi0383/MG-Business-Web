@@ -355,3 +355,7 @@ public sealed record DeviceEnrollmentCompleteRequest(
     string Challenge,
     string PublicKeySpkiBase64,
     string SignatureBase64);
+
+public sealed record DeviceCredentialRotationRequest(
+    Guid ChallengeId, Guid DeviceId, string Challenge, string PublicKeySpkiBase64, string SignatureBase64);
+public sealed record DeviceCredentialRevokeRequest(Guid DeviceId);
