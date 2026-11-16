@@ -89,6 +89,7 @@ public static class SyncEndpoints
                 .ToDictionaryAsync(x => x.OperationId, cancellationToken);
 
             var accepted = new List<SyncOperationAck>();
+            var inserted = new List<SyncOperation>();
             foreach (var item in prepared)
             {
                 if (existing.TryGetValue(item.Request.OperationId, out var prior))
@@ -104,7 +105,7 @@ public static class SyncEndpoints
                     item.Request.SchemaVersion, item.Request.AuthorityEpoch, item.Request.OccurredAtUtc,
                     item.Request.PayloadJson, item.Hash);
                 db.SyncOperations.Add(operation);
-                accepted.Add(new SyncOperationAck(operation.OperationId, 0, false));
+                inserted.Add(operation);
             }
 
             try
@@ -116,12 +117,8 @@ public static class SyncEndpoints
                 return Results.Conflict(new { message = "A concurrent sync request used an operation ID. Retry the batch; the endpoint is idempotent." });
             }
 
-            return Results.Accepted("/api/sync/operations", new
-            {
-                accepted = accepted.Select(x => x is SyncOperation op
-                    ? new { operationId = op.OperationId, sequence = op.Sequence, duplicate = false }
-                    : (dynamic)x).ToArray()
-            });
+            accepted.AddRange(inserted.Select(x => new SyncOperationAck(x.OperationId, x.Sequence, false)));
+            return Results.Accepted("/api/sync/operations", new { accepted });
         });
 
         group.MapGet("/operations", async (
