@@ -171,9 +171,35 @@ public static class GameNetEndpoints
             try
             {
                 var session = await db.GameSessions.SingleOrDefaultAsync(x =>
-                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == sessionId
-                    && x.Status == GameSessionStatus.Active, cancellationToken);
+                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == sessionId, cancellationToken);
                 if (session is null) return Results.NotFound();
+
+                // A close request may be retried after the database committed but the
+                // client lost the response. Return the original linked order instead
+                // of turning a successful financial operation into a misleading 404.
+                if (session.Status == GameSessionStatus.Closed)
+                {
+                    if (session.SalesOrderId is not Guid existingOrderId)
+                        return Results.Conflict(new { message = "جلسه بسته شده اما فاکتور متناظر ندارد؛ برای جلوگیری از ثبت مالی تکراری نیاز به بررسی مدیر است." });
+                    var existingOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Id == existingOrderId, cancellationToken);
+                    if (existingOrder is null)
+                        return Results.Conflict(new { message = "فاکتور ثبت‌شده برای این جلسه پیدا نشد؛ عملیات به بررسی مدیر نیاز دارد." });
+                    return Results.Ok(new
+                    {
+                        session.Id,
+                        session.DeviceId,
+                        session.StartedAtUtc,
+                        session.EndedAtUtc,
+                        session.BilledMinutes,
+                        session.HourlyRate,
+                        session.TotalAmount,
+                        salesOrderId = existingOrder.Id,
+                        existingOrder.PaidAmount,
+                        existingOrder.BalanceDue,
+                        replayed = true
+                    });
+                }
 
                 var device = await db.GameDevices.SingleAsync(x =>
                     x.TenantId == tenantId && x.Id == session.DeviceId, cancellationToken);
@@ -226,7 +252,8 @@ public static class GameNetEndpoints
                     session.TotalAmount,
                     salesOrderId = order.Id,
                     order.PaidAmount,
-                    order.BalanceDue
+                    order.BalanceDue,
+                    replayed = false
                 });
             }
             catch (ArgumentException exception)
