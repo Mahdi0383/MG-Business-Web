@@ -576,8 +576,7 @@ public sealed class SalesApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.OK, firstPayment.StatusCode);
         var first = await firstPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
-        var firstJson = await firstPayment.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-        var firstPaymentId = firstJson.GetProperty("paymentId").GetGuid();
+        var firstPaymentId = first!.PaymentId;
         var firstReplay = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 40m, paymentMethod = PaymentMethod.Cash,
