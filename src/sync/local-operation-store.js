@@ -1302,7 +1302,7 @@ export class LocalOperationStore {
       throw new TypeError("Incoming inventory movement payload is invalid.");
     const type = Number(payload.type);
     const inbound = [1, 5, 6].includes(type);
-    if (inbound && (!Number.isFinite(Number(payload.unitCost)) || Number(payload.unitCost) < 0))
+    if (inbound && (payload.unitCost == null || !Number.isFinite(Number(payload.unitCost)) || Number(payload.unitCost) < 0))
       throw new TypeError("Incoming inventory receipt requires a valid unit cost.");
 
     const database = await openDatabase();
