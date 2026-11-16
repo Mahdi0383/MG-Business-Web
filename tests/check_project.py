@@ -42,7 +42,7 @@ if "def verify_license_code(code):" not in server or 'if path == "/api/backup/re
     raise SystemExit("license verification or backup restoration endpoint is missing")
 get_handler = server.split("    def do_GET(self):", 1)[1].split("    def do_DELETE(self):", 1)[0]
 post_handler = server.split("    def do_POST(self):", 1)[1].split("    def create_session", 1)[0]
-if re.search(r"\\bdata(?:\\.get|\\[)", get_handler):
+if re.search(r"\bdata(?:\.get|\[)", get_handler):
     raise SystemExit("GET handler must not read mutation request data")
 if 'if path.startswith("/api/gamenet/devices/")' not in post_handler:
     raise SystemExit("game device updates must be routed through POST")
