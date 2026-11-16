@@ -249,7 +249,7 @@ A gate is complete only with linked CI, migration, integration/fault test, runbo
 
 ## 16. Implementation boundary at baseline date
 
-Implemented foundation includes ASP.NET Core API/domain/persistence, tenant membership and branch authorization context, initial sales/inventory/accounting endpoints, durable server sync journal, browser IndexedDB outbox/inbox primitives, per-device branch cursors, initial device heartbeat/presence, customer-create replay/projection, payload hash revalidation, branch-scoped conflict visibility and limited customer read fallback.
+Implemented foundation includes ASP.NET Core API/domain/persistence, tenant membership and branch authorization context, initial sales/inventory/accounting endpoints, durable server sync journal, browser IndexedDB outbox/inbox primitives, per-device branch cursors, initial device heartbeat/presence, versioned customer create/update replay and local projection, optimistic concurrency, payload hash revalidation, branch-scoped conflict visibility, monotonic customer read caching and limited customer offline read fallback.
 
 Not yet end-to-end: creator Control Center and Master services, separate creator identity realm, cryptographic device enrollment, signed entitlement/authority leases, durable relational local database on every target device, complete transactional outbound/inbound handlers for all domains, governed conflict resolution, continuity data plane, fencing/failback, durable alert relay, production PostgreSQL migration/restore validation, complete business modules and commercial release hardening.
 
