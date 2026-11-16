@@ -77,3 +77,10 @@ Passing CI demonstrates that the current automated test/build gates pass; it doe
 
 - Added `docs/architecture/DEVICE-ENROLLMENT-AND-REQUEST-AUTH.md` as a proposed security contract covering one-time enrollment challenges, non-extractable Web Crypto signing keys, credential hashing/rotation/revocation, canonical request signatures, replay protection, and signed authority leases with fencing.
 - This is design documentation only; no enrollment or request-signing code is implemented by this document. Browser UUID identity remains untrusted, and this release gate remains open.
+
+
+### Device-enrollment persistence reconciliation — 2026-11-17
+
+- Added an EF-generated reconciliation migration for the nullable single-use challenge consumption timestamp and refreshed the authoritative model snapshot.
+- The migration is additive/relaxing only: it changes `ConsumedAtUtc` to nullable, matching the challenge's unconsumed state. Existing rows remain valid.
+- The temporary snapshot-generation workflow has been removed. Enrollment endpoint and persistence tests still require a clean SQLite and PostgreSQL CI run before this gate can close.
