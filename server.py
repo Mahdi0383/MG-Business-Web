@@ -832,9 +832,12 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/public/orders":
                 ip = self.client_address[0]
                 now = time.time()
-                attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip,[]) if now-stamp < 900]
-                if len(attempts) >= 5:
-                    return self.send_json(429, {"error": "تعداد سفارش‌های آنلاین بیش از حد است؛ بعداً دوباره تلاش کنید."})
+                with LOGIN_LOCK:
+                    attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip,[]) if now-stamp < 900]
+                    if len(attempts) >= 5:
+                        return self.send_json(429, {"error": "تعداد سفارش‌های آنلاین بیش از حد است؛ بعداً دوباره تلاش کنید."})
+                    attempts.append(now)
+                    PUBLIC_ORDER_FAILURES[ip] = attempts
                 name, phone = data.get("customerName"), data.get("phone")
                 items = data.get("items")
                 if not isinstance(name,str) or not 1 <= len(name.strip()) <= 160:
@@ -910,7 +913,6 @@ class Handler(SimpleHTTPRequestHandler):
                 post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100")
                 audit(db,tenant_id,actor["id"],"online_order.created","order",order_id,{"total":subtotal,"items":len(products)})
                 db.commit()
-                PUBLIC_ORDER_FAILURES[ip]=attempts
                 return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
