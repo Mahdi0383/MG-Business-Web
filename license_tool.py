@@ -25,6 +25,8 @@ def main():
     unknown = set(modules) - MODULES
     if unknown:
         parser.error("Unknown module keys: " + ", ".join(sorted(unknown)))
+    if "reports" in modules:
+        modules = sorted(set(modules) | {"accounting"})
     if not modules or not 1 <= args.days <= 3650:
         parser.error("Choose at least one module and a license duration between 1 and 3650 days.")
     payload = {
