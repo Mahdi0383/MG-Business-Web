@@ -369,6 +369,14 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("BranchId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RequestFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -693,6 +701,9 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "BranchId", "CreatedAtUtc");
+
+                    b.HasIndex("TenantId", "BranchId", "IdempotencyKey")
+                        .IsUnique();
 
                     b.HasIndex("TenantId", "ProductId", "CreatedAtUtc");
 
