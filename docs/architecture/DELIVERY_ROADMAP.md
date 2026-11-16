@@ -33,7 +33,8 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [x] Versioned customer deactivation is now included in the same local-first vertical slice: local inactive projection/outbox is atomic, server replay uses optimistic concurrency, and inbound deactivation/acknowledgement is transactional with origin-echo and stale-version handling.
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
 - [x] Transactional inbound customer create/update projection with atomic inbox acknowledgement, origin-operation echo suppression and durable stale-version conflict records; browser IndexedDB command handling has separate verification requirements.
-- [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
+- [x] First inventory offline vertical slice: cached products and raw weighted-average stock baselines, durable local stock movement commands, atomic IndexedDB outbox/projection writes, server replay with idempotency and stale-balance fencing, inbound stock projection and originating-device echo suppression.
+- [ ] Transactional local business command handlers and inbound projections for sales, accounting, purchasing, café and GameNet; complete per-domain conflict resolution.
 - [x] Persist branch-scoped unresolved incoming conflicts and surface their open count in the workspace sync status; automatic resolution remains intentionally unavailable.
 - [x] Customer workspace falls back to the durable local customer projection on fetch/network failure, including online-but-unreachable API conditions; HTTP/API errors remain visible rather than being masked.
 - [x] Revalidate persisted inbox payload SHA-256 immediately before replay; missing, malformed or tampered hashes fail closed.
