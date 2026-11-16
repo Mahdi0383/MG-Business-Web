@@ -72,6 +72,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
   const canViewGameNet = ["Owner", "Manager", "Cashier", "GameOperator", "Accountant", "Viewer"].includes(tenant.role);
   const canCreateProduct = ["Owner", "Manager", "InventoryManager"].includes(tenant.role);
   const canCreateCustomer = ["Owner", "Manager", "Cashier"].includes(tenant.role);
+  const canEditCustomer = ["Owner", "Manager", "Cashier"].includes(tenant.role);
   const canCreateAccount = ["Owner", "Manager", "Accountant"].includes(tenant.role);
   const canCreateSales = ["Owner", "Manager", "Cashier"].includes(tenant.role);
   const canUpdateKitchen = ["Owner", "Manager", "Waiter", "KitchenStaff"].includes(tenant.role);
@@ -100,7 +101,9 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       const merged = new Map((localRows || []).map(row => [row.id, { ...row }]));
       for (const row of serverRows || []) {
         const local = merged.get(row.id);
-        merged.set(row.id, { ...local, ...row, syncStatus: local?.syncStatus || "synced" });
+        merged.set(row.id, local?.syncStatus === "pending"
+          ? { ...row, ...local }
+          : { ...local, ...row, syncStatus: "synced" });
       }
       return [...merged.values()].sort((left, right) =>
         String(right.updatedAtUtc || right.createdAtUtc || "").localeCompare(String(left.updatedAtUtc || left.createdAtUtc || "")));
@@ -184,6 +187,22 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         : { code: "", name: "", type: "1" };
     setForm(initial);
     setModal(type);
+    setError("");
+  };
+
+  const openEditCustomer = customer => {
+    if (!canEditCustomer || customer.syncStatus === "pending") return;
+    setForm({
+      customerId: customer.id,
+      baseVersion: customer.version,
+      code: customer.code,
+      name: customer.name,
+      phone: customer.phone || "",
+      email: customer.email || "",
+      address: customer.address || "",
+      notes: customer.notes || ""
+    });
+    setModal("customerEdit");
     setError("");
   };
 
@@ -300,6 +319,21 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           }
         });
         successNotice = "مشتری روی دستگاه ذخیره شد و در صف همگام‌سازی قرار گرفت.";
+      } else if (modal === "customerEdit") {
+        await operationStore.updateCustomer({
+          tenantId: tenant.id,
+          branchId: branch.id,
+          actorId,
+          customerId: form.customerId,
+          customer: {
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            address: form.address,
+            notes: form.notes
+          }
+        });
+        successNotice = "تغییرات مشتری به‌صورت محلی ذخیره و در صف همگام‌سازی قرار گرفت.";
       } else if (modal === "account") {
         await client.post("/api/accounting/accounts", {
           code: form.code.trim(),
@@ -539,8 +573,8 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
         {page === "customers" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>مشتریان</h2><p>{count(customers.length)} رکورد از پایگاه داده</p></div>{canCreateCustomer && <button className="mg-primary-btn" onClick={() => openCreate("customer")}>＋ مشتری جدید</button>}</div>
-          <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th></tr></thead>
-            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.syncStatus === "pending" ? "در انتظار همگام‌سازی" : customer.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
+          <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.syncStatus === "pending" ? "در انتظار همگام‌سازی" : customer.isActive ? "فعال" : "غیرفعال"}</td><td>{canEditCustomer && <button className="mg-mini-btn" disabled={saving || customer.syncStatus === "pending"} onClick={() => openEditCustomer(customer)}>ویرایش</button>}</td></tr>)}</tbody>
           </table>{!customers.length && <div className="mg-server-empty">هنوز مشتری ثبت نشده است.</div>}</div>
         </section>}
 
@@ -587,7 +621,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
     {modal && <div className="mg-server-overlay" onMouseDown={event => event.target === event.currentTarget && setModal("")}>
       <form className="mg-server-modal" onSubmit={save}>
-        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
+        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "customerEdit" ? "ویرایش مشتری" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
 
         {modal === "product" && <>
           <label>کد کالا<input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></label>
@@ -597,12 +631,13 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           <label className="mg-server-checkbox"><input type="checkbox" checked={form.tracksInventory} onChange={e => setForm({ ...form, tracksInventory: e.target.checked })} /> این کالا موجودی انبار دارد</label>
         </>}
 
-        {modal === "customer" && <>
-          <label>کد مشتری<input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
+        {(modal === "customer" || modal === "customerEdit") && <>
+          <label>کد مشتری<input required readOnly={modal === "customerEdit"} value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
           <label>نام مشتری<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
           <label>شماره تماس<input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
           <label>ایمیل<input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
           <label>نشانی<input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></label>
+          <label>یادداشت<input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
         </>}
 
         {modal === "account" && <>
