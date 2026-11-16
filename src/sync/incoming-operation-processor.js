@@ -82,6 +82,7 @@ export class IncomingOperationProcessor {
         await this.adapter.recordConflict({
           tenantId,
           sequence: row.sequence,
+          branchId: row.branchId ?? null,
           operationId: row.operationId,
           disposition: decision.disposition,
           reason: decision.reason,
