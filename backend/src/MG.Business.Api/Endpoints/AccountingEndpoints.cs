@@ -71,6 +71,11 @@ public static class AccountingEndpoints
                 await transaction.RollbackAsync(cancellationToken);
                 return Results.Conflict(new { message = "ایجاد سرفصل‌های پایه با تغییر هم‌زمان دیگری تداخل پیدا کرد؛ دوباره تلاش کنید." });
             }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "پایگاه داده نتوانست سرفصل‌های پایه را با اطمینان ثبت کند؛ وضعیت حساب‌ها را بررسی کنید." });
+            }
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
         group.MapPost("/accounts", async (CreateAccountRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
@@ -80,7 +85,16 @@ public static class AccountingEndpoints
             if (!Enum.IsDefined(request.Type))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["type"] = ["نوع حساب معتبر نیست."] });
 
-            var account = new Account(tenantId, request.Code, request.Name, request.Type);
+            Account account;
+            try
+            {
+                account = new Account(tenantId, request.Code, request.Name, request.Type);
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["account"] = [exception.Message] });
+            }
+
             db.Accounts.Add(account);
             try
             {
@@ -89,6 +103,10 @@ public static class AccountingEndpoints
             catch (DbUpdateException)
             {
                 return Results.Conflict(new { message = "کد حساب تکراری است یا اطلاعات با محدودیت پایگاه داده سازگار نیست." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست حساب را با اطمینان ثبت کند؛ دوباره تلاش کنید." });
             }
 
             return Results.Created($"/api/accounting/accounts/{account.Id}",
