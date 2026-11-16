@@ -1,6 +1,9 @@
 using System.Data;
 using System.Data.Common;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -185,7 +188,7 @@ public static class InventoryEndpoints
             });
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
-        group.MapPost("/movements", async (CreateStockMovementRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        group.MapPost("/movements", async (CreateStockMovementRequest request, HttpRequest httpRequest, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
                 return Results.BadRequest(new { message = "ابتدا شعبه فعال را انتخاب کنید." });
@@ -202,9 +205,50 @@ public static class InventoryEndpoints
             if (!isInboundMovement && request.UnitCost is not null)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["unitCost"] = ["برای خروج موجودی، بهای واحد به‌صورت خودکار از میانگین موجودی محاسبه می‌شود."] });
 
+            string? idempotencyKey = null;
+            if (httpRequest.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeaders))
+            {
+                if (idempotencyHeaders.Count != 1)
+                    return Results.ValidationProblem(new Dictionary<string, string[]> { ["Idempotency-Key"] = ["فقط یک کلید یکتای درخواست مجاز است."] });
+                idempotencyKey = idempotencyHeaders[0];
+                if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128
+                    || idempotencyKey.Any(ch => ch < 0x21 || ch > 0x7e))
+                    return Results.ValidationProblem(new Dictionary<string, string[]> { ["Idempotency-Key"] = ["کلید باید بین ۱ تا ۱۲۸ نویسه قابل‌نمایش ASCII باشد."] });
+            }
+
+            var normalizedReference = string.IsNullOrWhiteSpace(request.Reference) ? null : request.Reference.Trim();
+            var fingerprintInput = JsonSerializer.Serialize(new
+            {
+                request.ProductId,
+                Type = (int)request.Type,
+                request.Quantity,
+                request.UnitCost,
+                Reference = normalizedReference
+            });
+            var requestFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintInput)));
+
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
             {
+                if (idempotencyKey is not null)
+                {
+                    var prior = await db.StockMovements.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey,
+                        cancellationToken);
+                    if (prior is not null)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        if (!string.Equals(prior.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                            return Results.Conflict(new { message = "این کلید یکتا قبلاً با محتوای دیگری استفاده شده است." });
+                        return Results.Ok(new
+                        {
+                            prior.Id, prior.ProductId, prior.BranchId, type = prior.Type.ToString(),
+                            prior.Quantity, prior.UnitCost, prior.SignedQuantity, prior.Reference,
+                            prior.CreatedAtUtc, replayed = true
+                        });
+                    }
+                }
+
                 // Resolve the product and read its stock ledger inside the same serializable
                 // transaction as the movement write, preventing stale pre-transaction checks.
                 var productExists = await db.Products.AnyAsync(x =>
@@ -233,7 +277,7 @@ public static class InventoryEndpoints
                 }
 
                 var movement = new StockMovement(tenantId, branchId, request.ProductId, request.Type,
-                    request.Quantity, unitCost, request.Reference);
+                    request.Quantity, unitCost, normalizedReference, idempotencyKey, idempotencyKey is null ? null : requestFingerprint);
                 db.StockMovements.Add(movement);
                 await db.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
@@ -259,6 +303,24 @@ public static class InventoryEndpoints
             catch (DbUpdateException)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                if (idempotencyKey is not null)
+                {
+                    db.ChangeTracker.Clear();
+                    var prior = await db.StockMovements.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey,
+                        cancellationToken);
+                    if (prior is not null)
+                    {
+                        if (!string.Equals(prior.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                            return Results.Conflict(new { message = "این کلید یکتا هم‌زمان با محتوای دیگری ثبت شده است." });
+                        return Results.Ok(new
+                        {
+                            prior.Id, prior.ProductId, prior.BranchId, type = prior.Type.ToString(),
+                            prior.Quantity, prior.UnitCost, prior.SignedQuantity, prior.Reference,
+                            prior.CreatedAtUtc, replayed = true
+                        });
+                    }
+                }
                 return Results.Conflict(new { message = "تغییر هم‌زمان موجودی رخ داد؛ عملیات را دوباره بررسی کنید." });
             }
             catch (DbException)
