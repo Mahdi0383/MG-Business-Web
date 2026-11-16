@@ -230,6 +230,7 @@ public sealed class SyncApiIntegrationTests
         var acknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId,
+            branchId = tenant.BranchId,
             sequence = firstAck.Accepted[0].Sequence
         });
         Assert.Equal(HttpStatusCode.OK, acknowledgement.StatusCode);
@@ -240,6 +241,7 @@ public sealed class SyncApiIntegrationTests
         var futureAcknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId,
+            branchId = tenant.BranchId,
             sequence = firstAck.Accepted[0].Sequence + 100000
         });
         Assert.Equal(HttpStatusCode.BadRequest, futureAcknowledgement.StatusCode);
@@ -267,6 +269,7 @@ public sealed class SyncApiIntegrationTests
         var secondDeviceAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId = secondDeviceId,
+            branchId = tenant.BranchId,
             sequence = 0
         });
         Assert.Equal(HttpStatusCode.OK, secondDeviceAck.StatusCode);
@@ -288,6 +291,7 @@ public sealed class SyncApiIntegrationTests
         var crossTenantAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId,
+            branchId = tenant.BranchId,
             sequence = firstAck.Accepted[0].Sequence
         });
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantAck.StatusCode);
