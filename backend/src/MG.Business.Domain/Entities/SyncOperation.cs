@@ -4,7 +4,7 @@ public sealed class SyncOperation
 {
     private SyncOperation() { }
 
-    public SyncOperation(Guid tenantId, Guid actorId, Guid deviceId, Guid? branchId,
+    public SyncOperation(Guid tenantId, Guid actorId, Guid deviceId, Guid? branchId, Guid operationId,
         string operationType, int schemaVersion, long authorityEpoch,
         DateTimeOffset occurredAtUtc, string payloadJson, string payloadSha256)
     {
