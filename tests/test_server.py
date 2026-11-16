@@ -245,12 +245,20 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(any(x["id"] == "product-1" for x in result["items"]))
         status, result = self.request("POST", "/api/public/orders", {
-            "customerName": "Online Guest", "phone": "+491111111",
+            "clientOrderId": "public-order-01", "customerName": "Online Guest", "phone": "+491111111",
             "items": [{"productId": "product-1", "quantity": 1}]
         })
         self.assertEqual(status, 201)
         self.assertTrue(result["orderNumber"].startswith("MG-ON-"))
-        for _ in range(4):
+        order_number = result["orderNumber"]
+        status, result = self.request("POST", "/api/public/orders", {
+            "clientOrderId": "public-order-01", "customerName": "Online Guest", "phone": "+491111111",
+            "items": [{"productId": "product-1", "quantity": 1}]
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(result["duplicate"])
+        self.assertEqual(result["orderNumber"], order_number)
+        for _ in range(3):
             status, result = self.request("POST", "/api/public/orders", {})
             self.assertEqual(status, 400)
         status, result = self.request("POST", "/api/public/orders", {})
