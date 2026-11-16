@@ -15,6 +15,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<SalesOrder> SalesOrders => Set<SalesOrder>();
     public DbSet<SalesOrderLine> SalesOrderLines => Set<SalesOrderLine>();
     public DbSet<SalesPayment> SalesPayments => Set<SalesPayment>();
+    public DbSet<CafeKitchenTicket> CafeKitchenTickets => Set<CafeKitchenTicket>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
     public DbSet<JournalEntryLine> JournalEntryLines => Set<JournalEntryLine>();
@@ -119,6 +120,23 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasIndex(x => new { x.TenantId, x.Sku }).IsUnique();
             entity.HasAlternateKey(x => new { x.TenantId, x.Id });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CafeKitchenTicket>(entity =>
+        {
+            entity.ToTable("cafe_kitchen_tickets");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ServiceType).HasConversion<string>().HasMaxLength(24).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(24).IsRequired();
+            entity.Property(x => x.TableLabel).HasMaxLength(40);
+            entity.Property(x => x.Notes).HasMaxLength(500);
+            entity.HasIndex(x => new { x.TenantId, x.SalesOrderId }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.Status, x.CreatedAtUtc });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<SalesOrder>().WithMany().HasForeignKey(x => new { x.TenantId, x.SalesOrderId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<SalesOrder>(entity =>
