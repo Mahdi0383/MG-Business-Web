@@ -25,7 +25,7 @@ Customer is currently the only business aggregate with an end-to-end local-first
 6. Local acknowledgement verifies the pending customer baseVersion again inside the IndexedDB transaction; a version drift aborts acknowledgement instead of silently marking an unapplied edit as synced.
 7. Authoritative online customer reads are cached for offline browsing. Cache refreshes never overwrite pending edits or downgrade a newer local confirmed version. Cache persistence is best-effort so browser storage failure does not break the online customer view.
 
-The customer conflict count is surfaced in the workspace, but there is no governed operator conflict-resolution UI yet. The current conflict policy remains fail-closed for unknown commands.
+The workspace surfaces the customer conflict count and provides a role-restricted, read-only conflict review page for Owner, Manager and Accountant roles. It shows branch-scoped unresolved conflicts and their recorded decision details; it does not resolve, discard or replay a conflict. A governed operator resolution workflow with explicit field-level reconciliation and audit history is still required. The current conflict policy remains fail-closed for unknown commands.
 
 ## Not yet offline-ready
 
