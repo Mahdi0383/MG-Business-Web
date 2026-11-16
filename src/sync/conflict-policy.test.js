@@ -18,20 +18,26 @@ test("routes financial and inventory operations to manual review", () => {
   }
 });
 
-test("keeps customer updates in manual review until authoritative update replay is enabled", () => {
-  for (const operationType of ["customer.profile.updated", "customer.contact.updated"]) {
-    const result = classifyIncomingOperation({
-      operationId: "profile-1",
-      operationType,
-      schemaVersion: 1,
-      payload: { baseVersion: 8 }
-    }, { version: 8 });
-    assert.equal(result.disposition, "manual-review");
-    assert.equal(result.reason, "customer-update-command-not-enabled");
-  }
+test("applies customer updates only when the base version matches or the operation is its own echo", () => {
+  const operation = {
+    operationId: "profile-update-1",
+    operationType: "customer.profile.updated",
+    schemaVersion: 1,
+    payload: { customerId: "customer-1", baseVersion: 8 }
+  };
+  const current = { version: 8, lastOperationId: "previous-operation" };
+  assert.equal(classifyIncomingOperation(operation, current).disposition, "apply");
+  assert.equal(classifyIncomingOperation(operation, current).reason, "customer-version-matches");
+  assert.equal(classifyIncomingOperation(operation, {
+    version: 9, lastOperationId: "profile-update-1"
+  }).reason, "originating-device-echo");
+  const stale = classifyIncomingOperation(operation, { version: 9, lastOperationId: "another-operation" });
+  assert.equal(stale.disposition, "conflict");
+  assert.equal(stale.reason, "stale-customer-base-version");
 });
 
-test("fails closed for unknown commands and disabled customer updates", () => {
+
+test("fails closed for unknown commands and invalid customer update versions", () => {
   const unknown = classifyIncomingOperation({
     operationId: "unknown-1",
     operationType: "custom.unregistered-command",
@@ -47,7 +53,7 @@ test("fails closed for unknown commands and disabled customer updates", () => {
     payload: {}
   }, { version: 1 });
   assert.equal(missingVersion.disposition, "manual-review");
-  assert.equal(missingVersion.reason, "customer-update-command-not-enabled");
+  assert.equal(missingVersion.reason, "invalid-customer-update-version-precondition");
 });
 
 test("rejects malformed operation envelopes", () => {
