@@ -666,55 +666,6 @@ class Handler(SimpleHTTPRequestHandler):
                     LEFT JOIN customers c ON c.id=gs.customer_id AND c.tenant_id=gs.tenant_id
                     WHERE d.tenant_id=? ORDER BY d.name""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
-            if path == "/api/gamenet/reservations":
-                if not module_enabled(db,user["tenant_id"],"gamenet"):
-                    return self.send_json(403,{"error":"ماژول گیم‌نت در لایسنس فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"):
-                    return self.send_json(403,{"error":"دسترسی ثبت رزرو ندارید."})
-                device_id=data.get("deviceId"); customer_id=data.get("customerId")
-                starts=data.get("startsAt"); ends=data.get("endsAt"); players=data.get("playersCount",1); notes=data.get("notes","")
-                if not isinstance(device_id,str) or not isinstance(starts,str) or not isinstance(ends,str):
-                    return self.send_json(400,{"error":"دستگاه و زمان شروع و پایان رزرو الزامی است."})
-                if type(players) is not int or not 1<=players<=16 or not isinstance(notes,str) or len(notes)>500:
-                    return self.send_json(400,{"error":"تعداد بازیکنان یا یادداشت رزرو معتبر نیست."})
-                from datetime import datetime
-                try:
-                    start_dt=datetime.fromisoformat(starts); end_dt=datetime.fromisoformat(ends)
-                    start_ts=int(start_dt.timestamp()); end_ts=int(end_dt.timestamp())
-                except (TypeError,ValueError,OverflowError):
-                    return self.send_json(400,{"error":"زمان رزرو معتبر نیست."})
-                now=int(time.time())
-                if start_ts<now-60 or end_ts<=start_ts or end_ts-start_ts>24*60*60:
-                    return self.send_json(400,{"error":"رزرو باید در آینده، حداکثر ۲۴ ساعت و با بازه زمانی معتبر باشد."})
-                db.execute("BEGIN IMMEDIATE")
-                device=db.execute("SELECT id FROM game_devices WHERE id=? AND tenant_id=? AND active=1",(device_id,user["tenant_id"])).fetchone()
-                if not device:
-                    db.rollback(); return self.send_json(404,{"error":"دستگاه فعال پیدا نشد."})
-                if customer_id is not None and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",(customer_id,user["tenant_id"])).fetchone():
-                    db.rollback(); return self.send_json(404,{"error":"مشتری رزرو پیدا نشد."})
-                conflict=db.execute("""SELECT id FROM gamenet_reservations WHERE tenant_id=? AND device_id=? AND status='booked'
-                    AND starts_at<? AND ends_at>? LIMIT 1""",(user["tenant_id"],device_id,end_ts,start_ts)).fetchone()
-                if conflict:
-                    db.rollback(); return self.send_json(409,{"error":"این دستگاه در بازه انتخاب‌شده رزرو دیگری دارد."})
-                reservation_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
-                db.execute("""INSERT INTO gamenet_reservations(id,tenant_id,device_id,customer_id,created_by,starts_at,ends_at,status,players_count,notes,created_at)
-                    VALUES(?,?,?,?,?,?,?,'booked',?,?,?)""",(reservation_id,user["tenant_id"],device_id,customer_id,user["id"],start_ts,end_ts,players,notes,now))
-                audit(db,user["tenant_id"],user["id"],"gamenet.reservation.created","gamenet_reservation",reservation_id,
-                    {"deviceId":device_id,"startsAt":start_ts,"endsAt":end_ts})
-                db.commit(); return self.send_json(201,{"id":reservation_id,"startsAt":start_ts,"endsAt":end_ts,"status":"booked"})
-            if path.startswith("/api/gamenet/reservations/") and path.endswith("/cancel"):
-                if not module_enabled(db,user["tenant_id"],"gamenet"):
-                    return self.send_json(403,{"error":"ماژول گیم‌نت در لایسنس فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"):
-                    return self.send_json(403,{"error":"دسترسی لغو رزرو ندارید."})
-                reservation_id=path.split("/")[-2]
-                db.execute("BEGIN IMMEDIATE")
-                changed=db.execute("""UPDATE gamenet_reservations SET status='cancelled'
-                    WHERE id=? AND tenant_id=? AND status='booked'""",(reservation_id,user["tenant_id"])).rowcount
-                if not changed:
-                    db.rollback(); return self.send_json(404,{"error":"رزرو فعال پیدا نشد."})
-                audit(db,user["tenant_id"],user["id"],"gamenet.reservation.cancelled","gamenet_reservation",reservation_id)
-                db.commit(); return self.send_json(200,{"ok":True,"status":"cancelled"})
             if path == "/api/gamenet/sessions":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
@@ -1198,6 +1149,55 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"gamenet.device.updated","game_device",device_id)
                 db.commit()
                 return self.send_json(200, {"ok":True})
+            if path == "/api/gamenet/reservations":
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403,{"error":"ماژول گیم‌نت در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403,{"error":"دسترسی ثبت رزرو ندارید."})
+                device_id=data.get("deviceId"); customer_id=data.get("customerId")
+                starts=data.get("startsAt"); ends=data.get("endsAt"); players=data.get("playersCount",1); notes=data.get("notes","")
+                if not isinstance(device_id,str) or not isinstance(starts,str) or not isinstance(ends,str):
+                    return self.send_json(400,{"error":"دستگاه و زمان شروع و پایان رزرو الزامی است."})
+                if type(players) is not int or not 1<=players<=16 or not isinstance(notes,str) or len(notes)>500:
+                    return self.send_json(400,{"error":"تعداد بازیکنان یا یادداشت رزرو معتبر نیست."})
+                from datetime import datetime
+                try:
+                    start_dt=datetime.fromisoformat(starts); end_dt=datetime.fromisoformat(ends)
+                    start_ts=int(start_dt.timestamp()); end_ts=int(end_dt.timestamp())
+                except (TypeError,ValueError,OverflowError):
+                    return self.send_json(400,{"error":"زمان رزرو معتبر نیست."})
+                now=int(time.time())
+                if start_ts<now-60 or end_ts<=start_ts or end_ts-start_ts>24*60*60:
+                    return self.send_json(400,{"error":"رزرو باید در آینده، حداکثر ۲۴ ساعت و با بازه زمانی معتبر باشد."})
+                db.execute("BEGIN IMMEDIATE")
+                device=db.execute("SELECT id FROM game_devices WHERE id=? AND tenant_id=? AND active=1",(device_id,user["tenant_id"])).fetchone()
+                if not device:
+                    db.rollback(); return self.send_json(404,{"error":"دستگاه فعال پیدا نشد."})
+                if customer_id is not None and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",(customer_id,user["tenant_id"])).fetchone():
+                    db.rollback(); return self.send_json(404,{"error":"مشتری رزرو پیدا نشد."})
+                conflict=db.execute("""SELECT id FROM gamenet_reservations WHERE tenant_id=? AND device_id=? AND status='booked'
+                    AND starts_at<? AND ends_at>? LIMIT 1""",(user["tenant_id"],device_id,end_ts,start_ts)).fetchone()
+                if conflict:
+                    db.rollback(); return self.send_json(409,{"error":"این دستگاه در بازه انتخاب‌شده رزرو دیگری دارد."})
+                reservation_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                db.execute("""INSERT INTO gamenet_reservations(id,tenant_id,device_id,customer_id,created_by,starts_at,ends_at,status,players_count,notes,created_at)
+                    VALUES(?,?,?,?,?,?,?,'booked',?,?,?)""",(reservation_id,user["tenant_id"],device_id,customer_id,user["id"],start_ts,end_ts,players,notes,now))
+                audit(db,user["tenant_id"],user["id"],"gamenet.reservation.created","gamenet_reservation",reservation_id,
+                    {"deviceId":device_id,"startsAt":start_ts,"endsAt":end_ts})
+                db.commit(); return self.send_json(201,{"id":reservation_id,"startsAt":start_ts,"endsAt":end_ts,"status":"booked"})
+            if path.startswith("/api/gamenet/reservations/") and path.endswith("/cancel"):
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403,{"error":"ماژول گیم‌نت در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403,{"error":"دسترسی لغو رزرو ندارید."})
+                reservation_id=path.split("/")[-2]
+                db.execute("BEGIN IMMEDIATE")
+                changed=db.execute("""UPDATE gamenet_reservations SET status='cancelled'
+                    WHERE id=? AND tenant_id=? AND status='booked'""",(reservation_id,user["tenant_id"])).rowcount
+                if not changed:
+                    db.rollback(); return self.send_json(404,{"error":"رزرو فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"gamenet.reservation.cancelled","gamenet_reservation",reservation_id)
+                db.commit(); return self.send_json(200,{"ok":True,"status":"cancelled"})
             if path == "/api/gamenet/sessions":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
