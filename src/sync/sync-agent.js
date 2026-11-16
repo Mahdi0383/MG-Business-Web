@@ -5,6 +5,35 @@ export class SyncAgent {
     this.running = false;
   }
 
+  async pullIncoming(tenantId, { pageSize = 100 } = {}) {
+    if (this.running) return { status: "already-running", received: 0 };
+    this.running = true;
+    try {
+      const afterSequence = await this.operationStore.getCursor(tenantId);
+      const response = await this.apiClient.get(
+        `/api/sync/operations?afterSequence=${afterSequence}&limit=${Math.max(1, Math.min(pageSize, 200))}`
+      );
+      if (!Array.isArray(response?.operations) || !Number.isSafeInteger(response?.nextSequence) || response.nextSequence < afterSequence)
+        throw new Error("MG Sync API returned an invalid pull page.");
+      let previousSequence = afterSequence;
+      for (const operation of response.operations) {
+        if (!Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence)
+          throw new Error("MG Sync API returned a non-monotonic operation sequence.");
+        previousSequence = operation.sequence;
+      }
+      if (response.operations.length > 0 && response.nextSequence !== previousSequence)
+        throw new Error("MG Sync API cursor does not match the last operation.");
+      if (response.operations.length === 0 && response.nextSequence !== afterSequence)
+        throw new Error("MG Sync API advanced the cursor without returning operations.");
+      await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence);
+      return { status: response.hasMore ? "more-available" : "pulled", received: response.operations.length, nextSequence: response.nextSequence, hasMore: Boolean(response.hasMore) };
+    } catch (error) {
+      if (error instanceof TypeError || error?.name === "NetworkError") return { status: "offline", received: 0, error };
+      throw error;
+    } finally {
+      this.running = false;
+    }
+  }
   async pushPending(tenantId, { batchSize = 100 } = {}) {
     if (this.running) return { status: "already-running", acknowledged: 0 };
     this.running = true;
