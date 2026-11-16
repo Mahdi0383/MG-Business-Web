@@ -918,6 +918,32 @@ export class LocalOperationStore {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     let payload;
     try { payload = JSON.parse(row.payloadJson); } catch { return null; }
+    if (row.operationType === "inventory.stock.movement.created") {
+      if (typeof row.branchId !== "string" || typeof payload?.productId !== "string")
+        return null;
+      const database = await openDatabase();
+      const transaction = database.transaction(
+        [INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE], "readonly"
+      );
+      const done = transactionDone(transaction);
+      const baselineRequest = transaction.objectStore(INVENTORY_BASELINES_STORE)
+        .get([tenantId, row.branchId, payload.productId]);
+      const movementRequest = transaction.objectStore(STOCK_MOVEMENTS_STORE)
+        .get([tenantId, row.branchId, row.operationId]);
+      const [baseline, localMovement] = await Promise.all([
+        requestResult(baselineRequest), requestResult(movementRequest)
+      ]);
+      await done;
+      if (!baseline) return null;
+      return {
+        productId: payload.productId,
+        quantityOnHand: Number(baseline.quantityOnHand),
+        inventoryValue: Number(baseline.inventoryValue),
+        rawInventoryValue: Number(baseline.rawInventoryValue ?? baseline.inventoryValue),
+        lastOperationId: localMovement?.operationId || null,
+        movementState: localMovement?.state || null
+      };
+    }
     const customerId = typeof payload?.customerId === "string" ? payload.customerId : "";
     if (!customerId) return null;
     const database = await openDatabase();
