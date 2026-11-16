@@ -141,7 +141,16 @@ public static class GameNetEndpoints
                 return Results.Conflict(new { message = "تغییر هم‌زمان پایگاه داده رخ داد؛ وضعیت دستگاه را بررسی و دوباره تلاش کنید." });
             }
 
-            await transaction.CommitAsync(cancellationToken);
+            try
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "تأیید نهایی شروع جلسه به دلیل تعارض پایگاه داده انجام نشد؛ وضعیت دستگاه را بررسی کنید." });
+            }
+
             return Results.Created($"/api/gamenet/sessions/{session.Id}",
                 new { session.Id, session.DeviceId, session.CustomerId, session.StartedAtUtc, session.HourlyRate, session.BillingIntervalMinutes });
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
