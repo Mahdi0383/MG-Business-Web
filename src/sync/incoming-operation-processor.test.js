@@ -239,3 +239,48 @@ test("rejects malformed JSON persisted in the incoming inbox", async () => {
     /malformed JSON payload/
   );
 });
+
+
+test("rejects invalid classifier decisions without acknowledging the operation", async () => {
+  let applied = false;
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return [{
+      sequence: 1, schemaVersion: 1, operationId: "op-invalid-decision",
+      operationType: "customer.profile.updated", payloadJson: "{}"
+    }]; } },
+    adapter: {
+      async readConflictState() { return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() { applied = true; }
+    },
+    classify: () => ({ disposition: "skip-and-continue" })
+  });
+  await assert.rejects(processor.processBatch("tenant-1", 10, null, true), /invalid decision/);
+  assert.equal(applied, false);
+});
+
+test("rejects oversized persisted payloads before reading projection state", async () => {
+  let projectionRead = false;
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return [{
+      sequence: 1, schemaVersion: 1, operationId: "op-oversized",
+      operationType: "customer.profile.updated", payloadJson: JSON.stringify({ value: "x".repeat(65 * 1024) })
+    }]; } },
+    adapter: {
+      async readConflictState() { projectionRead = true; return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() {}
+    },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  });
+  await assert.rejects(processor.processBatch("tenant-1", 10, null, true), /invalid or non-monotonic/);
+  assert.equal(projectionRead, false);
+});
+
+test("requires all transactional adapter methods at construction", () => {
+  assert.throws(() => new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return []; } },
+    adapter: { async applyAndAcknowledge() {} },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  }), /complete transactional adapter/);
+});
