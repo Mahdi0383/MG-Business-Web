@@ -71,7 +71,8 @@ export class SyncAgent {
       const deviceId = await this.operationStore.getDeviceId(actorId);
       await this.apiClient.post("/api/sync/acknowledgements", {
         deviceId,
-        sequence: response.nextSequence
+        sequence: response.nextSequence,
+        branchId
       }, { tenantId, branchId });
       return { status: response.hasMore ? "more-available" : "pulled", received: response.operations.length, nextSequence: response.nextSequence, hasMore: Boolean(response.hasMore) };
     } catch (error) {
