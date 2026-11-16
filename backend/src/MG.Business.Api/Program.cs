@@ -107,6 +107,8 @@ app.MapCustomerEndpoints();
 app.MapSalesEndpoints();
 app.MapCafeEndpoints();
 app.MapGameNetEndpoints();
+app.MapBranchEndpoints();
+app.MapMembershipEndpoints();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = "mg-business-api" }))
    .WithName("Liveness");
