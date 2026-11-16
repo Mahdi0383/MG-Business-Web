@@ -81,7 +81,7 @@ test("pulls remote operations and persists the page with its cursor", async () =
     async storeIncomingPage(tenantId, operations, cursor) { saved.push({ tenantId, operations, cursor }); }
   };
 
-  const result = await new SyncAgent(api, store).pullIncoming("tenant-1");
+  const result = await new SyncAgent(api, store).pullIncoming("tenant-1", { actorId: "actor-1" });
 
   assert.equal(result.status, "pulled");
   assert.equal(result.received, 2);
@@ -113,7 +113,7 @@ test("does not persist a non-monotonic pull page", async () => {
     async storeIncomingPage() { persisted = true; }
   };
 
-  await assert.rejects(new SyncAgent(api, store).pullIncoming("tenant-1"), /non-monotonic/);
+  await assert.rejects(new SyncAgent(api, store).pullIncoming("tenant-1", { actorId: "actor-1" }), /non-monotonic/);
   assert.equal(persisted, false);
 });
 
@@ -138,8 +138,8 @@ test("uses an independent pull cursor for each selected branch", async () => {
   };
 
   const agent = new SyncAgent(api, store);
-  await agent.pullIncoming("tenant-1", { branchId: "branch-a" });
-  await agent.pullIncoming("tenant-1", { branchId: "branch-b" });
+  await agent.pullIncoming("tenant-1", { branchId: "branch-a", actorId: "actor-1" });
+  await agent.pullIncoming("tenant-1", { branchId: "branch-b", actorId: "actor-1" });
 
   assert.deepEqual(cursorReads, [
     { tenantId: "tenant-1", branchId: "branch-a" },
@@ -179,7 +179,7 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
     async acknowledge() {}
   };
 
-  const result = await new SyncAgent(api, store).pushPending("tenant-1", { branchId: "branch-a" });
+  const result = await new SyncAgent(api, store).pushPending("tenant-1", { branchId: "branch-a", actorId: "actor-1" });
   assert.equal(result.status, "synced");
   assert.deepEqual(pendingContext, {
     tenantId: "tenant-1",
@@ -218,7 +218,7 @@ test("rejects a pull response containing another branch's operation", async () =
   };
 
   await assert.rejects(
-    new SyncAgent(api, store).pullIncoming("tenant-1", { branchId: "branch-a" }),
+    new SyncAgent(api, store).pullIncoming("tenant-1", { branchId: "branch-a", actorId: "actor-1" }),
     /outside the active branch/
   );
   assert.equal(persisted, false);
@@ -247,7 +247,7 @@ test("rejects malformed incoming operation envelopes before persistence", async 
   };
 
   await assert.rejects(
-    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    new SyncAgent(api, store).pullIncoming("tenant-1", { actorId: "actor-1" }),
     /invalid operation envelope/
   );
   assert.equal(persisted, false);
@@ -266,7 +266,7 @@ test("does not misreport local validation errors as network outages", async () =
   };
 
   await assert.rejects(
-    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    new SyncAgent(api, store).pullIncoming("tenant-1", { actorId: "actor-1" }),
     /tenantId is required/
   );
 });
@@ -297,8 +297,18 @@ test("rejects malformed branch identities and hashes before inbox persistence", 
   };
 
   await assert.rejects(
-    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    new SyncAgent(api, store).pullIncoming("tenant-1", { actorId: "actor-1" }),
     /invalid branch identity/
   );
   assert.equal(persisted, false);
+});
+
+test("requires an authenticated actor before starting sync pull", async () => {
+  const api = { async get() { assert.fail("missing actor must be rejected before network access"); } };
+  const store = { async getCursor() { assert.fail("missing actor must be rejected before storage access"); } };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    /actorId is required/
+  );
 });
