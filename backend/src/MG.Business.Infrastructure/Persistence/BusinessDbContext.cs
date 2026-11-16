@@ -23,6 +23,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<JournalEntryLine> JournalEntryLines => Set<JournalEntryLine>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<SyncOperation> SyncOperations => Set<SyncOperation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -258,6 +259,20 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SyncOperation>(entity =>
+        {
+            entity.ToTable("sync_operations");
+            entity.HasKey(x => x.Sequence);
+            entity.Property(x => x.Sequence).ValueGeneratedOnAdd();
+            entity.Property(x => x.OperationType).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.PayloadJson).IsRequired();
+            entity.Property(x => x.PayloadSha256).HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.OperationId }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.Sequence });
+            entity.HasIndex(x => new { x.TenantId, x.DeviceId, x.Sequence });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<JournalEntryLine>(entity =>
