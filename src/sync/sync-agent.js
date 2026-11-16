@@ -6,12 +6,17 @@ export class SyncAgent {
   }
 
   async pullIncoming(tenantId, { pageSize = 100, branchId = null } = {}) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required for sync pull.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
+    const boundedPageSize = Number.isInteger(pageSize) ? Math.max(1, Math.min(pageSize, 200)) : 100;
     if (this.running) return { status: "already-running", received: 0 };
     this.running = true;
     try {
       const afterSequence = await this.operationStore.getCursor(tenantId, branchId);
       const response = await this.apiClient.get(
-        `/api/sync/operations?afterSequence=${afterSequence}&limit=${Math.max(1, Math.min(pageSize, 200))}`
+        `/api/sync/operations?afterSequence=${afterSequence}&limit=${boundedPageSize}`
       );
       if (!Array.isArray(response?.operations) || !Number.isSafeInteger(response?.nextSequence) || response.nextSequence < afterSequence)
         throw new Error("MG Sync API returned an invalid pull page.");
@@ -40,10 +45,13 @@ export class SyncAgent {
     }
   }
   async pushPending(tenantId, { batchSize = 100 } = {}) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required for sync push.");
+    const boundedBatchSize = Number.isInteger(batchSize) ? Math.max(1, Math.min(batchSize, 100)) : 100;
     if (this.running) return { status: "already-running", acknowledged: 0 };
     this.running = true;
     try {
-      const pending = await this.operationStore.getPending(tenantId, batchSize);
+      const pending = await this.operationStore.getPending(tenantId, boundedBatchSize);
       if (pending.length === 0) return { status: "idle", acknowledged: 0 };
 
       const response = await this.apiClient.post("/api/sync/operations", {
