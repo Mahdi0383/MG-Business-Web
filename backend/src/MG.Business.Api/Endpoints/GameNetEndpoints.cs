@@ -64,12 +64,11 @@ public static class GameNetEndpoints
             var sessions = await db.GameSessions.AsNoTracking()
                 .Where(x => x.TenantId == tenant.TenantId && x.Status == GameSessionStatus.Active
                     && (tenant.BranchId == null || x.BranchId == tenant.BranchId))
-                .OrderBy(x => x.StartedAtUtc)
                 .Join(db.GameDevices.AsNoTracking(), session => session.DeviceId, device => device.Id,
                     (session, device) => new ActiveSessionResponse(session.Id, session.DeviceId, device.Name,
                         session.CustomerId, session.StartedAtUtc, session.HourlyRate, session.BillingIntervalMinutes))
                 .ToListAsync(cancellationToken);
-            return Results.Ok(sessions);
+            return Results.Ok(sessions.OrderBy(x => x.StartedAtUtc));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
         group.MapPost("/sessions", async (StartSessionRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
