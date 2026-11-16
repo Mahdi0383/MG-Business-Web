@@ -227,3 +227,13 @@ test("pull rejects a scan cursor preceding a visible operation", async () => {
   await assert.rejects(agent.pullIncoming("tenant-1", { actorId: "actor-1" }), /precedes the last returned operation/);
   assert.equal(calls.acknowledged, null);
 });
+
+
+test("does not expose tenant-wide incoming rows without manager authority", async () => {
+  const store = new LocalOperationStore();
+  assert.deepEqual(await store.getUnappliedIncoming("tenant-1", 100, null, false), []);
+  await assert.rejects(
+    store.getUnappliedIncoming("tenant-1", 100, null, "true"),
+    /allowTenantWide/
+  );
+});
