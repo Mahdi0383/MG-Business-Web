@@ -506,3 +506,54 @@ test("acknowledged customer update journal echo does not reapply the originating
   assert.equal(customer.name, "Local edit");
   assert.equal((await store.getOpenConflicts(tenantId, branchId, false)).length, 0);
 });
+
+test("does not acknowledge an outbound customer update if its local version precondition changed", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-ack-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId,
+    customer: { code: "C-ACK-1", name: "Before" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+  await store.updateCustomer({
+    tenantId, branchId, actorId, customerId: created.id,
+    customer: { name: "Pending edit" }
+  });
+  const deviceId = await store.getDeviceId(actorId);
+  const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
+  assert.equal(pending.length, 1);
+
+  const database = await new Promise((resolve, reject) => {
+    const request = indexedDB.open("mg-business-local");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const transaction = database.transaction("customers", "readwrite");
+  const done = new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+  const customers = transaction.objectStore("customers");
+  const request = customers.get([tenantId, created.id]);
+  request.onsuccess = () => {
+    const row = request.result;
+    row.version = 7;
+    customers.put(row);
+  };
+  await done;
+  database.close();
+
+  await assert.rejects(
+    store.acknowledge([{ operationId: pending[0].operationId, sequence: 2 }]),
+    /version no longer matches/
+  );
+  const stillPending = await store.getPending(tenantId, 10, branchId, false, deviceId);
+  assert.equal(stillPending.length, 1);
+  const rows = await store.getCustomers(tenantId);
+  const customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.syncStatus, "pending");
+  assert.equal(customer.version, 7);
+});
