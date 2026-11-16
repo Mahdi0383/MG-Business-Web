@@ -238,6 +238,8 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 409)
         status, result = self.request("GET", "/api/customers", token=token)
         self.assertEqual(result["items"][0]["balance"], 35000)
+        status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
+        self.assertEqual(trial["totalDebit"], trial["totalCredit"])
 
         status, result = self.request("GET", "/api/public/menu")
         self.assertEqual(status, 200)
