@@ -121,6 +121,17 @@ public sealed class TenantOnboardingAndInventoryTests
         Assert.Equal(HttpStatusCode.BadRequest, missingBranch.StatusCode);
 
         client.DefaultRequestHeaders.Add("X-MG-Branch", tenant!.BranchId.ToString());
+        var missingIdempotencyKey = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product!.Id,
+            type = StockMovementType.Receipt,
+            quantity = 5m,
+            unitCost = 100m,
+            reference = "opening"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, missingIdempotencyKey.StatusCode);
+
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "untracked-stock-movement-01");
         var untracked = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product.Id,
@@ -161,6 +172,8 @@ public sealed class TenantOnboardingAndInventoryTests
 
         foreach (var receipt in new[] { (quantity: 10m, cost: 5m), (quantity: 10m, cost: 10m) })
         {
+            client.DefaultRequestHeaders.Remove("Idempotency-Key");
+            client.DefaultRequestHeaders.Add("Idempotency-Key", $"valuation-receipt-{receipt.quantity}");
             var receiptResponse = await client.PostAsJsonAsync("/api/inventory/movements", new
             {
                 productId = product!.Id,
@@ -172,6 +185,8 @@ public sealed class TenantOnboardingAndInventoryTests
             Assert.Equal(HttpStatusCode.Created, receiptResponse.StatusCode);
         }
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "valuation-sale-01");
         var sale = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product!.Id,
@@ -188,6 +203,8 @@ public sealed class TenantOnboardingAndInventoryTests
         Assert.Equal(7.5m, stock[0].AverageUnitCost);
         Assert.Equal(112.5m, stock[0].InventoryValue);
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "valuation-oversell-01");
         var oversell = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product.Id,
