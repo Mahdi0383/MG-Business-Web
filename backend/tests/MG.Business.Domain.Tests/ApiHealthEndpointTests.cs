@@ -8,7 +8,7 @@ public sealed class ApiHealthEndpointTests
     [Fact]
     public async Task LiveEndpoint_ReturnsHealthyResponse()
     {
-        using var factory = CreateFactory("Data Source=:memory:");
+        using var factory = CreateFactory();
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/health/live");
@@ -29,12 +29,17 @@ public sealed class ApiHealthEndpointTests
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(string connectionString) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private static WebApplicationFactory<Program> CreateFactory()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"mg-business-health-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={databasePath}";
+
+        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.ConfigureAppConfiguration((_, configuration) =>
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Database:Provider"] = "Sqlite",
                     ["ConnectionStrings:Business"] = connectionString
                 })));
+    }
 }
