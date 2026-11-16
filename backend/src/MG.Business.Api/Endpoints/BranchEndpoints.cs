@@ -83,6 +83,11 @@ public static class BranchEndpoints
 
             if (!request.IsActive)
             {
+                var activeBranchCount = await db.Branches.CountAsync(x =>
+                    x.TenantId == tenant.TenantId && x.IsActive, cancellationToken);
+                if (activeBranchCount <= 1)
+                    return Results.Conflict(new { message = "هر کسب‌وکار باید حداقل یک شعبه فعال داشته باشد." });
+
                 var hasActiveGameSessions = await db.GameSessions.AnyAsync(x =>
                     x.TenantId == tenant.TenantId && x.BranchId == branchId && x.Status == GameSessionStatus.Active,
                     cancellationToken);
