@@ -45,8 +45,28 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var provider = builder.Configuration["Database:Provider"] ?? "Sqlite";
-var connectionString = builder.Configuration.GetConnectionString("Business")
-    ?? "Data Source=mg-business-dev.db";
+var configuredConnectionString = builder.Configuration.GetConnectionString("Business");
+var connectionString = configuredConnectionString ?? "Data Source=mg-business-dev.db";
+
+if (builder.Environment.IsProduction())
+{
+    if (!string.Equals(provider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Production deployments must explicitly configure PostgreSQL; the development SQLite default is not permitted.");
+
+    if (string.IsNullOrWhiteSpace(configuredConnectionString))
+        throw new InvalidOperationException("Production deployments must explicitly configure ConnectionStrings:Business.");
+
+    if (string.IsNullOrWhiteSpace(dataProtectionKeysDirectory))
+        throw new InvalidOperationException("Production deployments must configure persistent private DataProtection:KeysDirectory storage.");
+
+    if (allowedOrigins.Length == 0 || allowedOrigins.Any(origin =>
+        !Uri.TryCreate(origin, UriKind.Absolute, out var parsedOrigin)
+        || parsedOrigin.Scheme != Uri.UriSchemeHttps
+        || parsedOrigin.AbsolutePath != "/"
+        || !string.IsNullOrEmpty(parsedOrigin.Query)
+        || !string.IsNullOrEmpty(parsedOrigin.Fragment)))
+        throw new InvalidOperationException("Production deployments must configure exact HTTPS frontend origins in Cors:AllowedOrigins.");
+}
 
 builder.Services.AddDbContext<BusinessDbContext>(options =>
 {
