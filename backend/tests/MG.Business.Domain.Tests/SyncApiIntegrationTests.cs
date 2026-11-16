@@ -1601,7 +1601,7 @@ public sealed class SyncApiIntegrationTests
             Assert.NotNull(challenge);
             actorId = challenge!.ActorId;
             var publicKey = Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
-            var message = string.Join("\\n",
+            var message = string.Join("\n",
                 "MG-DEVICE-ENROLLMENT-V1",
                 tenant.TenantId.ToString("D"),
                 tenant.BranchId.ToString("D"),
@@ -1636,7 +1636,7 @@ public sealed class SyncApiIntegrationTests
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var nonce = Guid.NewGuid();
             var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
-            var canonical = string.Join("\\n",
+            var canonical = string.Join("\n",
                 "MG-DEVICE-REQUEST-V1",
                 method.ToUpperInvariant(),
                 path,
@@ -1674,7 +1674,7 @@ public sealed class SyncApiIntegrationTests
 
         using var publicKey = ECDsa.Create();
         publicKey.ImportSubjectPublicKeyInfo(Convert.FromBase64String(lease.PublicKeySpkiBase64), out _);
-        var leaseMessage = string.Join("\\n",
+        var leaseMessage = string.Join("\n",
             "MG-AUTHORITY-LEASE-V1",
             lease.TenantId.ToString("D"),
             lease.BranchId?.ToString("D") ?? string.Empty,
