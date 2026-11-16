@@ -575,6 +575,7 @@ public sealed class SalesApiIntegrationTests
             paymentReference = "PAY-40"
         });
         Assert.Equal(HttpStatusCode.OK, firstPayment.StatusCode);
+        var first = await firstPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
         var firstJson = await firstPayment.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         var firstPaymentId = firstJson.GetProperty("paymentId").GetGuid();
         var firstReplay = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
@@ -594,7 +595,6 @@ public sealed class SalesApiIntegrationTests
             paymentReference = "PAY-40"
         });
         Assert.Equal(HttpStatusCode.Conflict, sameKeyDifferentAmount.StatusCode);
-        var first = await firstPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
         Assert.Equal(40m, first!.PaidAmount);
         Assert.Equal(60m, first.BalanceDue);
 
