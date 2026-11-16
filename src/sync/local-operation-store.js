@@ -86,7 +86,7 @@ export class LocalOperationStore {
     if (!tenantId) throw new TypeError("tenantId is required.");
     if (!operationType || operationType.length > 100) throw new TypeError("operationType must be 1–100 characters.");
     if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError("schemaVersion must be a positive integer.");
-    if (!Number.isSafeInteger(authorityEpoch) || authorityEpoch < 0) throw new TypeError("authorityEpoch must be a non-negative integer.");
+    if (authorityEpoch !== 0) throw new TypeError("Non-zero authority epochs require a verified signed lease; failover is not enabled yet.");
 
     const payloadJson = JSON.stringify(payload);
     if (new TextEncoder().encode(payloadJson).byteLength > 64 * 1024)
