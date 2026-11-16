@@ -1602,8 +1602,10 @@ export class LocalOperationStore {
       throw new TypeError("Tenant, branch and conflict sequence are required.");
     if (!stockRow || stockRow.branchId !== branchId || typeof stockRow.productId !== "string"
       || !Number.isFinite(Number(stockRow.quantityOnHand))
-      || !Number.isFinite(Number(stockRow.inventoryValue))
-      || !Number.isFinite(Number(stockRow.rawInventoryValue ?? stockRow.inventoryValue)))
+      || !Number.isFinite(Number(stockRow.inventoryValue)) || Number(stockRow.inventoryValue) < 0
+      || !Number.isFinite(Number(stockRow.rawInventoryValue ?? stockRow.inventoryValue))
+      || Number(stockRow.rawInventoryValue ?? stockRow.inventoryValue) < 0
+      || Number(stockRow.quantityOnHand) < 0)
       throw new TypeError("A current server stock snapshot for the conflicted branch is required.");
 
     const database = await openDatabase();
@@ -1633,6 +1635,18 @@ export class LocalOperationStore {
       transaction.abort();
       await done.catch(() => {});
       throw new Error("این تعارض دیگر قابل تطبیق با موجودی سرور نیست.");
+    }
+    let conflictPayload;
+    try { conflictPayload = JSON.parse(inboxRow.payloadJson); }
+    catch {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("داده تعارض انبار قابل خواندن نیست.");
+    }
+    if (conflictPayload?.productId !== stockRow.productId) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("کالای انتخاب‌شده با تعارض ثبت‌شده مطابقت ندارد.");
     }
     const pending = localMovements.filter(row => row.state === "pending");
     if (pending.length > 0) {
