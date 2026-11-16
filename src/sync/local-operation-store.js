@@ -738,6 +738,30 @@ export class LocalOperationStore {
     await writeDone;
   }
 
+
+  async getOpenConflicts(tenantId, branchId = null, limit = 100) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim())) throw new TypeError("branchId must be a non-empty string or null.");
+    const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 200)) : 100;
+    const database = await openDatabase();
+    const transaction = database.transaction(CONFLICTS_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const index = transaction.objectStore(CONFLICTS_STORE).index("byTenantStatus");
+    const rows = await new Promise((resolve, reject) => {
+      const matching = [];
+      const request = index.openCursor(IDBKeyRange.only([tenantId, "open"]), "prev");
+      request.onerror = () => reject(request.error || new Error("Could not read unresolved sync conflicts."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || matching.length >= boundedLimit) { resolve(matching); return; }
+        const conflict = cursor.value;
+        if (branchId === null || conflict.branchId == null || conflict.branchId === branchId) matching.push(conflict);
+        cursor.continue();
+      };
+    });
+    await done;
+    return rows;
+  }
   async getCursor(tenantId, branchId = null) {
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readonly");
