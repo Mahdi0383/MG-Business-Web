@@ -354,7 +354,10 @@ def verify_license_code(code):
         raise ValueError("فهرست ماژول‌های لایسنس معتبر نیست.")
     if type(expires_at) is not int or expires_at <= int(time.time()):
         raise ValueError("اعتبار لایسنس پایان یافته یا تاریخ آن معتبر نیست.")
-    return {"license_id":license_id,"modules":sorted(set(modules)),"expires_at":expires_at,
+    modules = set(modules)
+    if "reports" in modules:
+        modules.add("accounting")
+    return {"license_id":license_id,"modules":sorted(modules),"expires_at":expires_at,
             "plan":str(payload.get("plan","custom"))[:80]}
 
 def seed_trial_modules(db, tenant_id):
