@@ -46,7 +46,7 @@ git pull --ff-only
 - `GET /api/health` و `GET /api/setup-status`
 - `POST /api/setup` برای ایجاد اولین کسب‌وکار و حساب مالک (رمز حداقل ۱۲ نویسه)
 - `POST /api/login` و `POST /api/logout`
-- `GET /api/me`، `GET/POST /api/users`، `DELETE /api/users/{id}` و `POST /api/users/{id}/password` برای بازنشانی رمز کاربر و باطل‌کردن نشست‌های قبلی
+- `GET /api/me`، `GET/POST /api/users`، `DELETE /api/users/{id}`، `POST /api/users/{id}/password` و `GET /api/audit-log` برای مشاهده تاریخچه ممیزی برای بازنشانی رمز کاربر و باطل‌کردن نشست‌های قبلی
 - `GET /api/modules`، `GET /api/licenses/status` و `POST /api/licenses/activate`
 - `GET/POST /api/orders` و `DELETE /api/orders/{id}`
 - `GET /api/public/menu` و `POST /api/public/orders` برای منوی عمومی و سفارش QR
