@@ -25,6 +25,9 @@ public sealed class InventoryDomainTests
 
         Assert.Equal(2.125m, movement.Quantity);
         Assert.Equal(14.50m, movement.UnitCost);
+        Assert.Equal(2.125m, movement.SignedQuantity);
+        var sale = new StockMovement(tenantId, Guid.NewGuid(), Guid.NewGuid(), StockMovementType.Sale, 1m, 14.50m);
+        Assert.Equal(-1m, sale.SignedQuantity);
         Assert.Equal("PO-100", movement.Reference);
         Assert.Throws<ArgumentOutOfRangeException>(() => new StockMovement(
             tenantId, Guid.NewGuid(), Guid.NewGuid(), StockMovementType.Receipt, 0m, 1m));
