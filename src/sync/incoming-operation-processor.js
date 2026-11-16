@@ -27,6 +27,8 @@ export class IncomingOperationProcessor {
     let previousSequence = 0;
 
     for (const row of orderedRows) {
+      if (branchId !== null && row.branchId != null && row.branchId !== branchId)
+        throw new Error("Incoming inbox returned an operation outside the active branch.");
       if (!Number.isSafeInteger(row.sequence) || row.sequence <= previousSequence
         || typeof row.operationId !== "string" || !row.operationId
         || typeof row.operationType !== "string" || !row.operationType
