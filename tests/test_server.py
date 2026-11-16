@@ -339,10 +339,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertGreaterEqual(result["amountDue"], 120000)
         self.assertLess(result["amountDue"], 130000)
+        game_charge = result["amountDue"]
         status, result = self.request("GET", "/api/gamenet/devices", token=token)
         self.assertEqual(result["items"][0]["name"], "PC-01 Updated")
         status, result = self.request("GET", "/api/customers", token=token)
-        self.assertEqual(result["items"][0]["balance"], 155000)
+        self.assertEqual(result["items"][0]["balance"], 35000 + game_charge)
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["status"], "ended")
