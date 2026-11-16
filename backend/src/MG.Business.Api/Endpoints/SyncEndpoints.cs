@@ -31,7 +31,7 @@ public static class SyncEndpoints
                 {
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
-            if (request.BranchId.HasValue && request.BranchId != tenant.BranchId)
+            if (request.BranchId != tenant.BranchId)
                 return Results.Forbid();
 
             var enrolledDevice = await db.DevicePresences.AsNoTracking().AnyAsync(
@@ -261,7 +261,8 @@ public static class SyncEndpoints
                             ? operation.BranchId == presence.BranchId
                                 || ((membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)
                                     && operation.BranchId == null)
-                            : (membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)))
+                            : ((membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)
+                                && operation.BranchId == null)))
                 })
                 .ToDictionaryAsync(x => x.DeviceId, x => x.Count, cancellationToken);
 
