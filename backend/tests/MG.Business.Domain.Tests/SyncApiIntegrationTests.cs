@@ -213,6 +213,26 @@ public sealed class SyncApiIntegrationTests
         Assert.True(retryAck!.Accepted.Single().Duplicate);
         Assert.Equal(acknowledgement.Accepted.Single().Sequence, retryAck.Accepted.Single().Sequence);
 
+        var reusedOperationIdPayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = customer.Id, baseVersion = 2, name = "Changed envelope",
+            phone = "09123333333", email = "changed@example.com", address = "Different", notes = "Must reject"
+        });
+        var reusedOperationId = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId, deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.updated", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc, payloadJson = reusedOperationIdPayload,
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, reusedOperationId.StatusCode);
+
         var stalePayload = System.Text.Json.JsonSerializer.Serialize(new
         {
             customerId = customer.Id, baseVersion = 1, name = "Stale",
