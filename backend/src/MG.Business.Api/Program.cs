@@ -84,6 +84,16 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
+if (builder.Configuration.GetValue<bool>("Database:ApplyMigrations"))
+{
+    if (!string.Equals(provider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Committed production migrations currently target PostgreSQL. Do not run them against SQLite.");
+
+    await using var migrationScope = app.Services.CreateAsyncScope();
+    var migrationDb = migrationScope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+    await migrationDb.Database.MigrateAsync();
+}
+
 app.UseExceptionHandler();
 if (app.Environment.IsProduction())
 {
