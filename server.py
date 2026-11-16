@@ -555,33 +555,6 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM inventory_movements m JOIN products p ON p.id=m.product_id
                     WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
-            if path.startswith("/api/customers/") and path.endswith("/payments"):
-                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
-                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"):
-                    return self.send_json(403, {"error": "دسترسی دریافت از مشتری ندارید."})
-                customer_id = path.split("/")[-2]
-                amount, payment_method = data.get("amount"), data.get("paymentMethod","cash")
-                if type(amount) is not int or amount <= 0 or amount > 9007199254740991 or payment_method not in ("cash","card","online"):
-                    return self.send_json(400, {"error": "مبلغ یا روش دریافت معتبر نیست."})
-                db.execute("BEGIN IMMEDIATE")
-                customer = db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone()
-                if not customer:
-                    db.rollback()
-                    return self.send_json(404, {"error": "مشتری پیدا نشد."})
-                balance = db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
-                                     (user["tenant_id"],customer_id)).fetchone()[0]
-                if amount > balance:
-                    db.rollback()
-                    return self.send_json(409, {"error": "مبلغ دریافت از مانده بدهی مشتری بیشتر است."})
-                payment_id, now = secrets.token_urlsafe(18), int(time.time())
-                db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
-                    VALUES(?,?,?,?,?,?,0,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
-                    "payment",payment_id,amount,"دریافت از مشتری",now))
-                post_customer_payment_journal(db,user["tenant_id"],user["id"],payment_id,customer_id,amount,payment_method)
-                audit(db,user["tenant_id"],user["id"],"customer.payment.received","customer",customer_id,{"amount":amount})
-                db.commit()
-                return self.send_json(201, {"ok":True,"paymentId":payment_id,"remainingBalance":balance-amount})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
@@ -1162,6 +1135,33 @@ class Handler(SimpleHTTPRequestHandler):
                       {"productId":product_id,"quantityDelta":delta,"movementType":movement_type})
                 db.commit()
                 return self.send_json(201, {"id": movement_id, "ok": True})
+            if path.startswith("/api/customers/") and path.endswith("/payments"):
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی دریافت از مشتری ندارید."})
+                customer_id = path.split("/")[-2]
+                amount, payment_method = data.get("amount"), data.get("paymentMethod","cash")
+                if type(amount) is not int or amount <= 0 or amount > 9007199254740991 or payment_method not in ("cash","card","online"):
+                    return self.send_json(400, {"error": "مبلغ یا روش دریافت معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                customer = db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    db.rollback()
+                    return self.send_json(404, {"error": "مشتری پیدا نشد."})
+                balance = db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                                     (user["tenant_id"],customer_id)).fetchone()[0]
+                if amount > balance:
+                    db.rollback()
+                    return self.send_json(409, {"error": "مبلغ دریافت از مانده بدهی مشتری بیشتر است."})
+                payment_id, now = secrets.token_urlsafe(18), int(time.time())
+                db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                    VALUES(?,?,?,?,?,?,0,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
+                    "payment",payment_id,amount,"دریافت از مشتری",now))
+                post_customer_payment_journal(db,user["tenant_id"],user["id"],payment_id,customer_id,amount,payment_method)
+                audit(db,user["tenant_id"],user["id"],"customer.payment.received","customer",customer_id,{"amount":amount})
+                db.commit()
+                return self.send_json(201, {"ok":True,"paymentId":payment_id,"remainingBalance":balance-amount})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
