@@ -25,3 +25,7 @@ test('calculates income and expense totals without mutating input', () => {
   assert.deepEqual(core.totals(rows), { income: 125000, expense: 25000 });
   assert.equal(rows.length, 2);
 });
+
+test('returns zeroed totals for an empty ledger', () => {
+  assert.deepEqual(core.totals([]), { income: 0, expense: 0 });
+});
