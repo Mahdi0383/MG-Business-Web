@@ -30,7 +30,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [x] Per-device, per-branch server acknowledgement watermarks; tenant-wide manager acknowledgement remains separately scoped.
 - [x] Atomic IndexedDB customer creation: local customer projection and branch-originated outbox command commit in one transaction; server-side customer creation replay and transactional inbound projection on other devices are implemented.
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
-- [x] Transactional inbound customer creation projection with atomic inbox acknowledgement and durable duplicate-conflict records; customer updates remain fail-closed until server-side update handling is implemented.
+- [x] Transactional inbound customer create/update projection with atomic inbox acknowledgement, origin-operation echo suppression and durable stale-version conflict records; browser IndexedDB command handling has separate verification requirements.
 - [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
 - [x] Persist branch-scoped unresolved incoming conflicts and surface their open count in the workspace sync status; automatic resolution remains intentionally unavailable.
 - [x] Customer workspace falls back to the durable local customer projection on fetch/network failure, including online-but-unreachable API conditions; HTTP/API errors remain visible rather than being masked.
@@ -133,4 +133,13 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Customer API read/create responses now expose the version. Customer updates require a positive baseVersion; successful updates advance the version and stale writes return HTTP 409 without overwriting the newer record.
 - Added SQLite-backed API integration coverage for version advancement and stale-write rejection, plus a domain version progression test.
 - Offline customer update commands remain fail-closed: server journal replay, durable idempotency outcomes, atomic inbound projection, origin-device echo handling and conflict lifecycle are still required before enabling offline edits.
+
+### Customer update sync vertical slice — 2026-11-16
+
+- Added authoritative server replay for `customer.profile.updated`: schema/branch validation, tenant-scoped customer lookup, required positive baseVersion, aggregate version increment and journal insertion in the same EF SaveChanges transaction.
+- Exact retries reuse the existing operation ID and durable journal acknowledgement without applying the customer mutation twice. Reusing an operation ID with a changed envelope remains rejected by the existing idempotency gate.
+- A stale customer baseVersion is rejected with HTTP 409; the business mutation and journal insert are not committed.
+- Added browser-side atomic customer update + outbox enqueue, version-aware inbound projection, durable conflict classification and origin-device echo suppression. Acknowledgement advances the local confirmed version.
+- Added API/SQLite tests for accepted update, duplicate retry and stale update rejection; added classifier tests for matching versions, stale versions and origin echoes.
+- Remaining verification before treating the browser slice as production-ready: IndexedDB crash/restart integration tests, two-browser end-to-end tests, and PostgreSQL migration/concurrency parity.
 
