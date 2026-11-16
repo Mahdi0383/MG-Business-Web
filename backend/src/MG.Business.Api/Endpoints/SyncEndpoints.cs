@@ -95,6 +95,7 @@ public static class SyncEndpoints
                 if (existing.TryGetValue(item.Request.OperationId, out var prior))
                 {
                     if (!string.Equals(prior.PayloadSha256, item.Hash, StringComparison.Ordinal)
+                        || prior.ActorId != actorId
                         || prior.DeviceId != item.Request.DeviceId
                         || prior.BranchId != item.Request.BranchId
                         || prior.OperationType != item.Request.OperationType
@@ -148,7 +149,7 @@ public static class SyncEndpoints
                 .Take(take)
                 .Select(x => new
                 {
-                    x.Sequence, x.OperationId, x.DeviceId, x.BranchId,
+                    x.Sequence, x.OperationId, x.ActorId, x.DeviceId, x.BranchId,
                     x.OperationType, x.SchemaVersion, x.AuthorityEpoch,
                     x.OccurredAtUtc, x.ReceivedAtUtc, x.PayloadJson, x.PayloadSha256
                 })
