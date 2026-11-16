@@ -433,3 +433,84 @@ test("persists a duplicate customer creation as a conflict and stops later repla
   assert.equal(conflicts[0].branchId, "branch-a");
   assert.deepEqual(applied, []);
 });
+
+
+test("applies a version-matched incoming customer deactivation through the transactional adapter", async () => {
+  const payload = { customerId: "customer-remote-2", baseVersion: 5 };
+  const payloadJson = JSON.stringify(payload);
+  const applied = [];
+  const conflicts = [];
+  const operation = {
+    tenantId: "tenant-1",
+    branchId: "branch-a",
+    sequence: 10,
+    operationId: "remote-deactivate-1",
+    operationType: "customer.profile.deactivated",
+    schemaVersion: 1,
+    payloadJson,
+    payloadSha256: payloadHash(payloadJson)
+  };
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return [operation]; } },
+    adapter: {
+      async readConflictState() {
+        return { version: 5, isActive: true, lastOperationId: "local-update-5" };
+      },
+      async recordConflict(value) { conflicts.push(value); },
+      async applyAndAcknowledge(value) { applied.push(value); }
+    },
+    classify: classifyIncomingOperation
+  });
+
+  const result = await processor.processBatch("tenant-1", 10, "branch-a", false);
+
+  assert.equal(result.applied, 1);
+  assert.equal(result.blockedByConflict, false);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].operation.payload.customerId, "customer-remote-2");
+  assert.equal(applied[0].decision.reason, "customer-version-matches");
+  assert.deepEqual(conflicts, []);
+});
+
+test("blocks stale incoming customer deactivation and preserves later journal ordering", async () => {
+  const payload = { customerId: "customer-remote-3", baseVersion: 4 };
+  const payloadJson = JSON.stringify(payload);
+  const laterPayloadJson = JSON.stringify({
+    customerId: "customer-remote-4", code: "C-4", name: "Must wait", baseVersion: 0
+  });
+  const rows = [
+    {
+      tenantId: "tenant-1", branchId: "branch-a", sequence: 11,
+      operationId: "stale-deactivate-1", operationType: "customer.profile.deactivated",
+      schemaVersion: 1, payloadJson, payloadSha256: payloadHash(payloadJson)
+    },
+    {
+      tenantId: "tenant-1", branchId: "branch-a", sequence: 12,
+      operationId: "later-create-1", operationType: "customer.profile.created",
+      schemaVersion: 1, payloadJson: laterPayloadJson, payloadSha256: payloadHash(laterPayloadJson)
+    }
+  ];
+  const applied = [];
+  const conflicts = [];
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return rows; } },
+    adapter: {
+      async readConflictState() {
+        return { version: 6, isActive: true, lastOperationId: "newer-local-update" };
+      },
+      async recordConflict(value) { conflicts.push(value); },
+      async applyAndAcknowledge(value) { applied.push(value); }
+    },
+    classify: classifyIncomingOperation
+  });
+
+  const result = await processor.processBatch("tenant-1", 10, "branch-a", false);
+
+  assert.equal(result.applied, 0);
+  assert.equal(result.blockedByConflict, true);
+  assert.equal(result.processed, 1);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].sequence, 11);
+  assert.equal(conflicts[0].reason, "stale-customer-base-version");
+  assert.deepEqual(applied, []);
+});
