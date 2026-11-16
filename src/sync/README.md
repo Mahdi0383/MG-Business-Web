@@ -33,7 +33,7 @@ The current server pull endpoint exposes an append-only operation stream. Applyi
 
 `conflict-policy.js` provides a deliberately fail-closed classifier for incoming operation types:
 - accounting, sales, payment, inventory, purchase, cafe-order and game-session operations are routed to manual review;
-- customer profile/contact updates are eligible for application only when their explicit base version matches the current version;
+- customer creation is eligible for projection only when its base version is zero and the customer ID/code is not already owned by another operation; customer profile/contact updates remain in manual review until authoritative server update handling exists;
 - unknown operation types and missing version preconditions are never auto-applied.
 
 This classifier is an isolated policy primitive with unit tests. It is not yet wired to an inbound projection applier or business forms, so no incoming business operation is automatically applied by this change.
@@ -48,7 +48,7 @@ This is the first completed offline-first business workflow, not full offline re
 
 `incoming-operation-processor.js` reads a bounded ordered inbox batch, obtains the current conflict state, invokes the fail-closed classifier, and routes eligible commands through an adapter contract. The adapter's `applyAndAcknowledge` method is required to atomically commit the local projection mutation and inbox acknowledgement. Conflicts are recorded separately and are never silently discarded.
 
-The processor validates and sorts each batch by journal sequence and stops at the first unresolved conflict so later commands cannot be applied across a missing prerequisite. Conflict recording must be idempotent by tenant and sequence. The processor is infrastructure scaffolding only: no production business projection adapter is registered yet, so the current application does not automatically apply inbound sales, accounting, inventory, cafe or game-net commands. The adapter contract must be implemented against the chosen durable local database before enabling this in production.
+The processor validates and sorts each batch by journal sequence and stops at the first unresolved conflict so later commands cannot be applied across a missing prerequisite. Conflict records are durable and keyed by tenant and journal sequence. The IndexedDB adapter currently applies only `customer.profile.created`, atomically committing the local customer projection and inbox acknowledgement. Unknown commands, customer updates, sales, accounting, inventory, cafe and game-net commands remain fail-closed in manual review; no financial or stock projection is automatically applied.
 
 Pending-operation dashboard counts use the same authenticated device boundary as push selection. Other accounts' queued rows remain stored but are not included in the active actor's pending count.
 
