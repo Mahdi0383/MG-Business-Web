@@ -20,9 +20,19 @@ export class IncomingOperationProcessor {
     if (!tenantId) throw new TypeError("tenantId is required.");
     const boundedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 100, 200));
     const rows = await this.store.getUnappliedIncoming(tenantId, boundedLimit);
+    const orderedRows = [...rows].sort((left, right) => left.sequence - right.sequence);
     const results = [];
+    let previousSequence = 0;
 
-    for (const row of rows) {
+    for (const row of orderedRows) {
+      if (!Number.isSafeInteger(row.sequence) || row.sequence <= previousSequence
+        || typeof row.operationId !== "string" || !row.operationId
+        || typeof row.operationType !== "string" || !row.operationType
+        || !Number.isInteger(row.schemaVersion) || row.schemaVersion < 1
+        || typeof row.payloadJson !== "string")
+        throw new TypeError("Incoming inbox contains an invalid or non-monotonic operation envelope.");
+      previousSequence = row.sequence;
+
       const currentState = await this.adapter.readConflictState(tenantId, row);
       const decision = this.classify({
         ...row,
@@ -39,7 +49,9 @@ export class IncomingOperationProcessor {
           details: decision
         });
         results.push({ sequence: row.sequence, ...decision });
-        continue;
+        // A later operation may depend on this unresolved state. Do not apply
+        // subsequent journal entries out of order until the conflict is resolved.
+        break;
       }
 
       // Contract: projection mutation + durable inbox acknowledgement + conflict
