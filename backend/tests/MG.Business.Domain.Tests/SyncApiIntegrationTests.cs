@@ -1570,7 +1570,7 @@ public sealed class SyncApiIntegrationTests
 
 
     [Fact]
-    public async Task SignedAuthorityLeaseIsVerifiableAndOnlyOneDeviceCanHoldBranchAuthority()
+    public async Task SignedAuthorityLeaseIsVerifiableAndFencesAllBranchDevicesAfterEpochChange()
     {
         using var serverSigningKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var serverPrivateKey = Convert.ToBase64String(serverSigningKey.ExportPkcs8PrivateKey());
@@ -1712,7 +1712,7 @@ public sealed class SyncApiIntegrationTests
         }
 
         var payloadJson = System.Text.Json.JsonSerializer.Serialize(new { testValue = "fenced" });
-        async Task<HttpStatusCode> PushAtCurrentEpoch((Guid DeviceId, ECDsa Key, string Credential) device)
+        async Task<HttpStatusCode> PushAtEpoch((Guid DeviceId, ECDsa Key, string Credential) device, long epoch)
         {
             var operationBody = System.Text.Json.JsonSerializer.Serialize(new
             {
@@ -1725,7 +1725,7 @@ public sealed class SyncApiIntegrationTests
                         branchId = tenant.BranchId,
                         operationType = "test.authority-lease",
                         schemaVersion = 1,
-                        authorityEpoch = lease.Epoch,
+                        authorityEpoch = epoch,
                         occurredAtUtc = DateTimeOffset.UtcNow,
                         payloadJson,
                         payloadSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson)))
@@ -1736,8 +1736,8 @@ public sealed class SyncApiIntegrationTests
             return pushed.StatusCode;
         }
 
-        Assert.Equal(HttpStatusCode.Accepted, await PushAtCurrentEpoch(first));
-        Assert.Equal(HttpStatusCode.Conflict, await PushAtCurrentEpoch(second));
+        Assert.Equal(HttpStatusCode.Accepted, await PushAtEpoch(first, lease.Epoch));
+        Assert.Equal(HttpStatusCode.Accepted, await PushAtEpoch(second, lease.Epoch));
 
         using var zeroEpoch = await SendSigned("POST", "/api/sync/operations", first,
             System.Text.Json.JsonSerializer.Serialize(new
@@ -1762,6 +1762,24 @@ public sealed class SyncApiIntegrationTests
 
         using var competingAcquire = await SendSigned("POST", "/api/sync/authority-lease", second, "{}");
         Assert.Equal(HttpStatusCode.Conflict, competingAcquire.StatusCode);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            var persistedLease = await db.DeviceAuthorityLeases.SingleAsync(
+                x => x.TenantId == tenant.TenantId && x.ScopeKey == tenant.BranchId.ToString("N"));
+            persistedLease.Revoke(DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+        }
+
+        using var reacquired = await SendSigned("POST", "/api/sync/authority-lease", second, "{}");
+        Assert.Equal(HttpStatusCode.OK, reacquired.StatusCode);
+        var nextLease = await reacquired.Content.ReadFromJsonAsync<AuthorityLeaseResponse>();
+        Assert.NotNull(nextLease);
+        Assert.Equal(2, nextLease!.Epoch);
+        Assert.Equal(second.DeviceId, nextLease.DeviceId);
+        Assert.Equal(HttpStatusCode.Conflict, await PushAtEpoch(first, lease.Epoch));
+        Assert.Equal(HttpStatusCode.Accepted, await PushAtEpoch(second, nextLease.Epoch));
 
         first.Key.Dispose();
         second.Key.Dispose();
