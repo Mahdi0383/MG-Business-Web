@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible } from "./local-operation-store.js";
+import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope } from "./local-operation-store.js";
 
 
 
@@ -267,4 +267,34 @@ test("pending outbox visibility matches both device and branch authority", () =>
   assert.equal(isPendingOperationVisible(tenantWide, "branch-a", true, "device-a"), true);
   assert.equal(isPendingOperationVisible(tenantWide, null, true, "device-a"), true);
   assert.equal(isPendingOperationVisible(tenantWide, null, false, "device-a"), false);
+});
+
+test("incoming sequence reuse requires the complete immutable journal envelope to match", () => {
+  const envelope = {
+    tenantId: "tenant-1",
+    sequence: 42,
+    operationId: "operation-42",
+    actorId: "actor-1",
+    deviceId: "device-1",
+    branchId: "branch-a",
+    operationType: "customer.profile.updated",
+    schemaVersion: 1,
+    authorityEpoch: 0,
+    occurredAtUtc: "2026-11-16T10:00:00.000Z",
+    receivedAtUtc: "2026-11-16T10:00:01.000Z",
+    payloadJson: "{\\"name\\":\\"MG\\"}",
+    payloadSha256: "b618f9a65827379fd2f866d0ca039122397e99c4d3f7d37052083c4095339f8a"
+  };
+  assert.equal(isSameIncomingEnvelope(envelope, { ...envelope }), true);
+  for (const [field, value] of [
+    ["actorId", "actor-2"],
+    ["deviceId", "device-2"],
+    ["authorityEpoch", 1],
+    ["occurredAtUtc", "2026-11-16T10:01:00.000Z"],
+    ["receivedAtUtc", "2026-11-16T10:01:01.000Z"],
+    ["payloadJson", "{}"]
+  ]) {
+    assert.equal(isSameIncomingEnvelope(envelope, { ...envelope, [field]: value }), false, field);
+  }
+  assert.equal(isSameIncomingEnvelope(envelope, { ...envelope, actorId: undefined }), false);
 });
