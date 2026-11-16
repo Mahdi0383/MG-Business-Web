@@ -1,5 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
+if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 let menu=[],cart=new Map();
 const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>new Intl.NumberFormat('fa-IR').format(value)+' تومان';
