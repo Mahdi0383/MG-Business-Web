@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
+using System.Net;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +17,7 @@ builder.Services.AddProblemDetails();
  builder.Services.AddHealthChecks();
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var trustedProxyAddresses = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
  builder.Services.AddCors(options => options.AddPolicy("frontend", policy =>
 {
     if (allowedOrigins.Length > 0)
@@ -28,6 +31,13 @@ if (!string.IsNullOrWhiteSpace(dataProtectionKeysDirectory))
     Directory.CreateDirectory(dataProtectionKeysDirectory);
     dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysDirectory));
 }
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    foreach (var address in trustedProxyAddresses)
+        options.KnownProxies.Add(IPAddress.Parse(address));
+});
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -66,6 +76,9 @@ if (builder.Environment.IsProduction())
         || !string.IsNullOrEmpty(parsedOrigin.Query)
         || !string.IsNullOrEmpty(parsedOrigin.Fragment)))
         throw new InvalidOperationException("Production deployments must configure exact HTTPS frontend origins in Cors:AllowedOrigins.");
+
+    if (trustedProxyAddresses.Length == 0 || trustedProxyAddresses.Any(address => !IPAddress.TryParse(address, out _)))
+        throw new InvalidOperationException("Production deployments must configure the exact trusted reverse-proxy IP addresses in ForwardedHeaders:KnownProxies.");
 }
 
 builder.Services.AddDbContext<BusinessDbContext>(options =>
@@ -123,6 +136,7 @@ else if (app.Environment.IsDevelopment()
 }
 
 app.UseExceptionHandler();
+app.UseForwardedHeaders();
 if (app.Environment.IsProduction())
 {
     app.UseHsts();
