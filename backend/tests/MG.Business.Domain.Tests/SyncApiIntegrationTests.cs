@@ -2046,12 +2046,12 @@ public sealed class SyncApiIntegrationTests
         Assert.NotNull(rotated);
         Assert.Equal(2, rotated!.KeyVersion);
 
-        async Task<HttpResponseMessage> SendSignedHeartbeat(string credential, int keyVersion)
+        async Task<HttpResponseMessage> SendSignedHeartbeat(string credential, int keyVersion, Guid? bodyDeviceId = null)
         {
             const string path = "/api/sync/heartbeat";
             var body = System.Text.Json.JsonSerializer.Serialize(new
             {
-                deviceId, deviceName = "Rotated Device", platform = "Test", clientVersion = "1.0"
+                deviceId = bodyDeviceId ?? deviceId, deviceName = "Rotated Device", platform = "Test", clientVersion = "1.0"
             });
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var nonce = Guid.NewGuid();
@@ -2079,6 +2079,9 @@ public sealed class SyncApiIntegrationTests
 
         using (var validHeartbeat = await SendSignedHeartbeat(rotated!.Credential, rotated.KeyVersion))
             Assert.Equal(HttpStatusCode.OK, validHeartbeat.StatusCode);
+        using (var mismatchedDeviceHeartbeat = await SendSignedHeartbeat(
+            rotated.Credential, rotated.KeyVersion, Guid.NewGuid()))
+            Assert.Equal(HttpStatusCode.Forbidden, mismatchedDeviceHeartbeat.StatusCode);
 
         var revokeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/revoke", new { deviceId });
         Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
