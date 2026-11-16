@@ -45,7 +45,7 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [stockRows, setStockRows] = useState([]);
@@ -467,7 +467,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
     <main className="mg-server-main">
       <header className="mg-server-topbar">
         <div><small>MG BUSINESS PLATFORM / {tenant.slug}</small><h1>{heading}</h1></div>
-        <div className={`mg-server-status ${syncClass}`} title="وضعیت صف عملیات محلی"><i /> {syncLabel} · صف محلی: {count(pendingOperations)}</div>
+        <div className={`mg-server-status ${syncClass}`} title="وضعیت صف عملیات محلی"><i /> {syncLabel} · صف ارسال: {count(pendingOperations)} · دریافتیِ بررسی‌نشده: {count(incomingOperations)}</div>
       </header>
 
       <section className="mg-server-content">
@@ -481,7 +481,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
             <div><small>تعداد فاکتور</small><b>{canViewSales ? count(sales.length) : "—"}</b></div>
             <div><small>سانس فعال گیم‌نت</small><b>{canViewGameNet ? count(activeSessions.length) : "—"}</b></div>
           </div>
-          <div className="mg-server-panel"><h2>اتصال واقعی برقرار است</h2><p>این صفحه اطلاعات را از API و پایگاه داده کسب‌وکار دریافت می‌کند؛ برخلاف پیش‌نمایش، داده‌ها در مرورگر ذخیره نمی‌شوند.</p></div>
+          <div className="mg-server-panel"><h2>اتصال واقعی برقرار است</h2><p>این صفحه اطلاعات را از API و پایگاه داده کسب‌وکار دریافت می‌کند. صف عملیات خروجی در مرورگر پایدار است و رویدادهای دریافتی نیز تا زمان وجود پردازشگر دامنه در صندوق ورودی محلی نگهداری می‌شوند.</p>{incomingOperations > 0 && <p className="mg-server-sync-warning" role="status">{count(incomingOperations)} رویداد از دستگاه‌های دیگر دریافت شده و هنوز به مدل‌های عملیاتی این دستگاه اعمال نشده است.</p>}</div>
         </>}
 
         {page === "products" && <section className="mg-server-panel">
