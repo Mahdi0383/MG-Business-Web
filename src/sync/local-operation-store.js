@@ -189,14 +189,20 @@ export function normalizeLocalCustomer(input) {
 }
 
 export class LocalOperationStore {
-  async getDeviceId(actorId) {
+  async getDeviceId(actorId, tenantId = null, branchId = null) {
     if (typeof actorId !== "string" || !actorId.trim())
       throw new TypeError("actorId is required to identify a registered browser device.");
+    if (tenantId !== null && (typeof tenantId !== "string" || !tenantId.trim()))
+      throw new TypeError("tenantId must be a non-empty string or null.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readwrite");
     const done = transactionDone(transaction);
     const store = transaction.objectStore(META_STORE);
-    const key = `device-id:${actorId}`;
+    const key = tenantId
+      ? `device-id:${tenantId}:${branchId || "tenant-wide"}:${actorId}`
+      : `device-id:${actorId}`;
     const existing = await requestResult(store.get(key));
     if (existing?.value) {
       await done;
@@ -215,7 +221,7 @@ export class LocalOperationStore {
       throw new TypeError("actorId is required to store an authority lease.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
-    const deviceId = await this.getDeviceId(actorId);
+    const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
     if (!lease || lease.tenantId !== tenantId || (lease.branchId || null) !== (branchId || null)
       || lease.deviceId !== deviceId || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
       || typeof lease.signatureBase64 !== "string" || typeof lease.publicKeySpkiBase64 !== "string"
@@ -319,7 +325,7 @@ export class LocalOperationStore {
 
     const operation = {
       operationId: crypto.randomUUID(),
-      deviceId: await this.getDeviceId(actorId),
+      deviceId: await this.getDeviceId(actorId, tenantId, branchId),
       tenantId,
       branchId,
       operationType: operationType.trim(),
