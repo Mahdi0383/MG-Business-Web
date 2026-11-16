@@ -308,7 +308,36 @@ public static class SyncEndpoints
             }
             catch (DbUpdateException)
             {
-                return Results.Conflict(new { message = "A concurrent sync request used an operation ID. Retry the batch; the endpoint is idempotent." });
+                // A concurrent request may have committed the same idempotent operations first.
+                // Detach failed inserts, reload the winners, and acknowledge only exact matches.
+                foreach (var operation in inserted)
+                    db.Entry(operation).State = EntityState.Detached;
+
+                var concurrent = await db.SyncOperations.AsNoTracking()
+                    .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
+                    .ToDictionaryAsync(x => x.OperationId, cancellationToken);
+
+                foreach (var item in prepared)
+                {
+                    if (!concurrent.TryGetValue(item.Request.OperationId, out var prior))
+                        return Results.Conflict(new { operationId = item.Request.OperationId, message = "The batch conflicted with another write. Retry with the same operation IDs." });
+
+                    if (!string.Equals(prior.PayloadSha256, item.Hash, StringComparison.Ordinal)
+                        || prior.ActorId != actorId
+                        || prior.DeviceId != item.Request.DeviceId
+                        || prior.BranchId != item.Request.BranchId
+                        || prior.OperationType != item.Request.OperationType
+                        || prior.SchemaVersion != item.Request.SchemaVersion
+                        || prior.AuthorityEpoch != item.Request.AuthorityEpoch
+                        || prior.OccurredAtUtc != item.Request.OccurredAtUtc)
+                        return Results.Conflict(new { operationId = item.Request.OperationId, message = "Operation ID was concurrently committed with different content or ownership." });
+
+                    acknowledgements[item.Request.OperationId] =
+                        new SyncOperationAck(prior.OperationId, prior.Sequence, true);
+                }
+
+                var retried = prepared.Select(x => acknowledgements[x.Request.OperationId]).ToArray();
+                return Results.Accepted("/api/sync/operations", new { accepted = retried });
             }
 
             foreach (var operation in inserted)
