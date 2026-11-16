@@ -272,6 +272,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasIndex(x => new { x.TenantId, x.OperationId }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.Sequence });
             entity.HasIndex(x => new { x.TenantId, x.DeviceId, x.Sequence });
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
         });
 
