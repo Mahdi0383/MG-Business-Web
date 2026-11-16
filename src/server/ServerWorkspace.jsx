@@ -89,7 +89,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     if (id === "cafe") return canViewCafe;
     if (id === "gamenet") return canViewGameNet;
     if (id === "devices") return ["Owner", "Manager"].includes(tenant.role);
-    if (id === "syncConflicts") return ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "GameOperator", "KitchenStaff", "InventoryManager"].includes(tenant.role);
+    if (id === "syncConflicts") return ["Owner", "Manager", "Accountant"].includes(tenant.role);
     return true;
   });
 
