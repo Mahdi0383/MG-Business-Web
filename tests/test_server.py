@@ -271,6 +271,15 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/backup/restore", snapshot, token)
         self.assertEqual(status, 200)
         self.assertGreater(result["restoredRows"], 0)
+        db = server.connect()
+        try:
+            journal_id = db.execute("SELECT id FROM journal_entries LIMIT 1").fetchone()[0]
+            with self.assertRaises(Exception):
+                db.execute("UPDATE journal_entries SET memo='tampered-after-restore' WHERE id=?", (journal_id,))
+                db.commit()
+            db.rollback()
+        finally:
+            db.close()
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
         self.assertEqual(status, 200)
         self.assertGreaterEqual(len(result["items"]), 2)
