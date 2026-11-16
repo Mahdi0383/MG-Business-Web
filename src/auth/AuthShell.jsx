@@ -289,7 +289,8 @@ function AuthShell({ apiBaseUrl }) {
           const devices = await client.get("/api/sync/devices");
           if (active) {
             setDeviceStatuses(devices || []);
-            setDisconnectedDevices((devices || []).filter(device => !device.isOnline));\n          }
+            setDisconnectedDevices((devices || []).filter(device => !device.isOnline));
+          }
         }
       } catch {
         // A missed heartbeat is detected by the next successful manager poll.
