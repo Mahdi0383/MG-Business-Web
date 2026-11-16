@@ -272,6 +272,74 @@ export class LocalOperationStore {
     return localCustomer;
   }
 
+  async updateCustomer({ tenantId, branchId, actorId, customerId, customer }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (typeof branchId !== "string" || !branchId.trim()) throw new TypeError("branchId is required for a branch-originated customer command.");
+    if (typeof actorId !== "string" || !actorId.trim()) throw new TypeError("actorId is required.");
+    if (typeof customerId !== "string" || !customerId.trim()) throw new TypeError("customerId is required.");
+
+    const database = await openDatabase();
+    const readTransaction = database.transaction(CUSTOMERS_STORE, "readonly");
+    const readDone = transactionDone(readTransaction);
+    const initial = await requestResult(readTransaction.objectStore(CUSTOMERS_STORE).get([tenantId, customerId]));
+    await readDone;
+    if (!initial) throw new Error("Customer does not exist in the local projection.");
+    if (initial.syncStatus === "pending") throw new Error("Customer already has a pending update; synchronize or reconcile it first.");
+    if (!Number.isSafeInteger(initial.version) || initial.version < 1)
+      throw new Error("Customer projection has no valid server-confirmed version.");
+
+    const normalized = normalizeLocalCustomer({ ...initial, ...customer });
+    const baseVersion = initial.version;
+    const payload = {
+      customerId, baseVersion, name: normalized.name,
+      phone: normalized.phone, email: normalized.email,
+      address: normalized.address, notes: normalized.notes
+    };
+    const now = new Date().toISOString();
+    const payloadJson = JSON.stringify(payload);
+    const operation = {
+      operationId: crypto.randomUUID(),
+      deviceId: await this.getDeviceId(actorId),
+      tenantId, branchId,
+      operationType: "customer.profile.updated",
+      schemaVersion: 1, authorityEpoch: 0,
+      occurredAtUtc: now,
+      payloadJson,
+      payloadSha256: await sha256(payloadJson),
+      state: "pending", attempts: 0,
+      createdAtUtc: now, acknowledgedAtUtc: null, serverSequence: null
+    };
+
+    const transaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    const operations = transaction.objectStore(OPERATIONS_STORE);
+    const customers = transaction.objectStore(CUSTOMERS_STORE);
+    const currentRequest = customers.get([tenantId, customerId]);
+    let integrityError = null;
+    currentRequest.onsuccess = () => {
+      const current = currentRequest.result;
+      if (!current || current.version !== baseVersion || current.syncStatus === "pending") {
+        integrityError = new Error("Customer changed while preparing the offline update; reload and retry.");
+        transaction.abort();
+        return;
+      }
+      customers.put({
+        ...current, ...normalized,
+        version: baseVersion,
+        syncStatus: "pending",
+        lastOperationId: operation.operationId,
+        pendingBaseVersion: baseVersion,
+        updatedAtUtc: now
+      });
+      operations.add(operation);
+    };
+    try { await done; }
+    catch (error) { if (integrityError) throw integrityError; throw error; }
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("mg-customer-sync-updated"));
+    return { ...initial, ...normalized, version: baseVersion, syncStatus: "pending", lastOperationId: operation.operationId };
+  }
+
   async getCustomers(tenantId, limit = 500) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 1000)) : 500;
