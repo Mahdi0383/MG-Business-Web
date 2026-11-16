@@ -210,6 +210,8 @@ public sealed class SalesApiIntegrationTests
             });
         }
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-overpayment-61");
         using var overpayment = await CreateInvalidSale(11m, "OVERPAY");
         using var unassignedPartial = await CreateInvalidSale(5m, "PARTIAL");
         Assert.Equal(HttpStatusCode.BadRequest, overpayment.StatusCode);
@@ -398,6 +400,8 @@ public sealed class SalesApiIntegrationTests
             unitCost = 2m,
             reference = "INVALID-ZERO"
         });
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "invalid-precision");
         using var excessivePrecision = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product.Id,
@@ -526,6 +530,7 @@ public sealed class SalesApiIntegrationTests
         var sale = await saleResponse.Content.ReadFromJsonAsync<SaleResponse>();
         Assert.Equal(100m, sale!.BalanceDue);
 
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "invalid-zero");
         using var zeroPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 0m, paymentMethod = PaymentMethod.Cash,
@@ -538,12 +543,16 @@ public sealed class SalesApiIntegrationTests
             paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
             paymentReference = "PRECISION"
         });
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "invalid-on-account");
         using var onAccountReceipt = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 10m, paymentMethod = PaymentMethod.OnAccount,
             paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
             paymentReference = "ON-ACCOUNT"
         });
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "invalid-foreign-account");
         using var foreignCashAccount = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 10m, paymentMethod = PaymentMethod.Cash,
@@ -555,6 +564,8 @@ public sealed class SalesApiIntegrationTests
         Assert.Equal(HttpStatusCode.BadRequest, onAccountReceipt.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, foreignCashAccount.StatusCode);
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-first-40");
         var firstPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 40m, paymentMethod = PaymentMethod.Cash,
@@ -562,6 +573,25 @@ public sealed class SalesApiIntegrationTests
             paymentReference = "PAY-40"
         });
         Assert.Equal(HttpStatusCode.OK, firstPayment.StatusCode);
+        var firstJson = await firstPayment.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        var firstPaymentId = firstJson.GetProperty("paymentId").GetGuid();
+        var firstReplay = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 40m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "PAY-40"
+        });
+        Assert.Equal(HttpStatusCode.OK, firstReplay.StatusCode);
+        var replayJson = await firstReplay.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.True(replayJson.GetProperty("replayed").GetBoolean());
+        Assert.Equal(firstPaymentId, replayJson.GetProperty("paymentId").GetGuid());
+        var sameKeyDifferentAmount = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 39m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "PAY-40"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, sameKeyDifferentAmount.StatusCode);
         var first = await firstPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
         Assert.Equal(40m, first!.PaidAmount);
         Assert.Equal(60m, first.BalanceDue);
@@ -574,6 +604,8 @@ public sealed class SalesApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Conflict, overpayment.StatusCode);
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-final-60");
         var finalPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 60m, paymentMethod = PaymentMethod.Card,
@@ -645,7 +677,7 @@ public sealed class SalesApiIntegrationTests
     private sealed record AccountResponse(Guid Id, string Code, string Name, string Type, bool IsActive);
     private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
     private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
-    private sealed record PaymentBalanceResponse(Guid Id, string Number, decimal Total, decimal PaidAmount, decimal BalanceDue);
+    private sealed record PaymentBalanceResponse(Guid Id, string Number, decimal Total, decimal PaidAmount, decimal BalanceDue, Guid PaymentId, bool Replayed);
     private sealed record SalesPaymentResponse(Guid Id, decimal Amount, string Method, string? Reference, DateTimeOffset CreatedAtUtc);
     private sealed record SaleResponse(Guid Id, string Number, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, decimal CostOfGoodsSold, decimal GrossProfit, string Status, DateTimeOffset CreatedAtUtc);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
