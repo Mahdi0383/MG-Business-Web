@@ -1,7 +1,7 @@
 # MG Business — Delivery roadmap
 
 Status: Working plan; estimates are planning ranges, not delivery promises.  
-Date: 2026-11-16
+Date: 2026-11-17
 
 ## Product outcome
 
@@ -20,7 +20,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [ ] Separate creator identity realm and Control Center.
 - [ ] Creator MFA and privileged-action audit.
 - [ ] Customer owner bootstrap, password reset, MFA and session/device revocation.
-- [ ] One-time CCS claim, recovery/rebinding and device enrollment.
+- [ ] One-time CCS claim, recovery/rebinding and cryptographic device enrollment. The WebCrypto P-256 challenge/signature protocol and mandatory negative-test matrix are specified in `offline-first-ha-protocol.md`; implementation remains a release blocker.
 - [ ] Signed subscription/module entitlements and 30-day maximum offline validation grace.
 - [ ] Suspension/expiry that preserves data and provides recovery/export paths.
 
@@ -87,6 +87,13 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Added a regression integration test that acknowledges a later operation in Branch A, switches the same device to Branch B, and verifies Branch B's earlier operation remains pending.
 - Hardened sales settlement validation so overpayments and partial payments without a customer return validation errors rather than surfacing domain exceptions as server errors.
 - Added regression tests for the above. Customer creation is now the first real local-first business vertical slice across local projection, outbox, authoritative server replay and inbound projection. Sales, accounting, inventory, café and game-net workflows are not yet offline-ready.
+
+## Latest delivery increment — 2026-11-17
+
+- Documented the cryptographic device-enrollment contract: non-extractable browser ECDSA P-256 keys, one-time challenge/proof, tenant/branch/actor binding, signed request transcripts, nonce/timestamp replay protection, key rotation/revocation/recovery and required negative tests.
+- Reaffirmed the production gate: browser-profile device IDs remain untrusted; cryptographic enrollment and verification are not implemented. No sync write path is represented as production-secure.
+- Verified the current code head's Web CI and SQLite backend CI both completed successfully. Documentation-only updates do not substitute for code or security validation.
+- PR #3 remains open and Draft. Production financial use, merge and deployment remain blocked until all release gates have implementation and test evidence.
 
 ## Planning estimate
 
