@@ -634,7 +634,13 @@ class Handler(SimpleHTTPRequestHandler):
                     line=qty*cost
                     if line>9007199254740991 or subtotal+line>9007199254740991: db.rollback(); return self.send_json(400,{"error":"مبلغ فاکتور بیش از حد مجاز است."})
                     subtotal+=line; prepared.append((product,qty,cost,line))
-                if subtotal<=0 or discount>=subtotal: db.rollback(); return self.send_json(400,{"error":"تخفیف باید از مبلغ فاکتور کمتر باشد."})
+                total_units=sum(row[1] for row in prepared)
+                if subtotal<=0 or discount>=subtotal or discount%total_units:
+                    db.rollback(); return self.send_json(400,{"error":"تخفیف باید کمتر از مبلغ فاکتور و قابل تقسیم بر تعداد کل واحدها باشد."})
+                discount_per_unit=discount//total_units
+                if any(row[2]<discount_per_unit for row in prepared):
+                    db.rollback(); return self.send_json(400,{"error":"تخفیف واحد نمی‌تواند از بهای خرید هیچ کالا بیشتر باشد."})
+                prepared=[(product,qty,cost-discount_per_unit,qty*(cost-discount_per_unit)) for product,qty,cost,line in prepared]
                 total=subtotal-discount
                 db.execute("""INSERT INTO purchase_invoices(id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,subtotal,discount,total,paid_amount,status,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?,0,'unpaid',?)""",(invoice_id,user["tenant_id"],sid,user["id"],number.strip(),inv_date,subtotal,discount,total,now))
