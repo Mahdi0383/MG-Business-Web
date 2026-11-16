@@ -298,6 +298,66 @@ public sealed class SalesApiIntegrationTests
         Assert.NotEqual(mainSale.Id, orders[0].Id);
     }
 
+    [Fact]
+    public async Task InventoryRejectsInvalidMovementPrecisionAndOutboundCostBeforePersistence()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"inventory-validation-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Inventory Validation Store",
+            slug = $"inventory-validation-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "INV-VALIDATION-01",
+            name = "Validation Item",
+            baseUnit = "unit",
+            tracksInventory = true,
+            defaultSalePrice = 5m
+        });
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
+
+        using var zeroQuantity = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product!.Id,
+            type = StockMovementType.Receipt,
+            quantity = 0m,
+            unitCost = 2m,
+            reference = "INVALID-ZERO"
+        });
+        using var excessivePrecision = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product.Id,
+            type = StockMovementType.Receipt,
+            quantity = 1.0001m,
+            unitCost = 2m,
+            reference = "INVALID-PRECISION"
+        });
+        using var outboundWithCost = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product.Id,
+            type = StockMovementType.Issue,
+            quantity = 1m,
+            unitCost = 2m,
+            reference = "INVALID-OUTBOUND-COST"
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, zeroQuantity.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, excessivePrecision.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, outboundWithCost.StatusCode);
+        var stock = await client.GetFromJsonAsync<StockResponse[]>("/api/inventory/stock");
+        Assert.Empty(stock!);
+    }
+
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
