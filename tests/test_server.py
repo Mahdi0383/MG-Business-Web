@@ -96,6 +96,25 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 409)
 
+        status, result = self.request("POST", "/api/inventory/movements", {
+            "id": "move-in-1", "productId": "product-1", "movementType": "purchase",
+            "quantityDelta": 20, "unitCost": 30000
+        }, token)
+        self.assertEqual(status, 201)
+        status, result = self.request("POST", "/api/inventory/movements", {
+            "id": "move-out-1", "productId": "product-1", "movementType": "sale",
+            "quantityDelta": -5, "unitCost": 30000
+        }, token)
+        self.assertEqual(status, 201)
+        status, result = self.request("POST", "/api/inventory/movements", {
+            "id": "move-out-2", "productId": "product-1", "movementType": "sale",
+            "quantityDelta": -16, "unitCost": 30000
+        }, token)
+        self.assertEqual(status, 409)
+        status, result = self.request("GET", "/api/inventory", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["items"][0]["quantity"], 15)
+
         status, result = self.request("POST", "/api/customers", {
             "id": "customer-1", "fullName": "Test Customer",
             "phone": "+491234567", "email": "test@example.com"
