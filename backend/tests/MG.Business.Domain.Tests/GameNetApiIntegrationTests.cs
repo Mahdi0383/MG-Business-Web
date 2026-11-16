@@ -68,6 +68,9 @@ public sealed class GameNetApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
 
+        var disableBranch = await client.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.Conflict, disableBranch.StatusCode);
+
         var closed = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session!.Id}/close", new
         {
             amountPaid = 15m,
