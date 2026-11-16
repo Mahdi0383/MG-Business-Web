@@ -776,6 +776,61 @@ test("originating device deactivation echo advances inbox without deactivating t
 });
 
 
+test("queues offline inventory movements atomically and advances the stock baseline on acknowledgement", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = `inventory-tenant-${crypto.randomUUID()}`;
+  const branchId = crypto.randomUUID();
+  const actorId = `inventory-actor-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  await store.cacheInventorySnapshot({
+    tenantId,
+    branchId,
+    products: [{ id: productId, sku: "OFFLINE-1", name: "Offline item", tracksInventory: true, isActive: true }],
+    stockRows: [{ productId, branchId, quantityOnHand: 10, inventoryValue: 20, averageUnitCost: 2 }]
+  });
+
+  const idempotencyKey = crypto.randomUUID();
+  const movementInput = {
+    productId, type: 2, quantity: 3, unitCost: null,
+    reference: "offline issue", idempotencyKey
+  };
+  const movement = await store.createStockMovement({
+    tenantId, branchId, actorId, movement: movementInput
+  });
+  assert.equal(movement.baseQuantityOnHand, 10);
+  assert.equal(movement.baseInventoryValue, 20);
+  assert.equal(movement.unitCost, 2);
+  assert.equal(movement.resultQuantityOnHand, 7);
+  assert.equal(movement.resultInventoryValue, 14);
+
+  const duplicate = await store.createStockMovement({
+    tenantId, branchId, actorId, movement: movementInput
+  });
+  assert.equal(duplicate.operationId, movement.operationId);
+  await assert.rejects(store.createStockMovement({
+    tenantId, branchId, actorId, movement: { ...movementInput, quantity: 4 }
+  }), /کلید یکتا/);
+
+  const projected = await store.getInventoryStock(tenantId, branchId);
+  assert.equal(projected[0].quantityOnHand, 7);
+  assert.equal(projected[0].inventoryValue, 14);
+  assert.equal(projected[0].pendingMovementCount, 1);
+
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
+  const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].operationType, "inventory.stock.movement.created");
+  const payload = JSON.parse(pending[0].payloadJson);
+  assert.equal(payload.baseQuantityOnHand, 10);
+  assert.equal(payload.baseInventoryValue, 20);
+
+  await store.acknowledge([{ operationId: movement.operationId, sequence: 1 }]);
+  const acknowledgedProjection = await store.getInventoryStock(tenantId, branchId);
+  assert.equal(acknowledgedProjection[0].quantityOnHand, 7);
+  assert.equal(acknowledgedProjection[0].inventoryValue, 14);
+  assert.equal(acknowledgedProjection[0].pendingMovementCount, 0);
+});
+
 test("does not trust a caller-controlled verified flag for authority lease epochs", async () => {
   const store = new LocalOperationStore();
   const tenantId = `lease-tenant-${crypto.randomUUID()}`;
