@@ -10,6 +10,8 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
     public DbSet<JournalEntryLine> JournalEntryLines => Set<JournalEntryLine>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -63,6 +65,38 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasMany(x => x.Lines).WithOne().HasForeignKey(x => new { x.TenantId, x.JournalEntryId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
             entity.Navigation(x => x.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        modelBuilder.Entity<Product>(entity =>
+        {
+            entity.ToTable("products");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Sku).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.BaseUnit).HasMaxLength(24).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.Sku }).IsUnique();
+            entity.HasAlternateKey(x => new { x.TenantId, x.Id });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StockMovement>(entity =>
+        {
+            entity.ToTable("stock_movements", table =>
+            {
+                table.HasCheckConstraint("ck_stock_movement_quantity_positive", "CAST(quantity AS NUMERIC) > 0");
+                table.HasCheckConstraint("ck_stock_movement_unit_cost_non_negative", "CAST(unit_cost AS NUMERIC) >= 0");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Quantity).HasColumnName("quantity").HasPrecision(18, 3);
+            entity.Property(x => x.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
+            entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.CreatedAtUtc });
+            entity.HasIndex(x => new { x.TenantId, x.ProductId, x.CreatedAtUtc });
+            entity.HasOne<Product>().WithMany().HasForeignKey(x => new { x.TenantId, x.ProductId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<JournalEntryLine>(entity =>
