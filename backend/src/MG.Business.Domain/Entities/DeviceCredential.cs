@@ -4,7 +4,7 @@ public sealed class DeviceCredential
 {
     private DeviceCredential() { }
 
-    public DeviceCredential(Guid tenantId, Guid actorId, Guid deviceId, string publicKeySpkiBase64,
+    public DeviceCredential(Guid tenantId, Guid actorId, Guid? branchId, Guid deviceId, string publicKeySpkiBase64,
         string credentialSha256, DateTimeOffset createdAtUtc)
     {
         if (tenantId == Guid.Empty || actorId == Guid.Empty || deviceId == Guid.Empty)
@@ -15,6 +15,7 @@ public sealed class DeviceCredential
             throw new ArgumentException("A SHA-256 credential digest is required.", nameof(credentialSha256));
         TenantId = tenantId;
         ActorId = actorId;
+        BranchId = branchId;
         DeviceId = deviceId;
         PublicKeySpkiBase64 = publicKeySpkiBase64;
         CredentialSha256 = credentialSha256;
@@ -33,6 +34,7 @@ public sealed class DeviceCredential
     public Guid TenantId { get; private set; }
     public Guid DeviceId { get; private set; }
     public Guid ActorId { get; private set; }
+    public Guid? BranchId { get; private set; }
     public string PublicKeySpkiBase64 { get; private set; } = string.Empty;
     public string CredentialSha256 { get; private set; } = string.Empty;
     public int KeyVersion { get; private set; }
