@@ -1792,6 +1792,10 @@ class Handler(SimpleHTTPRequestHandler):
     def create_session(self, db, user_id):
         token = secrets.token_urlsafe(40)
         now = int(time.time())
+        db.execute("DELETE FROM sessions WHERE expires_at<=?",(now,))
+        db.execute("""DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN
+            (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 9)""",
+            (user_id,user_id))
         db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
                    (hashlib.sha256(token.encode()).hexdigest(), user_id, now + SESSION_SECONDS, now))
         db.commit()
