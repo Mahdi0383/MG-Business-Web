@@ -31,7 +31,7 @@ test("keeps customer updates in manual review until authoritative update replay 
   }
 });
 
-test("fails closed for unknown commands and missing version preconditions", () => {
+test("fails closed for unknown commands and disabled customer updates", () => {
   const unknown = classifyIncomingOperation({
     operationId: "unknown-1",
     operationType: "custom.unregistered-command",
@@ -47,7 +47,7 @@ test("fails closed for unknown commands and missing version preconditions", () =
     payload: {}
   }, { version: 1 });
   assert.equal(missingVersion.disposition, "manual-review");
-  assert.equal(missingVersion.reason, "missing-version-precondition");
+  assert.equal(missingVersion.reason, "customer-update-command-not-enabled");
 });
 
 test("rejects malformed operation envelopes", () => {
