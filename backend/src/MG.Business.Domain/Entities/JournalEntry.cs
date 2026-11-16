@@ -16,6 +16,8 @@ public sealed class JournalEntry
         var materialized = lines.ToList();
         if (materialized.Count < 2) throw new ArgumentException("A journal entry requires at least two lines.", nameof(lines));
         if (materialized.Any(x => x is null)) throw new ArgumentException("Journal lines cannot contain null values.", nameof(lines));
+        if (materialized.Any(x => x.TenantId != tenantId))
+            throw new ArgumentException("All journal lines must belong to the same tenant as the entry.", nameof(lines));
 
         var debitTotal = materialized.Sum(x => x.Debit);
         var creditTotal = materialized.Sum(x => x.Credit);
