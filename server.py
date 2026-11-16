@@ -209,6 +209,10 @@ def connect():
         for tenant in db.execute("SELECT id FROM tenants").fetchall():
             seed_accounts(db, tenant["id"])
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=5").fetchone():
+        for tenant in db.execute("SELECT id FROM tenants").fetchall():
+            seed_trial_modules(db, tenant["id"])
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)", (int(time.time()),))
     db.commit()
     return db
 
