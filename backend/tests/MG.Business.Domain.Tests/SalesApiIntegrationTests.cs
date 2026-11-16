@@ -477,6 +477,91 @@ public sealed class SalesApiIntegrationTests
         Assert.Equal(1, stock[0].MovementCount);
     }
 
+    [Fact]
+    public async Task CustomerBalanceCanBeSettledInMultipleAtomicPayments()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sales-payment-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Payment Settlement Store",
+            slug = $"payment-settlement-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var cash = await CreateAccountAsync(client, "1000", "Cash", AccountType.Asset);
+        var receivable = await CreateAccountAsync(client, "1100", "Receivable", AccountType.Asset);
+        var revenue = await CreateAccountAsync(client, "4000", "Revenue", AccountType.Revenue);
+        var customerResponse = await client.PostAsJsonAsync("/api/customers", new
+        {
+            code = "PAY-C-1", name = "Payment Customer", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        var customer = await customerResponse.Content.ReadFromJsonAsync<CustomerResponse>();
+        Assert.Equal(HttpStatusCode.Created, customerResponse.StatusCode);
+
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "PAY-SERVICE", name = "Service", baseUnit = "service",
+            tracksInventory = false, defaultSalePrice = 100m
+        });
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+
+        var saleResponse = await client.PostAsJsonAsync("/api/sales/orders", new
+        {
+            customerId = customer!.Id, discount = 0m, amountPaid = 0m,
+            paymentMethod = PaymentMethod.OnAccount, revenueAccountId = revenue.Id,
+            paymentAccountId = (Guid?)null, receivableAccountId = receivable.Id,
+            inventoryAccountId = (Guid?)null, costOfGoodsSoldAccountId = (Guid?)null,
+            paymentReference = (string?)null,
+            lines = new[] { new { productId = product!.Id, quantity = 1m, unitPrice = 100m, discount = 0m } }
+        });
+        Assert.Equal(HttpStatusCode.Created, saleResponse.StatusCode);
+        var sale = await saleResponse.Content.ReadFromJsonAsync<SaleResponse>();
+        Assert.Equal(100m, sale!.BalanceDue);
+
+        var firstPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 40m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "PAY-40"
+        });
+        Assert.Equal(HttpStatusCode.OK, firstPayment.StatusCode);
+        var first = await firstPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
+        Assert.Equal(40m, first!.PaidAmount);
+        Assert.Equal(60m, first.BalanceDue);
+
+        using var overpayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 61m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "PAY-61"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, overpayment.StatusCode);
+
+        var finalPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 60m, paymentMethod = PaymentMethod.Card,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "PAY-60"
+        });
+        Assert.Equal(HttpStatusCode.OK, finalPayment.StatusCode);
+        var final = await finalPayment.Content.ReadFromJsonAsync<PaymentBalanceResponse>();
+        Assert.Equal(100m, final!.PaidAmount);
+        Assert.Equal(0m, final.BalanceDue);
+
+        var trial = await client.GetFromJsonAsync<TrialBalanceResponse>("/api/accounting/trial-balance");
+        Assert.True(trial!.IsBalanced);
+        Assert.Equal(200m, trial.TotalDebit);
+        Assert.Equal(200m, trial.TotalCredit);
+    }
+
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
@@ -524,7 +609,7 @@ public sealed class SalesApiIntegrationTests
     private sealed record AccountResponse(Guid Id, string Code, string Name, string Type, bool IsActive);
     private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
     private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
-    private sealed record SaleResponse(Guid Id, string Number, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, decimal CostOfGoodsSold, decimal GrossProfit, string Status, DateTimeOffset CreatedAtUtc);
+    private sealed record PaymentBalanceResponse(Guid Id, string Number, decimal Total, decimal PaidAmount, decimal BalanceDue);\n    private sealed record SaleResponse(Guid Id, string Number, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, decimal CostOfGoodsSold, decimal GrossProfit, string Status, DateTimeOffset CreatedAtUtc);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
     private sealed record TrialBalanceResponse(TrialAccount[] Accounts, decimal TotalDebit, decimal TotalCredit, bool IsBalanced);
     private sealed record TrialAccount(Guid Id, string Code, string Name, string Type, decimal Debit, decimal Credit, decimal NetDebit, decimal NetCredit);
