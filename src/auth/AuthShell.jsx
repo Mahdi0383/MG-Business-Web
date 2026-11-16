@@ -34,12 +34,22 @@ function AuthShell({ apiBaseUrl }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const saveSession = useCallback(value => {
-    setSessionState(value);
-    client.setSession(value);
-    if (value) sessionStorage.setItem(SESSION_KEY, JSON.stringify(value));
-    else sessionStorage.removeItem(SESSION_KEY);
+  useEffect(() => {
+    client.onSessionChanged = value => {
+      setSessionState(value);
+      if (value) sessionStorage.setItem(SESSION_KEY, JSON.stringify(value));
+      else sessionStorage.removeItem(SESSION_KEY);
+    };
+    return () => { client.onSessionChanged = null; };
   }, [client]);
+
+  const saveSession = useCallback(value => {
+    client.setSession(value);
+  }, [client]);
+
+  const apiHost = useMemo(() => {
+    try { return new URL(apiBaseUrl).host; } catch { return apiBaseUrl; }
+  }, [apiBaseUrl]);
 
   const loadTenants = useCallback(async () => {
     const result = await client.get("/api/tenants/mine");
@@ -240,7 +250,7 @@ function AuthShell({ apiBaseUrl }) {
 
       {error && <div className="mg-inline-error" role="alert">{error}</div>}
       <div className="mg-auth-footer">
-        <span>اتصال امن به API</span><b>{new URL(apiBaseUrl).host}</b>
+        <span>اتصال امن به API</span><b>{apiHost}</b>
       </div>
     </section>
   </div>;
