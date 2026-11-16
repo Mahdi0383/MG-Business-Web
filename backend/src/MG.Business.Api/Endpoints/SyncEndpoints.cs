@@ -17,6 +17,71 @@ public static class SyncEndpoints
     {
         var group = endpoints.MapGroup("/api/sync").RequireAuthorization("TenantMember");
 
+        group.MapPost("/heartbeat", async (
+            DeviceHeartbeatRequest request,
+            ITenantContext tenant,
+            BusinessDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId || tenant.UserId is not Guid actorId)
+                return Results.Forbid();
+            if (request.DeviceId == Guid.Empty)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["deviceId"] = ["A valid device ID is required."]
+                });
+
+            var branchId = tenant.BranchId;
+            var now = DateTimeOffset.UtcNow;
+            var presence = await db.DevicePresences
+                .SingleOrDefaultAsync(x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+            if (presence is null)
+            {
+                presence = new DevicePresence(tenantId, request.DeviceId, actorId, branchId,
+                    request.DeviceName ?? "Browser device", request.Platform ?? "Web",
+                    request.ClientVersion ?? "unknown", now);
+                db.DevicePresences.Add(presence);
+            }
+            else
+            {
+                presence.Heartbeat(actorId, branchId, request.DeviceName ?? "Browser device",
+                    request.Platform ?? "Web", request.ClientVersion ?? "unknown", now);
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            return Results.Ok(new { deviceId = request.DeviceId, lastSeenAtUtc = now, status = "online" });
+        });
+
+        group.MapGet("/devices", async (
+            ITenantContext tenant,
+            BusinessDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId)
+                return Results.Forbid();
+            if (tenant.Role is not ("Owner" or "Manager"))
+                return Results.Forbid();
+
+            var cutoff = DateTimeOffset.UtcNow.AddSeconds(-90);
+            var devices = await db.DevicePresences.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .OrderByDescending(x => x.LastSeenAtUtc)
+                .Select(x => new
+                {
+                    x.DeviceId, x.ActorId, x.BranchId, x.DeviceName, x.Platform,
+                    x.ClientVersion, x.FirstSeenAtUtc, x.LastSeenAtUtc
+                })
+                .ToListAsync(cancellationToken);
+
+            return Results.Ok(devices.Select(device => new
+            {
+                device.DeviceId, device.ActorId, device.BranchId, device.DeviceName,
+                device.Platform, device.ClientVersion, device.FirstSeenAtUtc, device.LastSeenAtUtc,
+                isOnline = device.LastSeenAtUtc >= cutoff,
+                alertCode = device.LastSeenAtUtc >= cutoff ? null : "DEVICE_HEARTBEAT_MISSED"
+            }));
+        });
+
         group.MapPost("/operations", async (
             PushOperationsRequest request,
             ITenantContext tenant,
@@ -167,7 +232,7 @@ public static class SyncEndpoints
     }
 
     public sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);
-    public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
+    public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);\n    public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
         Guid OperationId, Guid DeviceId, Guid? BranchId, string OperationType,
         int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
