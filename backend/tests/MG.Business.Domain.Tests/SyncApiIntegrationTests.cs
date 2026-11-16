@@ -178,7 +178,7 @@ public sealed class SyncApiIntegrationTests
                 }
             }
         });
-        Assert.Equal(HttpStatusCode.Forbidden, tenantWide.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, tenantWide.StatusCode);
     }
 
     [Fact]
