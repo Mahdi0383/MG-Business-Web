@@ -1748,11 +1748,10 @@ public sealed class SyncApiIntegrationTests
         Assert.NotNull(recovered);
         Assert.Equal(2, recovered!.KeyVersion);
         Assert.NotEqual(result.Credential, recovered.Credential);
-        var rotated = await db.DeviceCredentials.SingleAsync(
-            x => x.TenantId == tenant.TenantId && x.DeviceId == deviceId);
-        Assert.Equal(2, rotated.KeyVersion);
+        await db.Entry(persisted).ReloadAsync();
+        Assert.Equal(2, persisted.KeyVersion);
         Assert.Equal(Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(recovered.Credential))).ToLowerInvariant(),
-            rotated.CredentialSha256);
+            persisted.CredentialSha256);
     }
 
     [Fact]
