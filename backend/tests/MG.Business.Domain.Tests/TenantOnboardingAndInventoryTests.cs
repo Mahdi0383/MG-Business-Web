@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
@@ -215,6 +216,62 @@ public sealed class TenantOnboardingAndInventoryTests
         Assert.Equal(HttpStatusCode.BadRequest, invalidPage.StatusCode);
     }
 
+    [Fact]
+    public async Task StockMovementIdempotencyReplaysExactRequestAndRejectsChangedPayload()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"stock-idempotency-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Idempotent Stock Store",
+            slug = $"stock-idem-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "IDEM-001",
+            name = "Idempotent Beans",
+            baseUnit = "kg",
+            tracksInventory = true
+        });
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductCreated>();
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "stock-receipt-retry-001");
+
+        async Task<HttpResponseMessage> Receive(decimal quantity) => await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product!.Id,
+            type = StockMovementType.Receipt,
+            quantity,
+            unitCost = 12m,
+            reference = "opening"
+        });
+
+        using var first = await Receive(5m);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<MovementCreated>();
+        Assert.NotNull(firstBody);
+
+        using var retry = await Receive(5m);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        using var retryJson = JsonDocument.Parse(await retry.Content.ReadAsStringAsync());
+        Assert.True(retryJson.RootElement.GetProperty("replayed").GetBoolean());
+        Assert.Equal(firstBody!.Id, retryJson.RootElement.GetProperty("id").GetGuid());
+
+        using var changedPayload = await Receive(6m);
+        Assert.Equal(HttpStatusCode.Conflict, changedPayload.StatusCode);
+
+        var stock = await client.GetFromJsonAsync<StockResponse[]>("/api/inventory/stock");
+        Assert.Single(stock!);
+        Assert.Equal(5m, stock[0].QuantityOnHand);
+        Assert.Equal(1, stock[0].MovementCount);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
@@ -255,6 +312,7 @@ public sealed class TenantOnboardingAndInventoryTests
     private sealed record ProductCatalogPage(int Page, int PageSize, int TotalCount, int TotalPages, ProductCatalogItem[] Items);
     private sealed record ProductCatalogItem(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
+    private sealed record MovementCreated(Guid Id, Guid ProductId, Guid BranchId, string Type, decimal Quantity, decimal UnitCost, decimal SignedQuantity, string? Reference, DateTimeOffset CreatedAtUtc);
     private sealed record MovementPage(int Page, int PageSize, int TotalCount, int TotalPages, MovementItem[] Items);
     private sealed record MovementItem(Guid Id, Guid ProductId, Guid BranchId, string Type, decimal Quantity, decimal UnitCost, decimal SignedQuantity, string? Reference, DateTimeOffset CreatedAtUtc);
 }
