@@ -98,6 +98,73 @@ public sealed class TenantOnboardingAndInventoryTests
         Assert.Equal(HttpStatusCode.NotFound, untracked.StatusCode);
     }
 
+    [Fact]
+    public async Task StockMovementsUseMovingAverageAndPreventNegativeInventory()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"stock-value-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Valuation Store",
+            slug = $"valuation-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "VAL-001",
+            name = "Beans",
+            baseUnit = "kg",
+            tracksInventory = true
+        });
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductCreated>();
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+
+        foreach (var receipt in new[] { (quantity: 10m, cost: 5m), (quantity: 10m, cost: 10m) })
+        {
+            var receiptResponse = await client.PostAsJsonAsync("/api/inventory/movements", new
+            {
+                productId = product!.Id,
+                type = StockMovementType.Receipt,
+                quantity = receipt.quantity,
+                unitCost = receipt.cost,
+                reference = "purchase"
+            });
+            Assert.Equal(HttpStatusCode.Created, receiptResponse.StatusCode);
+        }
+
+        var sale = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product!.Id,
+            type = StockMovementType.Sale,
+            quantity = 5m,
+            unitCost = (decimal?)null,
+            reference = "sale"
+        });
+        Assert.Equal(HttpStatusCode.Created, sale.StatusCode);
+
+        var stock = await client.GetFromJsonAsync<StockResponse[]>("/api/inventory/stock");
+        Assert.Single(stock!);
+        Assert.Equal(15m, stock[0].QuantityOnHand);
+        Assert.Equal(7.5m, stock[0].AverageUnitCost);
+        Assert.Equal(112.5m, stock[0].InventoryValue);
+
+        var oversell = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product.Id,
+            type = StockMovementType.Sale,
+            quantity = 16m,
+            unitCost = (decimal?)null,
+            reference = "oversell"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, oversell.StatusCode);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
@@ -135,4 +202,5 @@ public sealed class TenantOnboardingAndInventoryTests
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record ProductCreated(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, bool IsActive);
+    private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
 }
