@@ -794,7 +794,7 @@ export class LocalOperationStore {
     const transaction = database.transaction(INBOX_STORE, "readonly");
     const done = transactionDone(transaction);
     const index = transaction.objectStore(INBOX_STORE).index("byTenantApplied");
-    const range = IDBKeyRange.only([tenantId, false]);
+    const range = IDBKeyRange.only([tenantId, 0]);
 
     const rows = await new Promise((resolve, reject) => {
       const matching = [];
