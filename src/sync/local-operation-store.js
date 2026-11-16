@@ -28,6 +28,14 @@ export function isSameIncomingEnvelope(existing, incoming) {
   return immutableFields.every(field => existing[field] === incoming[field]);
 }
 
+export function isConflictVisible(conflict, branchId, allowTenantWide) {
+  if (!conflict || typeof conflict !== "object" || Array.isArray(conflict)
+    || typeof allowTenantWide !== "boolean") return false;
+  if (branchId === null) return allowTenantWide && conflict.branchId == null;
+  if (typeof branchId !== "string" || !branchId.trim()) return false;
+  return conflict.branchId === branchId || (allowTenantWide && conflict.branchId == null);
+}
+
 export function isIncomingRowVisible(row, branchId, allowTenantWide) {
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
   if (typeof allowTenantWide !== "boolean") return false;
@@ -716,9 +724,11 @@ export class LocalOperationStore {
   }
 
 
-  async getOpenConflicts(tenantId, branchId = null, limit = 100) {
+  async getOpenConflicts(tenantId, branchId = null, allowTenantWide = false, limit = 100) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim())) throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof allowTenantWide !== "boolean") throw new TypeError("allowTenantWide must be a boolean.");
+    if (branchId === null && !allowTenantWide) return [];
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 200)) : 100;
     const database = await openDatabase();
     const transaction = database.transaction(CONFLICTS_STORE, "readonly");
@@ -731,14 +741,14 @@ export class LocalOperationStore {
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor || matching.length >= boundedLimit) { resolve(matching); return; }
-        const conflict = cursor.value;
-        if (branchId === null || conflict.branchId == null || conflict.branchId === branchId) matching.push(conflict);
+        if (isConflictVisible(cursor.value, branchId, allowTenantWide)) matching.push(cursor.value);
         cursor.continue();
       };
     });
     await done;
     return rows;
   }
+
   async getCursor(tenantId, branchId = null) {
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readonly");
