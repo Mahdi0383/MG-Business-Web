@@ -265,7 +265,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"user": public_user(user), "tenant": dict(tenant)})
             if path == "/api/transactions":
                 rows = db.execute("""SELECT id,title,amount,kind,category,occurred_at AS createdAt
-                    FROM transactions WHERE tenant_id=? ORDER BY created_at DESC LIMIT 5000""",
+                    FROM transactions WHERE tenant_id=? AND status='posted' ORDER BY created_at DESC LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/products":
@@ -291,6 +291,27 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
                     FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/accounting/accounts":
+                rows = db.execute("SELECT code,name,account_type AS accountType,normal_balance AS normalBalance FROM accounts WHERE tenant_id=? AND active=1 ORDER BY code",
+                                  (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/accounting/journal":
+                rows = db.execute("""SELECT e.id,e.entry_date AS entryDate,e.memo,e.source_type AS sourceType,
+                    e.source_id AS sourceId,COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
+                    FROM journal_entries e LEFT JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                    WHERE e.tenant_id=? GROUP BY e.id ORDER BY e.created_at DESC LIMIT 1000""",
+                    (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/accounting/profit-loss":
+                rows = db.execute("""SELECT a.account_type AS accountType,
+                    COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
+                    FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
+                    WHERE a.tenant_id=? AND a.account_type IN ('revenue','expense')
+                    GROUP BY a.account_type""", (user["tenant_id"],)).fetchall()
+                totals = {row["accountType"]: row for row in rows}
+                revenue = totals.get("revenue")["credit"] - totals.get("revenue")["debit"] if totals.get("revenue") else 0
+                expenses = totals.get("expense")["debit"] - totals.get("expense")["credit"] if totals.get("expense") else 0
+                return self.send_json(200, {"revenue": revenue, "expenses": expenses, "netProfit": revenue-expenses})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
         finally: db.close()
 
@@ -319,14 +340,17 @@ class Handler(SimpleHTTPRequestHandler):
             if user["role"] not in ("owner", "manager"):
                 return self.send_json(403, {"error": "فقط مدیر می‌تواند تراکنش را حذف کند."})
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT id FROM transactions WHERE id=? AND tenant_id=?", (tx_id,user["tenant_id"])).fetchone()
-            if not row:
+            row = db.execute("SELECT id,status FROM transactions WHERE id=? AND tenant_id=?", (tx_id,user["tenant_id"])).fetchone()
+            if not row or row["status"] != "posted":
                 db.rollback()
-                return self.send_json(404, {"error": "تراکنش پیدا نشد."})
-            db.execute("DELETE FROM transactions WHERE id=? AND tenant_id=?", (tx_id,user["tenant_id"]))
-            audit(db,user["tenant_id"],user["id"],"transaction.deleted","transaction",tx_id)
+                return self.send_json(404, {"error": "تراکنش ثبت‌شده پیدا نشد."})
+            now = int(time.time())
+            db.execute("UPDATE transactions SET status='voided',voided_at=?,voided_by=? WHERE id=? AND tenant_id=?",
+                       (now,user["id"],tx_id,user["tenant_id"]))
+            reverse_transaction_journal(db,user["tenant_id"],user["id"],tx_id)
+            audit(db,user["tenant_id"],user["id"],"transaction.voided","transaction",tx_id)
             db.commit()
-            return self.send_json(200, {"ok": True})
+            return self.send_json(200, {"ok": True, "voided": True})
         finally: db.close()
 
     def do_POST(self):
