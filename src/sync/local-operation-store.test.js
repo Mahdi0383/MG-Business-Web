@@ -349,6 +349,36 @@ test("scopes unresolved conflicts to the active branch and tenant-wide authority
   assert.equal(isConflictVisible(branchConflict, null, false), false);
 });
 
+test("persists and retrieves unresolved conflicts with strict branch and tenant-wide scoping", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchA = "branch-a-" + crypto.randomUUID();
+  const branchB = "branch-b-" + crypto.randomUUID();
+  for (const conflict of [
+    { sequence: 1, operationId: "op-a", branchId: branchA },
+    { sequence: 2, operationId: "op-b", branchId: branchB },
+    { sequence: 3, operationId: "op-global", branchId: null }
+  ]) {
+    await store.recordConflict({
+      tenantId, ...conflict, disposition: "manual-review",
+      reason: "sensitive-operation", details: { source: "test" }
+    });
+  }
+
+  const branchOnly = await store.getOpenConflicts(tenantId, branchA, false);
+  assert.deepEqual(branchOnly.map(item => item.operationId), ["op-a"]);
+
+  const managerBranchView = await store.getOpenConflicts(tenantId, branchA, true);
+  assert.deepEqual(new Set(managerBranchView.map(item => item.operationId)), new Set(["op-a", "op-global"]));
+
+  const managerTenantView = await store.getOpenConflicts(tenantId, null, true);
+  assert.deepEqual(managerTenantView.map(item => item.operationId), ["op-global"]);
+
+  const limited = await store.getOpenConflicts(tenantId, branchA, true, 1);
+  assert.equal(limited.length, 1);
+  assert.equal(limited[0].status, "open");
+});
+
 test("commits customer edits with their outbox command and advances version only after acknowledgement", async () => {
   const store = new LocalOperationStore();
   const tenantId = "tenant-" + crypto.randomUUID();
