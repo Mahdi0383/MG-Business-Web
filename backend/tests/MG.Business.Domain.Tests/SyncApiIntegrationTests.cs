@@ -1908,4 +1908,32 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(HttpStatusCode.Unauthorized, tampered.StatusCode);
     }
 
+
+    [Fact]
+    public void AuthorityLeaseFencesCompetingDeviceAndIncrementsEpochAfterExpiry()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var tenantId = Guid.NewGuid();
+        var branchId = Guid.NewGuid();
+        var firstDevice = Guid.NewGuid();
+        var secondDevice = Guid.NewGuid();
+        var lease = new DeviceAuthorityLease(
+            Guid.NewGuid(), tenantId, branchId.ToString("N"), branchId,
+            firstDevice, now, now.AddMinutes(2));
+        lease.SetSignature(Convert.ToBase64String(new byte[64]));
+
+        Assert.Equal(1, lease.Epoch);
+        Assert.False(lease.TryAcquire(secondDevice, now.AddSeconds(30), now.AddMinutes(2)));
+        Assert.Equal(firstDevice, lease.DeviceId);
+        Assert.Equal(1, lease.Epoch);
+
+        Assert.True(lease.TryAcquire(firstDevice, now.AddSeconds(30), now.AddMinutes(2)));
+        Assert.Equal(1, lease.Epoch);
+
+        Assert.True(lease.TryAcquire(secondDevice, now.AddMinutes(3), now.AddMinutes(5)));
+        Assert.Equal(secondDevice, lease.DeviceId);
+        Assert.Equal(2, lease.Epoch);
+        Assert.NotEqual(Guid.Empty, lease.LeaseId);
+        Assert.True(lease.IsActiveAt(now.AddMinutes(3)));
+    }
 }
