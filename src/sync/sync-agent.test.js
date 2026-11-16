@@ -93,7 +93,7 @@ test("pulls remote operations and persists the page with its cursor", async () =
   assert.equal(saved[0].cursor, 5);
   assert.equal(saved[0].operations.length, 2);
   assert.equal(acknowledgements[0].path, "/api/sync/acknowledgements");
-  assert.deepEqual(acknowledgements[0].body, { deviceId: "device-1", sequence: 5 });
+  assert.deepEqual(acknowledgements[0].body, { deviceId: "device-1", sequence: 5, branchId: null });
 });
 
 test("does not persist a non-monotonic pull page", async () => {
