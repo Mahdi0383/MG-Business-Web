@@ -276,7 +276,10 @@ function AuthShell({ apiBaseUrl }) {
   useEffect(() => {
     if (stage !== "workspace" || !selectedTenant?.id) return undefined;
     let active = true;
+    let heartbeatInFlight = false;
     const sendHeartbeat = async () => {
+      if (!active || heartbeatInFlight || document.visibilityState === "hidden") return;
+      heartbeatInFlight = true;
       try {
         const deviceId = await operationStoreRef.current.getDeviceId();
         await client.post("/api/sync/heartbeat", {
@@ -294,11 +297,23 @@ function AuthShell({ apiBaseUrl }) {
         }
       } catch {
         // A missed heartbeat is detected by the next successful manager poll.
+      } finally {
+        heartbeatInFlight = false;
       }
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") sendHeartbeat();
+    };
+    window.addEventListener("focus", sendHeartbeat);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     sendHeartbeat();
     const timer = window.setInterval(sendHeartbeat, 30000);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sendHeartbeat);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [stage, selectedTenant?.id, selectedTenant?.role, client]);
 
   const workspaceContext = useMemo(() => ({
