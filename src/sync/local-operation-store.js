@@ -209,6 +209,10 @@ export class LocalOperationStore {
   async getPendingCount(tenantId, branchId = null, allowTenantWide = false) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof allowTenantWide !== "boolean")
+      throw new TypeError("allowTenantWide must be a boolean.");
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
     const done = transactionDone(transaction);
@@ -308,6 +312,8 @@ export class LocalOperationStore {
   async getInboxCount(tenantId, branchId = null) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
     const database = await openDatabase();
     const transaction = database.transaction(INBOX_STORE, "readonly");
     const done = transactionDone(transaction);
