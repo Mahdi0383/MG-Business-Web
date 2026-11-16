@@ -251,7 +251,7 @@ function AuthShell({ apiBaseUrl }) {
         if (active) setSyncStatus("syncing");
         let pullResult = null;
         for (let page = 0; page < 5; page += 1) {
-          pullResult = await syncAgentRef.current.pullIncoming(tenantId);
+          pullResult = await syncAgentRef.current.pullIncoming(tenantId, { branchId: selectedBranch?.id || null });
           if (pullResult.status !== "more-available") break;
         }
         const result = await syncAgentRef.current.pushPending(tenantId);
@@ -283,7 +283,7 @@ function AuthShell({ apiBaseUrl }) {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [stage, selectedTenant?.id]);
+  }, [stage, selectedTenant?.id, selectedBranch?.id]);
 
   useEffect(() => {
     if (stage !== "workspace" || !selectedTenant?.id) return undefined;
