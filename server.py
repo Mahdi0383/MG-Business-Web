@@ -366,6 +366,32 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/me":
                 tenant = db.execute("SELECT id,name FROM tenants WHERE id=?", (user["tenant_id"],)).fetchone()
                 return self.send_json(200, {"user": public_user(user), "tenant": dict(tenant)})
+            if path == "/api/backup":
+                if user["role"] != "owner":
+                    return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان کامل دریافت کند."})
+                tenant_id = user["tenant_id"]
+                tables = {
+                    "users": "SELECT id,tenant_id,username,role,active,created_at FROM users WHERE tenant_id=?",
+                    "transactions": "SELECT * FROM transactions WHERE tenant_id=?",
+                    "accounts": "SELECT * FROM accounts WHERE tenant_id=?",
+                    "journal_entries": "SELECT * FROM journal_entries WHERE tenant_id=?",
+                    "journal_lines": "SELECT * FROM journal_lines WHERE tenant_id=?",
+                    "products": "SELECT * FROM products WHERE tenant_id=?",
+                    "customers": "SELECT * FROM customers WHERE tenant_id=?",
+                    "inventory_movements": "SELECT * FROM inventory_movements WHERE tenant_id=?",
+                    "orders": "SELECT * FROM orders WHERE tenant_id=?",
+                    "order_items": "SELECT * FROM order_items WHERE tenant_id=?",
+                    "game_devices": "SELECT * FROM game_devices WHERE tenant_id=?",
+                    "game_sessions": "SELECT * FROM game_sessions WHERE tenant_id=?",
+                    "audit_log": "SELECT * FROM audit_log WHERE tenant_id=?"
+                }
+                snapshot = {"schema":"mg-business-server-backup","version":1,
+                            "exportedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
+                            "tenant":dict(db.execute("SELECT id,name,created_at FROM tenants WHERE id=?",(tenant_id,)).fetchone()),
+                            "tables":{}}
+                for name, query in tables.items():
+                    snapshot["tables"][name] = [dict(row) for row in db.execute(query,(tenant_id,)).fetchall()]
+                return self.send_json(200, snapshot)
             if path == "/api/users":
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403, {"error": "دسترسی مشاهده کاربران ندارید."})
