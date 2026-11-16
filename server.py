@@ -298,6 +298,17 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
 
+def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_id, amount, payment_method):
+    accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    cash_code = {"cash":"1000","card":"1010","online":"1020"}[payment_method]
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"دریافت از مشتری "+customer_id,
+                                      "customer_payment",payment_id,user_id,now))
+    for account_id,debit,credit in ((accounts[cash_code],amount,0),(accounts["1100"],0,amount)):
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+
 def post_order_cogs_journal(db, tenant_id, user_id, order_id, cost_total):
     if cost_total <= 0:
         return
@@ -544,6 +555,33 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM inventory_movements m JOIN products p ON p.id=m.product_id
                     WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path.startswith("/api/customers/") and path.endswith("/payments"):
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی دریافت از مشتری ندارید."})
+                customer_id = path.split("/")[-2]
+                amount, payment_method = data.get("amount"), data.get("paymentMethod","cash")
+                if type(amount) is not int or amount <= 0 or amount > 9007199254740991 or payment_method not in ("cash","card","online"):
+                    return self.send_json(400, {"error": "مبلغ یا روش دریافت معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                customer = db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    db.rollback()
+                    return self.send_json(404, {"error": "مشتری پیدا نشد."})
+                balance = db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                                     (user["tenant_id"],customer_id)).fetchone()[0]
+                if amount > balance:
+                    db.rollback()
+                    return self.send_json(409, {"error": "مبلغ دریافت از مانده بدهی مشتری بیشتر است."})
+                payment_id, now = secrets.token_urlsafe(18), int(time.time())
+                db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                    VALUES(?,?,?,?,?,?,0,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
+                    "payment",payment_id,amount,"دریافت از مشتری",now))
+                post_customer_payment_journal(db,user["tenant_id"],user["id"],payment_id,customer_id,amount,payment_method)
+                audit(db,user["tenant_id"],user["id"],"customer.payment.received","customer",customer_id,{"amount":amount})
+                db.commit()
+                return self.send_json(201, {"ok":True,"paymentId":payment_id,"remainingBalance":balance-amount})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
@@ -693,6 +731,10 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("UPDATE transactions SET status='voided',voided_at=?,voided_by=? WHERE id=? AND tenant_id=? AND status='posted'",
                            (now,user["id"],tx_id,user["tenant_id"]))
                 reverse_transaction_journal(db,user["tenant_id"],user["id"],tx_id)
+                if order["payment_method"] == "credit" and order["customer_id"]:
+                    db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                        VALUES(?,?,?,?,?,?,0,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order["customer_id"],user["id"],
+                        "order_reversal",order_id,order["total"],"برگشت فروش اعتباری "+order["order_number"],now))
                 db.execute("UPDATE orders SET status='cancelled' WHERE id=? AND tenant_id=?", (order_id,user["tenant_id"]))
                 audit(db,user["tenant_id"],user["id"],"order.cancelled","order",order_id)
                 db.commit()
@@ -980,6 +1022,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if customer_id and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone():
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
+                if payment == "credit" and not customer_id:
+                    db.rollback()
+                    return self.send_json(400, {"error": "برای فروش اعتباری باید مشتری مشخص شود."})
                 products, subtotal, cogs_total = {}, 0, 0
                 for product_id, quantity in normalized.items():
                     product = db.execute("SELECT id,name,sell_price,cost_price FROM products WHERE id=? AND tenant_id=? AND active=1",
@@ -1018,6 +1063,10 @@ class Handler(SimpleHTTPRequestHandler):
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
                     VALUES(?,?,?,?,?,'paid',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
+                if payment == "credit":
+                    db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                        VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
+                        "order",order_id,total,"فروش اعتباری "+order_number,now))
                 for product_id,(product,quantity,line_total,average_cost) in products.items():
                     db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total)
                         VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,product["sell_price"],average_cost,line_total))
