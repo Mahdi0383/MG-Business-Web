@@ -19,6 +19,7 @@ MAX_BODY = 50 * 1024 * 1024
 MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
+PUBLIC_ORDER_FAILURES = {}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
@@ -478,6 +479,100 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/setup-status":
                 configured = db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
                 return self.send_json(200, {"configured": configured})
+            if path == "/api/public/menu":
+                tenant = db.execute("SELECT id,name FROM tenants ORDER BY created_at LIMIT 1").fetchone()
+                if not tenant or not module_enabled(db,tenant["id"],"cafe"):
+                    return self.send_json(404, {"error": "منوی آنلاین این کسب‌وکار فعال نیست."})
+                rows = db.execute("""SELECT p.id,p.name,p.category,p.sell_price AS sellPrice,
+                    COALESCE(SUM(m.quantity_delta),0) AS available
+                    FROM products p LEFT JOIN inventory_movements m
+                    ON m.product_id=p.id AND m.tenant_id=p.tenant_id
+                    WHERE p.tenant_id=? AND p.active=1 GROUP BY p.id ORDER BY p.category,p.name""",
+                    (tenant["id"],)).fetchall()
+                return self.send_json(200, {"businessName":tenant["name"],"items":[dict(row) for row in rows if row["available"]>0]})
+            if path == "/api/public/orders":
+                ip = self.client_address[0]
+                now = time.time()
+                attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip,[]) if now-stamp < 900]
+                if len(attempts) >= 5:
+                    return self.send_json(429, {"error": "تعداد سفارش‌های آنلاین بیش از حد است؛ بعداً دوباره تلاش کنید."})
+                name, phone = data.get("customerName"), data.get("phone")
+                items = data.get("items")
+                if not isinstance(name,str) or not 1 <= len(name.strip()) <= 160:
+                    return self.send_json(400, {"error": "نام مشتری معتبر نیست."})
+                if not isinstance(phone,str) or not 5 <= len(phone.strip()) <= 32:
+                    return self.send_json(400, {"error": "شماره تماس معتبر نیست."})
+                if not isinstance(items,list) or not 1 <= len(items) <= 30:
+                    return self.send_json(400, {"error": "سفارش باید حداقل یک قلم و حداکثر ۳۰ قلم داشته باشد."})
+                normalized = {}
+                for line in items:
+                    if not isinstance(line,dict) or not isinstance(line.get("productId"),str) or type(line.get("quantity")) is not int or not 1 <= line["quantity"] <= 30:
+                        return self.send_json(400, {"error": "قلم سفارش معتبر نیست."})
+                    normalized[line["productId"]] = normalized.get(line["productId"],0)+line["quantity"]
+                tenant = db.execute("SELECT id FROM tenants ORDER BY created_at LIMIT 1").fetchone()
+                if not tenant or not module_enabled(db,tenant["id"],"cafe"):
+                    return self.send_json(404, {"error": "ثبت سفارش آنلاین فعال نیست."})
+                tenant_id = tenant["id"]
+                actor = db.execute("SELECT id FROM users WHERE tenant_id=? AND active=1 ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1",
+                                   (tenant_id,)).fetchone()
+                if not actor:
+                    return self.send_json(503, {"error": "پذیرش سفارش در حال حاضر ممکن نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                customer = db.execute("SELECT id FROM customers WHERE tenant_id=? AND phone=?",
+                                      (tenant_id,phone.strip())).fetchone()
+                customer_id = customer["id"] if customer else secrets.token_urlsafe(18)
+                if not customer:
+                    db.execute("""INSERT INTO customers(id,tenant_id,full_name,phone,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?)""", (customer_id,tenant_id,name.strip(),phone.strip(),int(now),int(now)))
+                products, subtotal, cogs_total = {}, 0, 0
+                for product_id,quantity in normalized.items():
+                    product = db.execute("SELECT id,name,sell_price,cost_price FROM products WHERE id=? AND tenant_id=? AND active=1",
+                                         (product_id,tenant_id)).fetchone()
+                    if not product:
+                        db.rollback()
+                        return self.send_json(404, {"error": "یکی از کالاهای سفارش موجود نیست."})
+                    stock = db.execute("""SELECT COALESCE(SUM(quantity_delta),0) AS quantity,
+                        COALESCE(SUM(quantity_delta*unit_cost),0) AS stock_value
+                        FROM inventory_movements WHERE tenant_id=? AND product_id=?""",
+                        (tenant_id,product_id)).fetchone()
+                    if stock["quantity"] < quantity:
+                        db.rollback()
+                        return self.send_json(409, {"error": "موجودی کالای %s کافی نیست." % product["name"]})
+                    average_cost = max(0,stock["stock_value"]//stock["quantity"]) if stock["quantity"] else product["cost_price"]
+                    line_total = product["sell_price"]*quantity
+                    line_cost = average_cost*quantity
+                    if subtotal+line_total > 9007199254740991 or cogs_total+line_cost > 9007199254740991:
+                        db.rollback()
+                        return self.send_json(400, {"error": "مبلغ سفارش بیش از حد مجاز است."})
+                    subtotal += line_total
+                    cogs_total += line_cost
+                    products[product_id]=(product,quantity,line_total,average_cost)
+                if subtotal <= 0:
+                    db.rollback()
+                    return self.send_json(400, {"error": "مبلغ سفارش معتبر نیست."})
+                order_id, created = secrets.token_urlsafe(18), int(now)
+                order_number = "MG-ON-%s-%s" % (time.strftime("%Y%m%d"),secrets.token_hex(3).upper())
+                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
+                    VALUES(?,?,?,?,?,'paid',?,0,?,'credit',?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created))
+                db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                    VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),tenant_id,customer_id,actor["id"],"order",order_id,subtotal,"سفارش آنلاین "+order_number,created))
+                for product_id,(product,quantity,line_total,average_cost) in products.items():
+                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),tenant_id,order_id,product_id,product["name"],quantity,product["sell_price"],average_cost,line_total))
+                    movement_id=secrets.token_urlsafe(16)
+                    db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,tenant_id,product_id,actor["id"],"sale",-quantity,average_cost,"سفارش آنلاین "+order_number,created))
+                post_order_cogs_journal(db,tenant_id,actor["id"],order_id,cogs_total)
+                tx_id="order-"+order_id
+                title="سفارش آنلاین "+order_number
+                occurred_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(created))
+                db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
+                    VALUES(?,?,?,?,?,'income','سفارش آنلاین',?,?)""", (tx_id,tenant_id,actor["id"],title,subtotal,occurred_at,created))
+                post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100")
+                audit(db,tenant_id,actor["id"],"online_order.created","order",order_id,{"total":subtotal,"items":len(products)})
+                db.commit()
+                PUBLIC_ORDER_FAILURES[ip]=attempts
+                return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
             if path == "/api/me":
