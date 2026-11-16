@@ -34,8 +34,7 @@ dotnet run --project backend/src/MG.Business.Api/MG.Business.Api.csproj
 مستندات API و محدودیت‌های استقرار در [backend/README.md](backend/README.md) و اصول معماری در [docs/architecture/FOUNDATION.md](docs/architecture/FOUNDATION.md) قرار دارند.
 
 ## انتشار آزمایشی
-GitHub Pages فقط فایل‌های استاتیک frontend را میزبانی می‌کند؛ API و پایگاه داده باید روی زیرساخت جداگانه اجرا شوند. نشانی frontend:
-https://mahdi0383.github.io/MG-Business-Web/
+GitHub Pages فقط فایل‌های استاتیک frontend را میزبانی می‌کند؛ API و پایگاه داده باید روی زیرساخت جداگانه اجرا شوند. انتشار عمومی پس از merge شدن تغییرات و فعال‌سازی Pages روی شاخه اصلی انجام می‌شود؛ در حال حاضر این پروژه هنوز نسخه منتشرشده عملیاتی ندارد.
 
 ## اصول غیرقابل مذاکره
 - اطلاعات هر کسب‌وکار باید به‌صورت امن از سایر کسب‌وکارها جدا باشد.
