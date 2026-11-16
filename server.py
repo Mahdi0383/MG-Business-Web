@@ -594,83 +594,6 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE p.tenant_id=? AND p.active=1
                     GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
-            if path == "/api/suppliers":
-                if not module_enabled(db,user["tenant_id"],"inventory"):
-                    return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
-                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"دسترسی مدیریت تأمین‌کنندگان ندارید."})
-                name=data.get("name"); phone=data.get("phone"); email=data.get("email"); notes=data.get("notes","")
-                if not isinstance(name,str) or not 1<=len(name.strip())<=160: return self.send_json(400,{"error":"نام تأمین‌کننده معتبر نیست."})
-                if phone is not None and (not isinstance(phone,str) or len(phone)>32): return self.send_json(400,{"error":"شماره تماس معتبر نیست."})
-                if email is not None and (not isinstance(email,str) or len(email)>254): return self.send_json(400,{"error":"ایمیل معتبر نیست."})
-                if not isinstance(notes,str) or len(notes)>2000: return self.send_json(400,{"error":"یادداشت معتبر نیست."})
-                sid=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
-                db.execute("BEGIN IMMEDIATE")
-                db.execute("INSERT INTO suppliers(id,tenant_id,name,phone,email,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (sid,user["tenant_id"],name.strip(),phone,email,notes,now,now))
-                audit(db,user["tenant_id"],user["id"],"supplier.created","supplier",sid); db.commit()
-                return self.send_json(201,{"id":sid,"ok":True})
-            if path == "/api/purchase-invoices":
-                if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
-                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"دسترسی ثبت فاکتور خرید ندارید."})
-                sid=data.get("supplierId"); number=data.get("invoiceNumber"); inv_date=data.get("invoiceDate")
-                items=data.get("items"); discount=data.get("discount",0)
-                if not isinstance(sid,str) or not isinstance(number,str) or not 1<=len(number.strip())<=80: return self.send_json(400,{"error":"تأمین‌کننده یا شماره فاکتور معتبر نیست."})
-                from datetime import date
-                try: date.fromisoformat(inv_date)
-                except (TypeError,ValueError): return self.send_json(400,{"error":"تاریخ فاکتور باید YYYY-MM-DD باشد."})
-                if not isinstance(items,list) or not 1<=len(items)<=500 or type(discount) is not int or discount<0: return self.send_json(400,{"error":"اقلام یا تخفیف فاکتور معتبر نیست."})
-                invoice_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
-                db.execute("BEGIN IMMEDIATE")
-                if not db.execute("SELECT 1 FROM suppliers WHERE id=? AND tenant_id=? AND active=1",(sid,user["tenant_id"])).fetchone():
-                    db.rollback(); return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
-                prepared=[]; subtotal=0
-                for item in items:
-                    if not isinstance(item,dict): db.rollback(); return self.send_json(400,{"error":"قلم فاکتور نامعتبر است."})
-                    pid=item.get("productId"); qty=item.get("quantity"); cost=item.get("unitCost")
-                    if not isinstance(pid,str) or type(qty) is not int or not 1<=qty<=100000000 or type(cost) is not int or not 0<=cost<=9007199254740991:
-                        db.rollback(); return self.send_json(400,{"error":"کالا، تعداد یا بهای خرید معتبر نیست."})
-                    product=db.execute("SELECT id,name FROM products WHERE id=? AND tenant_id=? AND active=1",(pid,user["tenant_id"])).fetchone()
-                    if not product: db.rollback(); return self.send_json(404,{"error":"کالای فاکتور پیدا نشد."})
-                    line=qty*cost
-                    if line>9007199254740991 or subtotal+line>9007199254740991: db.rollback(); return self.send_json(400,{"error":"مبلغ فاکتور بیش از حد مجاز است."})
-                    subtotal+=line; prepared.append((product,qty,cost,line))
-                total_units=sum(row[1] for row in prepared)
-                if subtotal<=0 or discount>=subtotal or discount%total_units:
-                    db.rollback(); return self.send_json(400,{"error":"تخفیف باید کمتر از مبلغ فاکتور و قابل تقسیم بر تعداد کل واحدها باشد."})
-                discount_per_unit=discount//total_units
-                if any(row[2]<discount_per_unit for row in prepared):
-                    db.rollback(); return self.send_json(400,{"error":"تخفیف واحد نمی‌تواند از بهای خرید هیچ کالا بیشتر باشد."})
-                prepared=[(product,qty,cost-discount_per_unit,qty*(cost-discount_per_unit)) for product,qty,cost,line in prepared]
-                total=subtotal-discount
-                db.execute("""INSERT INTO purchase_invoices(id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,subtotal,discount,total,paid_amount,status,created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,0,'unpaid',?)""",(invoice_id,user["tenant_id"],sid,user["id"],number.strip(),inv_date,subtotal,discount,total,now))
-                for product,qty,cost,line in prepared:
-                    db.execute("INSERT INTO purchase_invoice_items(id,tenant_id,invoice_id,product_id,product_name,quantity,unit_cost,line_total) VALUES(?,?,?,?,?,?,?,?)",
-                        (secrets.token_urlsafe(16),user["tenant_id"],invoice_id,product["id"],product["name"],qty,cost,line))
-                    mid=secrets.token_urlsafe(16); note="فاکتور خرید "+number.strip()
-                    db.execute("INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (mid,user["tenant_id"],product["id"],user["id"],"purchase",qty,cost,note,now))
-                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note)
-                audit(db,user["tenant_id"],user["id"],"purchase_invoice.created","purchase_invoice",invoice_id,{"total":total,"items":len(prepared)})
-                db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
-            if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
-                if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
-                iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
-                if type(amount) is not int or amount<=0 or method not in ("cash","card","online"): return self.send_json(400,{"error":"مبلغ یا روش پرداخت معتبر نیست."})
-                db.execute("BEGIN IMMEDIATE")
-                inv=db.execute("SELECT * FROM purchase_invoices WHERE id=? AND tenant_id=?",(iid,user["tenant_id"])).fetchone()
-                if not inv: db.rollback(); return self.send_json(404,{"error":"فاکتور خرید پیدا نشد."})
-                remaining=inv["total"]-inv["paid_amount"]
-                if amount>remaining: db.rollback(); return self.send_json(409,{"error":"پرداخت از مانده فاکتور بیشتر است."})
-                payid=secrets.token_urlsafe(18); now=int(time.time())
-                db.execute("INSERT INTO supplier_payments(id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (payid,user["tenant_id"],iid,inv["supplier_id"],user["id"],method,amount,now))
-                paid=inv["paid_amount"]+amount; status="paid" if paid==inv["total"] else "partial"
-                db.execute("UPDATE purchase_invoices SET paid_amount=?,status=? WHERE id=?",(paid,status,iid))
-                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,amount,method)
-                audit(db,user["tenant_id"],user["id"],"supplier.payment.created","purchase_invoice",iid,{"amount":amount})
-                db.commit(); return self.send_json(201,{"paymentId":payid,"paidAmount":paid,"remainingBalance":inv["total"]-paid,"status":status})
             if path == "/api/inventory/movements":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
@@ -1388,6 +1311,83 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"product.created","product",product_id,{"sellPrice":sell_price})
                 db.commit()
                 return self.send_json(201, {"id": product_id, "ok": True})
+            if path == "/api/suppliers":
+                if not module_enabled(db,user["tenant_id"],"inventory"):
+                    return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"دسترسی مدیریت تأمین‌کنندگان ندارید."})
+                name=data.get("name"); phone=data.get("phone"); email=data.get("email"); notes=data.get("notes","")
+                if not isinstance(name,str) or not 1<=len(name.strip())<=160: return self.send_json(400,{"error":"نام تأمین‌کننده معتبر نیست."})
+                if phone is not None and (not isinstance(phone,str) or len(phone)>32): return self.send_json(400,{"error":"شماره تماس معتبر نیست."})
+                if email is not None and (not isinstance(email,str) or len(email)>254): return self.send_json(400,{"error":"ایمیل معتبر نیست."})
+                if not isinstance(notes,str) or len(notes)>2000: return self.send_json(400,{"error":"یادداشت معتبر نیست."})
+                sid=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("INSERT INTO suppliers(id,tenant_id,name,phone,email,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (sid,user["tenant_id"],name.strip(),phone,email,notes,now,now))
+                audit(db,user["tenant_id"],user["id"],"supplier.created","supplier",sid); db.commit()
+                return self.send_json(201,{"id":sid,"ok":True})
+            if path == "/api/purchase-invoices":
+                if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"دسترسی ثبت فاکتور خرید ندارید."})
+                sid=data.get("supplierId"); number=data.get("invoiceNumber"); inv_date=data.get("invoiceDate")
+                items=data.get("items"); discount=data.get("discount",0)
+                if not isinstance(sid,str) or not isinstance(number,str) or not 1<=len(number.strip())<=80: return self.send_json(400,{"error":"تأمین‌کننده یا شماره فاکتور معتبر نیست."})
+                from datetime import date
+                try: date.fromisoformat(inv_date)
+                except (TypeError,ValueError): return self.send_json(400,{"error":"تاریخ فاکتور باید YYYY-MM-DD باشد."})
+                if not isinstance(items,list) or not 1<=len(items)<=500 or type(discount) is not int or discount<0: return self.send_json(400,{"error":"اقلام یا تخفیف فاکتور معتبر نیست."})
+                invoice_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                db.execute("BEGIN IMMEDIATE")
+                if not db.execute("SELECT 1 FROM suppliers WHERE id=? AND tenant_id=? AND active=1",(sid,user["tenant_id"])).fetchone():
+                    db.rollback(); return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
+                prepared=[]; subtotal=0
+                for item in items:
+                    if not isinstance(item,dict): db.rollback(); return self.send_json(400,{"error":"قلم فاکتور نامعتبر است."})
+                    pid=item.get("productId"); qty=item.get("quantity"); cost=item.get("unitCost")
+                    if not isinstance(pid,str) or type(qty) is not int or not 1<=qty<=100000000 or type(cost) is not int or not 0<=cost<=9007199254740991:
+                        db.rollback(); return self.send_json(400,{"error":"کالا، تعداد یا بهای خرید معتبر نیست."})
+                    product=db.execute("SELECT id,name FROM products WHERE id=? AND tenant_id=? AND active=1",(pid,user["tenant_id"])).fetchone()
+                    if not product: db.rollback(); return self.send_json(404,{"error":"کالای فاکتور پیدا نشد."})
+                    line=qty*cost
+                    if line>9007199254740991 or subtotal+line>9007199254740991: db.rollback(); return self.send_json(400,{"error":"مبلغ فاکتور بیش از حد مجاز است."})
+                    subtotal+=line; prepared.append((product,qty,cost,line))
+                total_units=sum(row[1] for row in prepared)
+                if subtotal<=0 or discount>=subtotal or discount%total_units:
+                    db.rollback(); return self.send_json(400,{"error":"تخفیف باید کمتر از مبلغ فاکتور و قابل تقسیم بر تعداد کل واحدها باشد."})
+                discount_per_unit=discount//total_units
+                if any(row[2]<discount_per_unit for row in prepared):
+                    db.rollback(); return self.send_json(400,{"error":"تخفیف واحد نمی‌تواند از بهای خرید هیچ کالا بیشتر باشد."})
+                prepared=[(product,qty,cost-discount_per_unit,qty*(cost-discount_per_unit)) for product,qty,cost,line in prepared]
+                total=subtotal-discount
+                db.execute("""INSERT INTO purchase_invoices(id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,subtotal,discount,total,paid_amount,status,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,0,'unpaid',?)""",(invoice_id,user["tenant_id"],sid,user["id"],number.strip(),inv_date,subtotal,discount,total,now))
+                for product,qty,cost,line in prepared:
+                    db.execute("INSERT INTO purchase_invoice_items(id,tenant_id,invoice_id,product_id,product_name,quantity,unit_cost,line_total) VALUES(?,?,?,?,?,?,?,?)",
+                        (secrets.token_urlsafe(16),user["tenant_id"],invoice_id,product["id"],product["name"],qty,cost,line))
+                    mid=secrets.token_urlsafe(16); note="فاکتور خرید "+number.strip()
+                    db.execute("INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (mid,user["tenant_id"],product["id"],user["id"],"purchase",qty,cost,note,now))
+                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note)
+                audit(db,user["tenant_id"],user["id"],"purchase_invoice.created","purchase_invoice",invoice_id,{"total":total,"items":len(prepared)})
+                db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
+            if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
+                if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
+                iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
+                if type(amount) is not int or amount<=0 or method not in ("cash","card","online"): return self.send_json(400,{"error":"مبلغ یا روش پرداخت معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                inv=db.execute("SELECT * FROM purchase_invoices WHERE id=? AND tenant_id=?",(iid,user["tenant_id"])).fetchone()
+                if not inv: db.rollback(); return self.send_json(404,{"error":"فاکتور خرید پیدا نشد."})
+                remaining=inv["total"]-inv["paid_amount"]
+                if amount>remaining: db.rollback(); return self.send_json(409,{"error":"پرداخت از مانده فاکتور بیشتر است."})
+                payid=secrets.token_urlsafe(18); now=int(time.time())
+                db.execute("INSERT INTO supplier_payments(id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (payid,user["tenant_id"],iid,inv["supplier_id"],user["id"],method,amount,now))
+                paid=inv["paid_amount"]+amount; status="paid" if paid==inv["total"] else "partial"
+                db.execute("UPDATE purchase_invoices SET paid_amount=?,status=? WHERE id=?",(paid,status,iid))
+                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,amount,method)
+                audit(db,user["tenant_id"],user["id"],"supplier.payment.created","purchase_invoice",iid,{"amount":amount})
+                db.commit(); return self.send_json(201,{"paymentId":payid,"paidAmount":paid,"remainingBalance":inv["total"]-paid,"status":status})
             if path == "/api/inventory/movements":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
