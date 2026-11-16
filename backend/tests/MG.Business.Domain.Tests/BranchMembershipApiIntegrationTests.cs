@@ -32,9 +32,8 @@ public sealed class BranchMembershipApiIntegrationTests
         Assert.Equal(HttpStatusCode.Created, branchResponse.StatusCode);
         var branch = await branchResponse.Content.ReadFromJsonAsync<BranchResponse>();
 
-        using var staff = await RegisterAndLoginAsync(factory, $"staff-{Guid.NewGuid():N}@mg.test");
-        var email = await GetEmailFromTokenlessHelper(factory);
-        var staffEmail = staff.DefaultRequestHeaders.Contains("X-Staff-Email") ? staff.DefaultRequestHeaders.GetValues("X-Staff-Email").Single() : email;
+        var staffEmail = $"staff-{Guid.NewGuid():N}@mg.test";
+        using var staff = await RegisterAndLoginAsync(factory, staffEmail);
 
         var membership = await owner.PostAsJsonAsync("/api/memberships", new
         {
@@ -54,13 +53,6 @@ public sealed class BranchMembershipApiIntegrationTests
         staff.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
         var otherBranch = await staff.GetAsync("/api/context");
         Assert.Equal(HttpStatusCode.Forbidden, otherBranch.StatusCode);
-    }
-
-    private static async Task<string> GetEmailFromTokenlessHelper(WebApplicationFactory<Program> factory)
-    {
-        using var scope = factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
-        return await db.Users.OrderByDescending(x => x.CreatedAtUtc).Select(x => x.Email!).FirstAsync();
     }
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
