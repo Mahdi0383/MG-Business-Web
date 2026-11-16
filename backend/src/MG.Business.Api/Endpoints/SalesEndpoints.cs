@@ -1,5 +1,8 @@
 using System.Data;
 using System.Data.Common;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -214,17 +217,37 @@ public static class SalesEndpoints
             return Results.Ok(payments);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
-        group.MapPost("/orders/{orderId:guid}/payments", async (Guid orderId, RecordPaymentRequest request,
+        group.MapPost("/orders/{orderId:guid}/payments", async (Guid orderId, RecordPaymentRequest request, HttpRequest httpRequest,
             ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
                 return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
+            if (!httpRequest.Headers.TryGetValue("Idempotency-Key", out var keyHeader)
+                || string.IsNullOrWhiteSpace(keyHeader.ToString()) || keyHeader.ToString().Length > 128)
+                return Results.BadRequest(new { message = "هدر Idempotency-Key الزامی است و باید حداکثر ۱۲۸ نویسه باشد." });
+            var idempotencyKey = keyHeader.ToString();
+            var fingerprintPayload = string.Join("|", orderId.ToString("D"), request.Amount.ToString("G29", CultureInfo.InvariantCulture),
+                ((int)request.PaymentMethod).ToString(CultureInfo.InvariantCulture), request.PaymentAccountId.ToString("D"),
+                request.ReceivableAccountId.ToString("D"), request.PaymentReference ?? string.Empty);
+            var requestFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintPayload)));
             if (request.Amount <= 0m || decimal.Round(request.Amount, 2) != request.Amount)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["amount"] = ["مبلغ دریافت باید مثبت و حداکثر تا دو رقم اعشار باشد."] });
             if (!Enum.IsDefined(request.PaymentMethod) || request.PaymentMethod == PaymentMethod.OnAccount)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش دریافت وجه معتبر نیست."] });
             if (request.PaymentReference?.Length > 100)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
+
+            var priorPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+            if (priorPayment is not null)
+            {
+                if (!string.Equals(priorPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                    return Results.Conflict(new { message = "کلید Idempotency-Key قبلاً برای درخواست متفاوتی استفاده شده است." });
+                var priorOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == priorPayment.SalesOrderId, cancellationToken);
+                return priorOrder is null ? Results.Conflict(new { message = "رکورد دریافت قبلی با فاکتور متناظر پیدا نشد." })
+                    : Results.Ok(new { priorOrder.Id, priorOrder.Number, priorOrder.Total, priorOrder.PaidAmount, priorOrder.BalanceDue, paymentId = priorPayment.Id, replayed = true });
+            }
 
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
@@ -245,7 +268,7 @@ public static class SalesEndpoints
 
                 order.SetPaidAmount(order.PaidAmount + request.Amount);
                 db.SalesPayments.Add(new SalesPayment(tenantId, branchId, order.Id,
-                    request.Amount, request.PaymentMethod, request.PaymentReference));
+                    request.Amount, request.PaymentMethod, request.PaymentReference, idempotencyKey, requestFingerprint));
                 db.JournalEntries.Add(new JournalEntry(tenantId, branchId, DateOnly.FromDateTime(DateTime.UtcNow),
                     $"Payment for {order.Number}",
                     [
@@ -255,7 +278,7 @@ public static class SalesEndpoints
 
                 await db.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return Results.Ok(new { order.Id, order.Number, order.Total, order.PaidAmount, order.BalanceDue });
+                return Results.Ok(new { order.Id, order.Number, order.Total, order.PaidAmount, order.BalanceDue, paymentId = db.SalesPayments.Local.Single(x => x.IdempotencyKey == idempotencyKey).Id, replayed = false });
             }
             catch (ArgumentException exception)
             {
@@ -265,6 +288,18 @@ public static class SalesEndpoints
             catch (DbUpdateException)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+                var racedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                if (racedPayment is not null)
+                {
+                    if (!string.Equals(racedPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                        return Results.Conflict(new { message = "کلید Idempotency-Key هم‌زمان برای درخواست متفاوتی استفاده شده است." });
+                    var racedOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Id == racedPayment.SalesOrderId, cancellationToken);
+                    if (racedOrder is not null)
+                        return Results.Ok(new { racedOrder.Id, racedOrder.Number, racedOrder.Total, racedOrder.PaidAmount, racedOrder.BalanceDue, paymentId = racedPayment.Id, replayed = true });
+                }
                 return Results.Conflict(new { message = "ثبت دریافت با تعارض داده‌ها انجام نشد؛ مانده فاکتور را دوباره بررسی کنید." });
             }
             catch (DbException)
