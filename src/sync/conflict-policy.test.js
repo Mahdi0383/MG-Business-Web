@@ -37,6 +37,49 @@ test("applies customer updates only when the base version matches or the operati
 });
 
 
+test("applies customer deactivation only against the matching active version or its own echo", () => {
+  const operation = {
+    operationId: "customer-deactivate-1",
+    operationType: "customer.profile.deactivated",
+    schemaVersion: 1,
+    payload: { customerId: "customer-1", baseVersion: 4 }
+  };
+  const matching = classifyIncomingOperation(operation, {
+    version: 4, isActive: true, lastOperationId: "previous-operation"
+  });
+  assert.equal(matching.disposition, "apply");
+  assert.equal(matching.reason, "customer-version-matches");
+
+  const echo = classifyIncomingOperation(operation, {
+    version: 5, isActive: false, lastOperationId: "customer-deactivate-1"
+  });
+  assert.equal(echo.disposition, "apply");
+  assert.equal(echo.reason, "originating-device-echo");
+
+  const stale = classifyIncomingOperation(operation, {
+    version: 5, isActive: true, lastOperationId: "another-operation"
+  });
+  assert.equal(stale.disposition, "conflict");
+  assert.equal(stale.reason, "stale-customer-base-version");
+
+  const alreadyInactive = classifyIncomingOperation(operation, {
+    version: 5, isActive: false, lastOperationId: "another-operation"
+  });
+  assert.equal(alreadyInactive.disposition, "conflict");
+  assert.equal(alreadyInactive.reason, "customer-already-deactivated");
+});
+
+test("routes customer deactivation without a positive base version to manual review", () => {
+  const result = classifyIncomingOperation({
+    operationId: "customer-deactivate-invalid",
+    operationType: "customer.profile.deactivated",
+    schemaVersion: 1,
+    payload: { customerId: "customer-1", baseVersion: 0 }
+  }, { version: 1, isActive: true });
+  assert.equal(result.disposition, "manual-review");
+  assert.equal(result.reason, "invalid-customer-deactivation-version-precondition");
+});
+
 test("fails closed for unknown commands and invalid customer update versions", () => {
   const unknown = classifyIncomingOperation({
     operationId: "unknown-1",
