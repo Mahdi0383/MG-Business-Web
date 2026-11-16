@@ -252,9 +252,9 @@ public static class SalesEndpoints
                 return Results.Ok(new { priorOrder.Id, priorOrder.Number, priorOrder.Total, priorOrder.PaidAmount, priorOrder.BalanceDue, paymentId = priorPayment.Id, replayed = true });
             }
 
-            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
             {
+                await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
                 var order = await db.SalesOrders.SingleOrDefaultAsync(x =>
                     x.TenantId == tenantId && x.BranchId == branchId && x.Id == orderId, cancellationToken);
                 if (order is null)
@@ -285,12 +285,14 @@ public static class SalesEndpoints
             }
             catch (ArgumentException exception)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                if (db.Database.CurrentTransaction is { } activeTransaction)
+                    await activeTransaction.RollbackAsync(cancellationToken);
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["payment"] = [exception.Message] });
             }
             catch (DbUpdateException)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                if (db.Database.CurrentTransaction is { } activeTransaction)
+                    await activeTransaction.RollbackAsync(cancellationToken);
                 db.ChangeTracker.Clear();
                 var racedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
                     x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
@@ -307,7 +309,8 @@ public static class SalesEndpoints
             }
             catch (DbException)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                if (db.Database.CurrentTransaction is { } activeTransaction)
+                    await activeTransaction.RollbackAsync(cancellationToken);
                 db.ChangeTracker.Clear();
                 var committedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
                     x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
