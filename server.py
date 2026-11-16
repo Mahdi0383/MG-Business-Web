@@ -377,9 +377,14 @@ class Handler(SimpleHTTPRequestHandler):
             parts = resolved.relative_to(ROOT).parts
         except ValueError:
             return str(ROOT / "__blocked_resource__")
-        blocked = any(part.startswith(".") or part in ("data","__pycache__",".venv") for part in parts)
+        blocked = any(part.startswith(".") or part in ("data","__pycache__",".venv","tests",".github") for part in parts)
+        blocked = blocked or resolved.name in ("server.py","license_tool.py","README.md")
         blocked = blocked or resolved.suffix.lower() in (".sqlite",".sqlite3",".db",".env")
         return str(ROOT / "__blocked_resource__") if blocked else str(resolved)
+
+    def list_directory(self, path):
+        self.send_error(403, "Directory listing is disabled")
+        return None
 
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
