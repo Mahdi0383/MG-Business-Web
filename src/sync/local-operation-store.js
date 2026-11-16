@@ -194,16 +194,25 @@ export class LocalOperationStore {
     const transaction = database.transaction([INBOX_STORE, META_STORE], "readwrite");
     const done = transactionDone(transaction);
     const inbox = transaction.objectStore(INBOX_STORE);
-    for (const operation of operations) {
-      inbox.put({
-        ...operation,
-        tenantId,
-        applied: false,
-        appliedAtUtc: null,
-        receivedLocallyAtUtc: new Date().toISOString()
-      });
-    }
-    transaction.objectStore(META_STORE).put({ key: `cursor:${tenantId}`, value: nextSequence });
+    const metadata = transaction.objectStore(META_STORE);
+    const cursorRequest = metadata.get(`cursor:${tenantId}`);
+    cursorRequest.onsuccess = () => {
+      const storedCursor = Number.isSafeInteger(cursorRequest.result?.value) ? cursorRequest.result.value : 0;
+      if (nextSequence < storedCursor) {
+        transaction.abort();
+        return;
+      }
+      for (const operation of operations) {
+        inbox.put({
+          ...operation,
+          tenantId,
+          applied: false,
+          appliedAtUtc: null,
+          receivedLocallyAtUtc: new Date().toISOString()
+        });
+      }
+      metadata.put({ key: `cursor:${tenantId}`, value: nextSequence });
+    };
     await done;
     return operations.length;
   }
