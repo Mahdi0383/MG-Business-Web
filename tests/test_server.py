@@ -317,6 +317,9 @@ class ApiIntegrationTests(unittest.TestCase):
             "hourlyRate": 120000, "isFree": False
         }, token)
         self.assertEqual(status, 201)
+        # Device updates must be handled only by POST; GET must never attempt a write.
+        status, result = self.request("GET", "/api/gamenet/devices/pc-01", token=token)
+        self.assertEqual(status, 404)
         status, result = self.request("POST", "/api/gamenet/sessions", {
             "id": "session-01", "deviceId": "pc-01", "customerId": "customer-1", "playersCount": 2
         }, token)
