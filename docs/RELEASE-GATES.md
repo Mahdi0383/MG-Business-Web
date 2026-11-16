@@ -17,6 +17,8 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [x] Public ordering rejects ambiguous multi-tenant routing.
 - [x] Sync journal validates payload integrity, actor scope, idempotency envelopes and monotonic cursors.
 - [x] PWA shell does not cache authentication, API or synchronization traffic.
+- [x] Customer profile create, update and deactivation commands use versioned local projections, durable outbox records, authoritative server replay and transactional inbound projection/acknowledgement with origin-echo handling and stale-version conflicts.
+- [x] Frontend CI and SQLite-backed backend integration/domain CI pass on the current development head (`6eda3139bcb8d04488096a50ec0683ad11665a39`).
 
 ## Mandatory blockers before live financial use
 
