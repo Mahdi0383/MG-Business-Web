@@ -68,6 +68,40 @@ export function classifyIncomingOperation(operation, currentState = null) {
     };
   }
 
+  if (type === "customer.profile.updated") {
+    const baseVersion = operation.payload?.baseVersion;
+    if (!Number.isSafeInteger(baseVersion) || baseVersion < 1) {
+      return {
+        disposition: "manual-review",
+        reason: "invalid-customer-update-version-precondition",
+        operationId: operation.operationId ?? null
+      };
+    }
+    if (currentState?.lastOperationId === operation.operationId) {
+      return {
+        disposition: "apply",
+        reason: "originating-device-echo",
+        expectedVersion: baseVersion,
+        operationId: operation.operationId ?? null
+      };
+    }
+    if (currentState && currentState.version === baseVersion) {
+      return {
+        disposition: "apply",
+        reason: "customer-version-matches",
+        expectedVersion: baseVersion,
+        operationId: operation.operationId ?? null
+      };
+    }
+    return {
+      disposition: "conflict",
+      reason: "stale-customer-base-version",
+      expectedVersion: baseVersion,
+      actualVersion: currentState?.version ?? null,
+      operationId: operation.operationId ?? null
+    };
+  }
+
   if (type.startsWith("customer.profile.") || type.startsWith("customer.contact.")) {
     return {
       disposition: "manual-review",
