@@ -178,8 +178,9 @@ public static class SyncEndpoints
                 {
                     ["deviceId"] = ["A valid device ID is required."]
                 });
-            if (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
-                || signedDeviceId != request.DeviceId)
+            if (configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures")
+                && (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
+                    || signedDeviceId != request.DeviceId))
                 return Results.Forbid();
 
             var metadataErrors = new Dictionary<string, string[]>();
