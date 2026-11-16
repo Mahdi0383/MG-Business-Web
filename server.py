@@ -108,6 +108,13 @@ CREATE TABLE IF NOT EXISTS inventory_movements(
  created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_inventory_tenant_product_date ON inventory_movements(tenant_id,product_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS suppliers(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES tenants(id),name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 160),phone TEXT,email TEXT,notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(tenant_id,name));
+CREATE TABLE IF NOT EXISTS purchase_invoices(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES tenants(id),supplier_id TEXT NOT NULL REFERENCES suppliers(id),created_by TEXT NOT NULL REFERENCES users(id),invoice_number TEXT NOT NULL,invoice_date TEXT NOT NULL,subtotal INTEGER NOT NULL CHECK(subtotal>0),discount INTEGER NOT NULL CHECK(discount>=0),total INTEGER NOT NULL CHECK(total>0),paid_amount INTEGER NOT NULL DEFAULT 0 CHECK(paid_amount>=0 AND paid_amount<=total),status TEXT NOT NULL CHECK(status IN ('unpaid','partial','paid')),created_at INTEGER NOT NULL,UNIQUE(tenant_id,invoice_number));
+CREATE TABLE IF NOT EXISTS purchase_invoice_items(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,invoice_id TEXT NOT NULL REFERENCES purchase_invoices(id),product_id TEXT NOT NULL REFERENCES products(id),product_name TEXT NOT NULL,quantity INTEGER NOT NULL CHECK(quantity>0),unit_cost INTEGER NOT NULL CHECK(unit_cost>=0),line_total INTEGER NOT NULL CHECK(line_total>=0));
+CREATE TABLE IF NOT EXISTS supplier_payments(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,invoice_id TEXT NOT NULL REFERENCES purchase_invoices(id),supplier_id TEXT NOT NULL REFERENCES suppliers(id),created_by TEXT NOT NULL REFERENCES users(id),payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','card','online')),amount INTEGER NOT NULL CHECK(amount>0),created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_purchase_invoices_tenant_date ON purchase_invoices(tenant_id,invoice_date DESC);
+CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_invoice ON supplier_payments(tenant_id,invoice_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS customers(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  full_name TEXT NOT NULL CHECK(length(full_name) BETWEEN 1 AND 160),
@@ -237,6 +244,8 @@ def connect():
         for tenant in db.execute("SELECT id FROM tenants").fetchall():
             seed_trial_modules(db, tenant["id"])
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=6").fetchone():
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(6,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -392,6 +401,16 @@ def verify_license_code(code):
         modules.add("accounting")
     return {"license_id":license_id,"modules":sorted(modules),"expires_at":expires_at,
             "plan":str(payload.get("plan","custom"))[:80]}
+
+def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, method):
+    accounts={r["code"]:r["id"] for r in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1",(tenant_id,))}
+    cash_code={"cash":"1000","card":"1010","online":"1020"}[method]
+    entry_id,now=secrets.token_urlsafe(18),int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""",(entry_id,tenant_id,time.strftime("%Y-%m-%d"),"پرداخت به تأمین‌کننده","supplier_payment",payment_id,user_id,now))
+    for account_id,debit,credit in ((accounts["2000"],amount,0),(accounts[cash_code],0,amount)):
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+            (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
 
 def seed_trial_modules(db, tenant_id):
     expires = int(time.time()) + 14*24*60*60
@@ -571,6 +590,77 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE p.tenant_id=? AND p.active=1
                     GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/suppliers":
+                if not module_enabled(db,user["tenant_id"],"inventory"):
+                    return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"دسترسی مدیریت تأمین‌کنندگان ندارید."})
+                name=data.get("name"); phone=data.get("phone"); email=data.get("email"); notes=data.get("notes","")
+                if not isinstance(name,str) or not 1<=len(name.strip())<=160: return self.send_json(400,{"error":"نام تأمین‌کننده معتبر نیست."})
+                if phone is not None and (not isinstance(phone,str) or len(phone)>32): return self.send_json(400,{"error":"شماره تماس معتبر نیست."})
+                if email is not None and (not isinstance(email,str) or len(email)>254): return self.send_json(400,{"error":"ایمیل معتبر نیست."})
+                if not isinstance(notes,str) or len(notes)>2000: return self.send_json(400,{"error":"یادداشت معتبر نیست."})
+                sid=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("INSERT INTO suppliers(id,tenant_id,name,phone,email,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (sid,user["tenant_id"],name.strip(),phone,email,notes,now,now))
+                audit(db,user["tenant_id"],user["id"],"supplier.created","supplier",sid); db.commit()
+                return self.send_json(201,{"id":sid,"ok":True})
+            if path == "/api/purchase-invoices":
+                if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"دسترسی ثبت فاکتور خرید ندارید."})
+                sid=data.get("supplierId"); number=data.get("invoiceNumber"); inv_date=data.get("invoiceDate")
+                items=data.get("items"); discount=data.get("discount",0)
+                if not isinstance(sid,str) or not isinstance(number,str) or not 1<=len(number.strip())<=80: return self.send_json(400,{"error":"تأمین‌کننده یا شماره فاکتور معتبر نیست."})
+                from datetime import date
+                try: date.fromisoformat(inv_date)
+                except (TypeError,ValueError): return self.send_json(400,{"error":"تاریخ فاکتور باید YYYY-MM-DD باشد."})
+                if not isinstance(items,list) or not 1<=len(items)<=500 or type(discount) is not int or discount<0: return self.send_json(400,{"error":"اقلام یا تخفیف فاکتور معتبر نیست."})
+                invoice_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                db.execute("BEGIN IMMEDIATE")
+                if not db.execute("SELECT 1 FROM suppliers WHERE id=? AND tenant_id=? AND active=1",(sid,user["tenant_id"])).fetchone():
+                    db.rollback(); return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
+                prepared=[]; subtotal=0
+                for item in items:
+                    if not isinstance(item,dict): db.rollback(); return self.send_json(400,{"error":"قلم فاکتور نامعتبر است."})
+                    pid=item.get("productId"); qty=item.get("quantity"); cost=item.get("unitCost")
+                    if not isinstance(pid,str) or type(qty) is not int or not 1<=qty<=100000000 or type(cost) is not int or not 0<=cost<=9007199254740991:
+                        db.rollback(); return self.send_json(400,{"error":"کالا، تعداد یا بهای خرید معتبر نیست."})
+                    product=db.execute("SELECT id,name FROM products WHERE id=? AND tenant_id=? AND active=1",(pid,user["tenant_id"])).fetchone()
+                    if not product: db.rollback(); return self.send_json(404,{"error":"کالای فاکتور پیدا نشد."})
+                    line=qty*cost
+                    if line>9007199254740991 or subtotal+line>9007199254740991: db.rollback(); return self.send_json(400,{"error":"مبلغ فاکتور بیش از حد مجاز است."})
+                    subtotal+=line; prepared.append((product,qty,cost,line))
+                if subtotal<=0 or discount>=subtotal: db.rollback(); return self.send_json(400,{"error":"تخفیف باید از مبلغ فاکتور کمتر باشد."})
+                total=subtotal-discount
+                db.execute("""INSERT INTO purchase_invoices(id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,subtotal,discount,total,paid_amount,status,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,0,'unpaid',?)""",(invoice_id,user["tenant_id"],sid,user["id"],number.strip(),inv_date,subtotal,discount,total,now))
+                for product,qty,cost,line in prepared:
+                    db.execute("INSERT INTO purchase_invoice_items(id,tenant_id,invoice_id,product_id,product_name,quantity,unit_cost,line_total) VALUES(?,?,?,?,?,?,?,?)",
+                        (secrets.token_urlsafe(16),user["tenant_id"],invoice_id,product["id"],product["name"],qty,cost,line))
+                    mid=secrets.token_urlsafe(16); note="فاکتور خرید "+number.strip()
+                    db.execute("INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (mid,user["tenant_id"],product["id"],user["id"],"purchase",qty,cost,note,now))
+                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note)
+                audit(db,user["tenant_id"],user["id"],"purchase_invoice.created","purchase_invoice",invoice_id,{"total":total,"items":len(prepared)})
+                db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
+            if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
+                if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
+                iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
+                if type(amount) is not int or amount<=0 or method not in ("cash","card","online"): return self.send_json(400,{"error":"مبلغ یا روش پرداخت معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                inv=db.execute("SELECT * FROM purchase_invoices WHERE id=? AND tenant_id=?",(iid,user["tenant_id"])).fetchone()
+                if not inv: db.rollback(); return self.send_json(404,{"error":"فاکتور خرید پیدا نشد."})
+                remaining=inv["total"]-inv["paid_amount"]
+                if amount>remaining: db.rollback(); return self.send_json(409,{"error":"پرداخت از مانده فاکتور بیشتر است."})
+                payid=secrets.token_urlsafe(18); now=int(time.time())
+                db.execute("INSERT INTO supplier_payments(id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (payid,user["tenant_id"],iid,inv["supplier_id"],user["id"],method,amount,now))
+                paid=inv["paid_amount"]+amount; status="paid" if paid==inv["total"] else "partial"
+                db.execute("UPDATE purchase_invoices SET paid_amount=?,status=? WHERE id=?",(paid,status,iid))
+                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,amount,method)
+                audit(db,user["tenant_id"],user["id"],"supplier.payment.created","purchase_invoice",iid,{"amount":amount})
+                db.commit(); return self.send_json(201,{"paymentId":payid,"paidAmount":paid,"remainingBalance":inv["total"]-paid,"status":status})
             if path == "/api/inventory/movements":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
@@ -580,6 +670,19 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM inventory_movements m JOIN products p ON p.id=m.product_id
                     WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/suppliers":
+                if not module_enabled(db,user["tenant_id"],"inventory"):
+                    return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                rows=db.execute("SELECT id,name,phone,email,notes,active,created_at AS createdAt FROM suppliers WHERE tenant_id=? ORDER BY name LIMIT 5000",(user["tenant_id"],)).fetchall()
+                return self.send_json(200,{"items":[dict(r) for r in rows]})
+            if path == "/api/purchase-invoices":
+                if not module_enabled(db,user["tenant_id"],"inventory"):
+                    return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                rows=db.execute("""SELECT i.id,i.invoice_number AS invoiceNumber,i.invoice_date AS invoiceDate,i.subtotal,i.discount,i.total,
+                    i.paid_amount AS paidAmount,i.status,s.id AS supplierId,s.name AS supplierName
+                    FROM purchase_invoices i JOIN suppliers s ON s.id=i.supplier_id WHERE i.tenant_id=?
+                    ORDER BY i.invoice_date DESC,i.created_at DESC LIMIT 2000""",(user["tenant_id"],)).fetchall()
+                return self.send_json(200,{"items":[dict(r) for r in rows]})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
