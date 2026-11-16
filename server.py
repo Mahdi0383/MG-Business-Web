@@ -337,12 +337,14 @@ def verify_license_code(code):
         payload = json.loads(base64.urlsafe_b64decode(parts[1]+"==="))
     except (ValueError, json.JSONDecodeError):
         raise ValueError("محتوای کد لایسنس معتبر نیست.")
+    if not isinstance(payload,dict):
+        raise ValueError("محتوای کد لایسنس باید یک شیء معتبر باشد.")
     modules = payload.get("modules")
     expires_at = payload.get("expires_at")
     license_id = payload.get("license_id")
     if not isinstance(license_id,str) or not 1 <= len(license_id) <= 100:
         raise ValueError("شناسه لایسنس معتبر نیست.")
-    if not isinstance(modules,list) or any(module not in MODULE_KEYS for module in modules):
+    if not isinstance(modules,list) or any(not isinstance(module,str) or module not in MODULE_KEYS for module in modules):
         raise ValueError("فهرست ماژول‌های لایسنس معتبر نیست.")
     if type(expires_at) is not int or expires_at <= int(time.time()):
         raise ValueError("اعتبار لایسنس پایان یافته یا تاریخ آن معتبر نیست.")
@@ -809,9 +811,10 @@ class Handler(SimpleHTTPRequestHandler):
                 now, tenant_id = int(time.time()), user["tenant_id"]
                 db.execute("BEGIN IMMEDIATE")
                 existing = db.execute("SELECT tenant_id FROM licenses WHERE code_hash=?", (code_hash,)).fetchone()
-                if existing and existing["tenant_id"] != tenant_id:
+                existing_id = db.execute("SELECT tenant_id FROM licenses WHERE id=?", (license["license_id"],)).fetchone()
+                if (existing and existing["tenant_id"] != tenant_id) or (existing_id and existing_id["tenant_id"] != tenant_id):
                     db.rollback()
-                    return self.send_json(409, {"error": "این کد لایسنس قبلاً برای فضای کاری دیگری فعال شده است."})
+                    return self.send_json(409, {"error": "این کد یا شناسه لایسنس قبلاً برای فضای کاری دیگری فعال شده است."})
                 db.execute("""INSERT OR REPLACE INTO licenses(id,tenant_id,code_hash,plan,expires_at,activated_at,status)
                     VALUES(?,?,?,?,?,?,'active')""", (license["license_id"],tenant_id,code_hash,license["plan"],license["expires_at"],now))
                 db.execute("DELETE FROM tenant_modules WHERE tenant_id=?", (tenant_id,))
