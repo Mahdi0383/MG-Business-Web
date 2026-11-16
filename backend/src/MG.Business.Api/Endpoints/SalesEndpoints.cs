@@ -20,7 +20,8 @@ public static class SalesEndpoints
         group.MapGet("/orders", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             var orders = await db.SalesOrders.AsNoTracking()
-                .Where(x => x.TenantId == tenant.TenantId)
+                .Where(x => x.TenantId == tenant.TenantId
+                    && (tenant.BranchId == null || x.BranchId == tenant.BranchId))
                 .Take(100)
                 .Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
                     x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc))
