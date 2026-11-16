@@ -18,7 +18,7 @@ function setup(rows) {
 
 test("applies eligible incoming operations through the atomic adapter contract", async () => {
   const { processor, calls } = setup([{
-    sequence: 1, operationId: "op-1", operationType: "customer.profile.updated",
+    sequence: 1, schemaVersion: 1, operationId: "op-1", operationType: "customer.profile.updated",
     payloadJson: JSON.stringify({ name: "MG" })
   }]);
   const result = await processor.processBatch("tenant-1");
@@ -30,7 +30,7 @@ test("applies eligible incoming operations through the atomic adapter contract",
 
 test("records sensitive operations as conflicts without applying them", async () => {
   const { processor, calls } = setup([{
-    sequence: 2, operationId: "op-2", operationType: "accounting.entry.posted",
+    sequence: 2, schemaVersion: 1, operationId: "op-2", operationType: "accounting.entry.posted",
     payloadJson: JSON.stringify({ amount: 100 })
   }]);
   const result = await processor.processBatch("tenant-1");
@@ -41,7 +41,7 @@ test("records sensitive operations as conflicts without applying them", async ()
 
 test("stops on adapter failure and does not process later operations", async () => {
   const rows = [1, 2].map(sequence => ({
-    sequence, operationId: `op-${sequence}`,
+    sequence, schemaVersion: 1, operationId: `op-${sequence}`,
     operationType: "customer.profile.updated",
     payloadJson: JSON.stringify({ name: "MG" })
   }));
@@ -69,9 +69,9 @@ test("rejects incomplete dependencies", () => {
 
 test("stops ordered replay at the first unresolved conflict", async () => {
   const rows = [
-    { sequence: 2, operationId: "op-2", operationType: "customer.profile.updated",
+    { sequence: 2, schemaVersion: 1, operationId: "op-2", operationType: "customer.profile.updated",
       payloadJson: JSON.stringify({ name: "must-wait" }) },
-    { sequence: 1, operationId: "op-1", operationType: "accounting.entry.posted",
+    { sequence: 1, schemaVersion: 1, operationId: "op-1", operationType: "accounting.entry.posted",
       payloadJson: JSON.stringify({ amount: 100 }) }
   ];
   const calls = [];
