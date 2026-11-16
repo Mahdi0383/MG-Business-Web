@@ -126,3 +126,11 @@ The current repository is a foundation, not a finished commercial product. A foc
 - The next implementation increment must add the version migration and 409 stale-write behavior before wiring the browser outbox or inbound update handler.
 - Required two-device, duplicate-delivery, origin-echo, stale-version, crash-atomicity and SQLite/PostgreSQL tests are specified in ADR-008.
 
+### Customer optimistic concurrency implementation — 2026-11-16
+
+- Added a non-null customer aggregate version initialized to 1 and an EF concurrency-token mapping.
+- Added the customer version migration with a default of 1 so existing rows retain a valid version.
+- Customer API read/create responses now expose the version. Customer updates require a positive baseVersion; successful updates advance the version and stale writes return HTTP 409 without overwriting the newer record.
+- Added SQLite-backed API integration coverage for version advancement and stale-write rejection, plus a domain version progression test.
+- Offline customer update commands remain fail-closed: server journal replay, durable idempotency outcomes, atomic inbound projection, origin-device echo handling and conflict lifecycle are still required before enabling offline edits.
+
