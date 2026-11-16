@@ -6,7 +6,7 @@ on:
       - feature/platform-core-foundation
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   scaffold:
@@ -39,3 +39,23 @@ jobs:
           name: initial-postgres-migrations
           path: backend/src/MG.Business.Infrastructure/Persistence/Migrations/
           if-no-files-found: error
+      - name: Commit generated migration sources to this feature branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const directory = 'backend/src/MG.Business.Infrastructure/Persistence/Migrations';
+            const branch = context.ref.replace('refs/heads/', '');
+            for (const name of fs.readdirSync(directory).filter(name => name.endsWith('.cs')).sort()) {
+              const fullPath = path.join(directory, name);
+              const content = fs.readFileSync(fullPath).toString('base64');
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: `${directory}/${name}`,
+                message: `Commit generated EF migration source: ${name}`,
+                content,
+                branch
+              });
+            }
