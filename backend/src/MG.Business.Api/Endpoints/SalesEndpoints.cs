@@ -157,7 +157,7 @@ public static class SalesEndpoints
                     order.BalanceDue,
                     CostOfGoodsSold = totalCost,
                     GrossProfit = order.Total - totalCost,
-                    order.Status,
+                    status = order.Status.ToString(),
                     order.CreatedAtUtc
                 });
             }
