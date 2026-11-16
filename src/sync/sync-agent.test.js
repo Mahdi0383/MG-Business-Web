@@ -169,8 +169,8 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
     }
   };
   const store = {
-    async getPending(tenantId, limit, branchId) {
-      pendingContext = { tenantId, limit, branchId };
+    async getPending(tenantId, limit, branchId, allowTenantWide) {
+      pendingContext = { tenantId, limit, branchId, allowTenantWide };
       return [operation];
     },
     async acknowledge() {}
@@ -178,7 +178,12 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
 
   const result = await new SyncAgent(api, store).pushPending("tenant-1", { branchId: "branch-a" });
   assert.equal(result.status, "synced");
-  assert.deepEqual(pendingContext, { tenantId: "tenant-1", limit: 100, branchId: "branch-a" });
+  assert.deepEqual(pendingContext, {
+    tenantId: "tenant-1",
+    limit: 100,
+    branchId: "branch-a",
+    allowTenantWide: false
+  });
   assert.equal(requestContext.path, "/api/sync/operations");
   assert.deepEqual(requestContext.options, { tenantId: "tenant-1", branchId: "branch-a" });
   assert.equal(requestContext.operation.branchId, "branch-a");
