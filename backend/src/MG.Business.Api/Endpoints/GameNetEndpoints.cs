@@ -166,6 +166,8 @@ public static class GameNetEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت با مبلغ پرداختی سازگار نیست."] });
             if (request.AmountPaid < 0m || decimal.Round(request.AmountPaid, 2) != request.AmountPaid)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداخت باید غیرمنفی و حداکثر دارای دو رقم اعشار باشد."] });
+            if (request.PaymentReference?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
 
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
