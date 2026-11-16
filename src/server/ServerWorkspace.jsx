@@ -382,7 +382,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       if (modal === "stockMovement") {
         if (!form.idempotencyKey) throw new Error("کلید امن ثبت گردش موجود نیست؛ فرم را دوباره باز کنید.");
         const type = Number(form.type);
-        const isInbound = type === 1 || type === 3 || type === 4;
+        const isInbound = type === 1 || type === 5 || type === 6;
         const quantity = Number(form.quantity);
         const unitCost = isInbound ? Number(form.unitCost) : null;
         if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("مقدار باید بیشتر از صفر باشد.");
@@ -788,9 +788,9 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         {modal === "stockMovement" && <>
           <div className="mg-server-modal-hint">ثبت آنلاین و اتمیک گردش انبار. در صورت قطع ارتباط، فرم را نبندید و پس از اتصال دوباره با همین کلید تلاش کنید تا ثبت تکراری ایجاد نشود.</div>
           <label>کالا<input readOnly value={form.productName || ""} /></label>
-          <label>نوع گردش<select required value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="1">ورود / خرید</option><option value="2">خروج / مصرف</option><option value="3">مرجوعی فروش</option><option value="4">افزایش تعدیلی</option><option value="5">کاهش تعدیلی</option></select></label>
+          <label>نوع گردش<select required value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="1">ورود / خرید</option><option value="2">خروج / مصرف</option><option value="3">خروج بابت فروش</option><option value="4">مرجوعی خرید</option><option value="5">مرجوعی فروش</option><option value="6">افزایش تعدیلی</option><option value="7">کاهش تعدیلی</option></select></label>
           <label>مقدار<input required type="number" min="0.001" step="0.001" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></label>
-          {[1,3,4].includes(Number(form.type)) && <label>بهای واحد (تومان)<input required type="number" min="0" step="0.01" value={form.unitCost} onChange={e => setForm({ ...form, unitCost: e.target.value })} /></label>}
+          {[1,5,6].includes(Number(form.type)) && <label>بهای واحد (تومان)<input required type="number" min="0" step="0.01" value={form.unitCost} onChange={e => setForm({ ...form, unitCost: e.target.value })} /></label>}
           <label>مرجع / توضیحات<input maxLength="200" value={form.reference} onChange={e => setForm({ ...form, reference: e.target.value })} /></label>
         </>}
         
