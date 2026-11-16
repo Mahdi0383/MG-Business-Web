@@ -1802,6 +1802,7 @@ public sealed class SyncApiIntegrationTests
     private sealed record SyncPushResponse(SyncAck[] Accepted);
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
+    private sealed record InventoryStockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
     private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, long LastAcknowledgedSequence, long LatestJournalSequence, long PendingOperationCount, bool IsOnline, string? AlertCode);
     private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
@@ -2065,6 +2066,125 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
         using var revokedHeartbeat = await SendSignedHeartbeat(rotated.Credential, rotated.KeyVersion);
         Assert.Equal(HttpStatusCode.Unauthorized, revokedHeartbeat.StatusCode);
+    }
+
+    [Fact]
+    public async Task OfflineInventoryMovementReplaysIdempotentlyAndRejectsStaleBalances()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"offline-stock-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Offline Stock Store",
+            slug = $"offline-stock-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "OFFLINE-STOCK-1",
+            name = "Offline stock test item",
+            baseUnit = "piece",
+            tracksInventory = true,
+            defaultSalePrice = 5m
+        });
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        using var productDocument = System.Text.Json.JsonDocument.Parse(await productResponse.Content.ReadAsStringAsync());
+        var productId = productDocument.RootElement.GetProperty("id").GetGuid();
+
+        using var receiptRequest = new HttpRequestMessage(HttpMethod.Post, "/api/inventory/movements")
+        {
+            Content = JsonContent.Create(new
+            {
+                productId,
+                type = 1,
+                quantity = 10m,
+                unitCost = 2m,
+                reference = "opening balance"
+            })
+        };
+        receiptRequest.Headers.TryAddWithoutValidation("Idempotency-Key", $"opening-{Guid.NewGuid():N}");
+        using var receipt = await client.SendAsync(receiptRequest);
+        Assert.Equal(HttpStatusCode.Created, receipt.StatusCode);
+
+        var deviceId = Guid.NewGuid();
+        using var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Offline Stock Device", platform = "Test", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var operationId = Guid.NewGuid();
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            productId,
+            type = 2,
+            quantity = 3m,
+            unitCost = (decimal?)null,
+            baseQuantityOnHand = 10m,
+            baseInventoryValue = 20m,
+            reference = "offline issue"
+        });
+        var operationBody = new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId, deviceId, branchId = tenant.BranchId,
+                    operationType = "inventory.stock.movement.created",
+                    schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson,
+                    payloadSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson)))
+                }
+            }
+        };
+
+        using var pushed = await client.PostAsJsonAsync("/api/sync/operations", operationBody);
+        Assert.Equal(HttpStatusCode.Accepted, pushed.StatusCode);
+        using var replayed = await client.PostAsJsonAsync("/api/sync/operations", operationBody);
+        Assert.Equal(HttpStatusCode.Accepted, replayed.StatusCode);
+        var acknowledgements = await replayed.Content.ReadFromJsonAsync<SyncPushResponse>();
+        Assert.True(acknowledgements!.Accepted.Single().Duplicate);
+
+        var stock = await client.GetFromJsonAsync<InventoryStockResponse[]>("/api/inventory/stock");
+        var item = Assert.Single(stock!);
+        Assert.Equal(7m, item.QuantityOnHand);
+        Assert.Equal(14m, item.InventoryValue);
+
+        var stalePayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            productId,
+            type = 2,
+            quantity = 1m,
+            unitCost = (decimal?)null,
+            baseQuantityOnHand = 10m,
+            baseInventoryValue = 20m,
+            reference = "stale offline issue"
+        });
+        using var stale = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "inventory.stock.movement.created",
+                    schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = stalePayload,
+                    payloadSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stalePayload)))
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Contains("inventory_balance_conflict", await stale.Content.ReadAsStringAsync());
     }
 
     [Fact]
