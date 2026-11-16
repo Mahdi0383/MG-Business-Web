@@ -630,6 +630,12 @@ public sealed class SyncApiIntegrationTests
         var unassignedPull = await unassignedStaff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
         Assert.NotNull(unassignedPull);
         Assert.Empty(unassignedPull!.Operations);
+
+        var deviceInventory = await owner.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
+        Assert.NotNull(deviceInventory);
+        Assert.Equal(2, deviceInventory!.Single(device => device.DeviceId == ownerDeviceId).PendingOperationCount);
+        Assert.Equal(1, deviceInventory.Single(device => device.DeviceId == staffDeviceId).PendingOperationCount);
+        Assert.Equal(0, deviceInventory.Single(device => device.DeviceId == unassignedDeviceId).PendingOperationCount);
     }
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
