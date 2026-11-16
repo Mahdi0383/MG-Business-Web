@@ -3,6 +3,13 @@ import assert from "node:assert/strict";
 import { LocalOperationStore } from "./local-operation-store.js";
 
 
+
+test("requires an authenticated actor before creating a browser device identity", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(store.getDeviceId(), /actorId/);
+  await assert.rejects(store.getDeviceId(" "), /actorId/);
+});
+
 test("validates branch context before reading local sync counters", async () => {
   const store = new LocalOperationStore();
   await assert.rejects(store.getPendingCount("tenant-1", " "), /branchId/);
