@@ -302,6 +302,7 @@ public static class SyncEndpoints
             PushOperationsRequest request,
             ITenantContext tenant,
             BusinessDbContext db,
+            IConfiguration configuration,
             CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.UserId is not Guid actorId)
@@ -317,14 +318,47 @@ public static class SyncEndpoints
                     ["operations"] = ["Null operation entries are not allowed."]
                 });
 
-            // No signed authority-lease service is deployed yet. Fail closed rather than
-            // trusting a client-supplied non-zero fencing epoch.
-            if (request.Operations.Any(item => item.AuthorityEpoch != 0))
+            var requireAuthorityLeases = configuration.GetValue<bool>("SyncSecurity:RequireAuthorityLeases");
+            if (!requireAuthorityLeases && request.Operations.Any(item => item.AuthorityEpoch != 0))
                 return Results.Conflict(new
                 {
                     code = "AUTHORITY_LEASE_NOT_CONFIGURED",
-                    message = "Only the initial authority epoch is accepted until signed lease and fencing validation are enabled."
+                    message = "Non-zero authority epochs are rejected until signed lease enforcement is enabled."
                 });
+            if (requireAuthorityLeases)
+            {
+                if (request.Operations.Any(item => item.AuthorityEpoch <= 0))
+                    return Results.Conflict(new
+                    {
+                        code = "AUTHORITY_LEASE_REQUIRED",
+                        message = "Every synchronized operation must carry a positive signed authority epoch."
+                    });
+
+                var leasesByScope = new Dictionary<string, DeviceAuthorityLease?>(StringComparer.Ordinal);
+                foreach (var item in request.Operations)
+                {
+                    var scopeKey = item.BranchId?.ToString("N") ?? "tenant-wide";
+                    if (!leasesByScope.TryGetValue(scopeKey, out var lease))
+                    {
+                        lease = await db.DeviceAuthorityLeases.AsNoTracking().SingleOrDefaultAsync(
+                            x => x.TenantId == tenantId && x.ScopeKey == scopeKey,
+                            cancellationToken);
+                        leasesByScope[scopeKey] = lease;
+                    }
+
+                    if (lease is null || lease.RevokedAtUtc is not null
+                        || lease.Epoch != item.AuthorityEpoch
+                        || item.OccurredAtUtc > lease.ExpiresAtUtc
+                        || string.IsNullOrWhiteSpace(lease.SignatureBase64))
+                        return Results.Conflict(new
+                        {
+                            code = "AUTHORITY_EPOCH_FENCED",
+                            operationId = item.OperationId,
+                            currentEpoch = lease?.Epoch,
+                            message = "The operation was created outside the current authority lease or belongs to a fenced epoch."
+                        });
+                }
+            }
 
             var prepared = new List<(PushOperationRequest Request, string Hash)>();
             var batchPayloadBytes = 0;
