@@ -295,7 +295,7 @@ export class DeviceEnrollmentClient {
     if (!pinnedPublicKey || response?.publicKeySpkiBase64 !== pinnedPublicKey)
       throw new Error("The authority lease signing key does not match the configured trusted public key.");
     if (response.tenantId !== tenantId || (response.branchId || null) !== (branchId || null)
-      || response.deviceId !== record.deviceId
+      || typeof response.deviceId !== "string" || !response.deviceId
       || !Number.isSafeInteger(response.epoch) || response.epoch < 1
       || typeof response.leaseId !== "string" || typeof response.deviceId !== "string"
       || typeof response.scopeKey !== "string" || typeof response.signatureBase64 !== "string")
