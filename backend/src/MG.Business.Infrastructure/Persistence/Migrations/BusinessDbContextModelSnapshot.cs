@@ -1251,6 +1251,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId").HasColumnType("uuid");
 
                     b.HasKey("Sequence");
+                    b.HasIndex("ActorId");
                     b.HasIndex("TenantId", "DeviceId", "Sequence");
                     b.HasIndex("TenantId", "Sequence");
                     b.HasIndex("TenantId", "OperationId").IsUnique();
