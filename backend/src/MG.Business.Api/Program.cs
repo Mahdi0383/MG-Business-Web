@@ -39,6 +39,7 @@ builder.Services.AddIdentityApiEndpoints<ApplicationUser>(options =>
 builder.Services.AddScoped<TenantContext>();
 builder.Services.AddScoped<ITenantContext>(services => services.GetRequiredService<TenantContext>());
 builder.Services.AddScoped<IAuthorizationHandler, TenantResolvedHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, TenantRoleHandler>();
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("TenantMember", policy =>
@@ -57,6 +58,8 @@ app.UseAuthorization();
 
 app.MapGroup("/auth").MapIdentityApi<ApplicationUser>();
 app.MapTenantContextEndpoints();
+app.MapTenantEndpoints();
+app.MapInventoryEndpoints();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = "mg-business-api" }))
    .WithName("Liveness");
