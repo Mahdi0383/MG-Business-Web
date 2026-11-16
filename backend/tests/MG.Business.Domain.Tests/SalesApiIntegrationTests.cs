@@ -30,11 +30,14 @@ public sealed class SalesApiIntegrationTests
         client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
         client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
 
-        var cash = await CreateAccountAsync(client, "1000", "Cash", AccountType.Asset);
-        var receivable = await CreateAccountAsync(client, "1100", "Accounts Receivable", AccountType.Asset);
-        var inventory = await CreateAccountAsync(client, "1200", "Inventory", AccountType.Asset);
-        var revenue = await CreateAccountAsync(client, "4000", "Sales Revenue", AccountType.Revenue);
-        var cogs = await CreateAccountAsync(client, "5000", "Cost of Goods Sold", AccountType.Expense);
+        var chartResponse = await client.PostAsync("/api/accounting/accounts/initialize-default-chart", null);
+        Assert.Equal(HttpStatusCode.OK, chartResponse.StatusCode);
+        var chart = await chartResponse.Content.ReadFromJsonAsync<AccountResponse[]>();
+        var cash = chart!.Single(x => x.Code == "1000");
+        var receivable = chart.Single(x => x.Code == "1100");
+        var inventory = chart.Single(x => x.Code == "1200");
+        var revenue = chart.Single(x => x.Code == "4000");
+        var cogs = chart.Single(x => x.Code == "5000");
 
         var customerResponse = await client.PostAsJsonAsync("/api/customers", new
         {
