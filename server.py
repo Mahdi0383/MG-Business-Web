@@ -191,8 +191,18 @@ CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_log(tenant_id, created
 """
 
 def connect():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(DATA_DIR, 0o700)
+        os.chmod(DB_PATH.parent, 0o700)
+    except OSError:
+        pass
     db = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=10000")
