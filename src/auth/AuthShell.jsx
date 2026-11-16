@@ -229,7 +229,7 @@ function AuthShell({ apiBaseUrl }) {
         const allowTenantWide = ["Owner", "Manager"].includes(selectedTenant?.role);
         const [pending, incoming] = await Promise.all([
           operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide),
-          operationStoreRef.current.getInboxCount(tenantId, branchId)
+          operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide)
         ]);
         if (active) { setPendingOperations(pending); setIncomingOperations(incoming); }
       } catch {
