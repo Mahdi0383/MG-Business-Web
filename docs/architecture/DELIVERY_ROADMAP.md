@@ -103,6 +103,14 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - The manual inventory movement API now rejects requests without an `Idempotency-Key`; exact retries replay the original movement and changed-payload reuse is rejected. Sales-order-originated stock writes, local/offline stock commands and their cross-domain idempotency remain release blockers.
 - Web CI, SQLite integration/domain tests and PostgreSQL migration + integration/domain CI all passed on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09`.
 
+### Inventory workspace increment — 2026-11-17
+
+- Added a per-product stock movement workflow to the web workspace for receipts, issues, sales/purchase returns and stock adjustments.
+- The form sends the required `Idempotency-Key` generated with Web Crypto. The same key remains in the open form after network errors so a retry can safely replay a committed movement instead of posting stock twice.
+- The form follows the domain movement enum and requests unit cost only for inbound movement types.
+- This UI is deliberately online-only; stock changes are not advertised as offline-capable. Transactional local stock commands, sale-originated stock idempotency and inbound projection processing remain release blockers.
+- Frontend tests and production build passed on code head `82e77a8bf9aa8db7c57fb5e44b1b30bd28fc78ce`; enum alignment and subsequent changes are awaiting CI.
+
 ## Planning estimate
 
 The current repository is a foundation, not a finished commercial product. A focused solo development effort with AI-assisted implementation may need roughly 20–30 months for the full scope, depending on test environments, hardware, deployment infrastructure and user acceptance cycles. A narrower paid pilot may be possible earlier, but only after its release gate passes. Recalibrate estimates from measured delivery throughput and test results.
