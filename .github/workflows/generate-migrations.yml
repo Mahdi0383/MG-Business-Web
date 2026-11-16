@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: migration-scaffold-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   scaffold:
     if: contains(github.event.head_commit.message, '[scaffold-migrations]')
@@ -50,5 +54,7 @@ jobs:
             echo "No generated migration changes to commit."
           else
             git commit -m "chore(db): commit generated EF migration"
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
