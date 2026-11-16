@@ -108,6 +108,21 @@ class ApiIntegrationTests(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         cashier_token = result["token"]
+        status, denied_reset = self.request("POST", "/api/users/"+cashier_id+"/password", {
+            "password":"cashier-new-long-password"
+        }, cashier_token)
+        self.assertEqual(status,403)
+        status, reset = self.request("POST", "/api/users/"+cashier_id+"/password", {
+            "password":"cashier-new-long-password"
+        }, token)
+        self.assertEqual(status,200)
+        status, old_session = self.request("GET", "/api/me", token=cashier_token)
+        self.assertEqual(status,401)
+        status, login_new = self.request("POST", "/api/login", {
+            "username":"cashier","password":"cashier-new-long-password"
+        })
+        self.assertEqual(status,200)
+        cashier_token = login_new["token"]
         status, result = self.request("POST", "/api/products", {
             "name": "Forbidden", "sellPrice": 100, "costPrice": 20
         }, cashier_token)
