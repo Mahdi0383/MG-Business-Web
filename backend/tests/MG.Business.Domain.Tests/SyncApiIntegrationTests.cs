@@ -1918,6 +1918,7 @@ public sealed class SyncApiIntegrationTests
         var persisted = await db.DeviceCredentials.SingleAsync(
             x => x.TenantId == tenant.TenantId && x.DeviceId == deviceId);
         Assert.Equal(challenge.ActorId, persisted.ActorId);
+        Assert.Equal(tenant.BranchId, persisted.BranchId);
         Assert.NotEqual(result.Credential, persisted.CredentialSha256);
         Assert.Equal(Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(result.Credential))).ToLowerInvariant(),
             persisted.CredentialSha256);
@@ -1961,6 +1962,109 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(2, persisted.KeyVersion);
         Assert.Equal(Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(recovered.Credential))).ToLowerInvariant(),
             persisted.CredentialSha256);
+    }
+
+    [Fact]
+    public async Task DeviceCredentialCanRotateKeyAndBeRevoked()
+    {
+        using var factory = CreateFactory(requireDeviceSignatures: true);
+        using var client = await RegisterAndLoginAsync(factory, $"device-rotate-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Device Rotation Store",
+            slug = $"device-rotate-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        using var oldKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var oldPublicKey = Convert.ToBase64String(oldKey.ExportSubjectPublicKeyInfo());
+        var firstChallengeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/challenges", new { deviceId });
+        var firstChallenge = await firstChallengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+        Assert.NotNull(firstChallenge);
+        var firstMessage = string.Join("\n", "MG-DEVICE-ENROLLMENT-V1",
+            tenant.TenantId.ToString("D"), tenant.BranchId.ToString("D"),
+            firstChallenge!.ActorId.ToString("D"), deviceId.ToString("D"),
+            firstChallenge.ChallengeId.ToString("D"), firstChallenge.Challenge);
+        var firstProof = Convert.ToBase64String(oldKey.SignData(
+            Encoding.UTF8.GetBytes(firstMessage), HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+        var enrollmentResponse = await client.PostAsJsonAsync("/api/sync/enrollment/complete", new
+        {
+            challengeId = firstChallenge.ChallengeId, deviceId,
+            challenge = firstChallenge.Challenge, publicKeySpkiBase64 = oldPublicKey,
+            signatureBase64 = firstProof
+        });
+        Assert.Equal(HttpStatusCode.Created, enrollmentResponse.StatusCode);
+        var enrolled = await enrollmentResponse.Content.ReadFromJsonAsync<DeviceEnrollmentResult>();
+        Assert.NotNull(enrolled);
+
+        using var newKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var newPublicKey = Convert.ToBase64String(newKey.ExportSubjectPublicKeyInfo());
+        var rotationChallengeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/challenges", new { deviceId });
+        var rotationChallenge = await rotationChallengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+        Assert.NotNull(rotationChallenge);
+        var rotationMessage = string.Join("\n", "MG-DEVICE-ROTATION-V1",
+            tenant.TenantId.ToString("D"), tenant.BranchId.ToString("D"),
+            rotationChallenge!.ActorId.ToString("D"), deviceId.ToString("D"),
+            rotationChallenge.ChallengeId.ToString("D"), rotationChallenge.Challenge);
+        var rotationProof = Convert.ToBase64String(newKey.SignData(
+            Encoding.UTF8.GetBytes(rotationMessage), HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+        var rotatedResponse = await client.PostAsJsonAsync("/api/sync/enrollment/rotate", new
+        {
+            challengeId = rotationChallenge.ChallengeId, deviceId,
+            challenge = rotationChallenge.Challenge, publicKeySpkiBase64 = newPublicKey,
+            signatureBase64 = rotationProof
+        });
+        Assert.Equal(HttpStatusCode.OK, rotatedResponse.StatusCode);
+        var rotated = await rotatedResponse.Content.ReadFromJsonAsync<DeviceEnrollmentResult>();
+        Assert.NotNull(rotated);
+        Assert.Equal(2, rotated!.KeyVersion);
+
+        async Task<HttpResponseMessage> SendSignedHeartbeat(string credential, int keyVersion)
+        {
+            const string path = "/api/sync/heartbeat";
+            var body = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                deviceId, deviceName = "Rotated Device", platform = "Test", clientVersion = "1.0"
+            });
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var nonce = Guid.NewGuid();
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
+            var canonical = string.Join("\n", "MG-DEVICE-REQUEST-V1", "POST", path,
+                tenant.TenantId.ToString("D"), tenant.BranchId.ToString("D"),
+                rotationChallenge.ActorId.ToString("D"), deviceId.ToString("D"),
+                keyVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture), nonce.ToString("D"), hash);
+            var signature = Convert.ToBase64String(newKey.SignData(
+                Encoding.UTF8.GetBytes(canonical), HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Id", deviceId.ToString("D"));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Key-Version", keyVersion.ToString());
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Credential", credential);
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Timestamp", timestamp.ToString());
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Nonce", nonce.ToString("D"));
+            request.Headers.TryAddWithoutValidation("X-MG-Device-Signature", signature);
+            return await client.SendAsync(request);
+        }
+
+        using (var validHeartbeat = await SendSignedHeartbeat(rotated!.Credential, rotated.KeyVersion))
+            Assert.Equal(HttpStatusCode.OK, validHeartbeat.StatusCode);
+
+        var revokeResponse = await client.PostAsJsonAsync("/api/sync/enrollment/revoke", new { deviceId });
+        Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
+        using var revokedHeartbeat = await SendSignedHeartbeat(rotated.Credential, rotated.KeyVersion);
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedHeartbeat.StatusCode);
     }
 
     [Fact]
