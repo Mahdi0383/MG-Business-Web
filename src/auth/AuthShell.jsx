@@ -3,6 +3,7 @@ import { formatApiError, MgApiClient } from "../api/client.js";
 import ServerWorkspace from "../server/ServerWorkspace.jsx";
 import { LocalOperationStore } from "../sync/local-operation-store.js";
 import { SyncAgent } from "../sync/sync-agent.js";
+import { DeviceEnrollmentClient } from "../sync/device-enrollment.js";
 import { IncomingOperationProcessor } from "../sync/incoming-operation-processor.js";
 import { classifyIncomingOperation } from "../sync/conflict-policy.js";
 import "../server/server.css";
@@ -23,6 +24,9 @@ function AuthShell({ apiBaseUrl }) {
   if (!clientRef.current) clientRef.current = new MgApiClient(apiBaseUrl);
   const client = clientRef.current;
   const operationStoreRef = useRef(new LocalOperationStore());
+  const deviceEnrollmentRef = useRef(null);
+  if (!deviceEnrollmentRef.current) deviceEnrollmentRef.current = new DeviceEnrollmentClient(client, operationStoreRef.current);
+  if (client.deviceSigner !== deviceEnrollmentRef.current) client.setDeviceSigner(deviceEnrollmentRef.current);
   const syncAgentRef = useRef(null);
   if (!syncAgentRef.current) syncAgentRef.current = new SyncAgent(client, operationStoreRef.current);
   const incomingProcessorRef = useRef(null);
@@ -266,7 +270,7 @@ function AuthShell({ apiBaseUrl }) {
             deviceName: "MG Business Web",
             platform: navigator.platform || "Web",
             clientVersion: "0.1.0"
-          });
+          }, { tenantId, branchId: selectedBranch?.id || null, actorId: activeActorId });
           syncDeviceRegistered = true;
         }
 
@@ -333,9 +337,9 @@ function AuthShell({ apiBaseUrl }) {
           deviceName: "MG Business Web",
           platform: navigator.platform || "Web",
           clientVersion: "0.1.0"
-        });
+        }, { tenantId: selectedTenant.id, branchId: selectedBranch?.id || null, actorId: activeActorId });
         if (active && ["Owner", "Manager"].includes(selectedTenant.role)) {
-          const devices = await client.get("/api/sync/devices");
+          const devices = await client.get("/api/sync/devices", { tenantId: selectedTenant.id, branchId: selectedBranch?.id || null, actorId: activeActorId });
           if (active) {
             setDeviceStatuses(devices || []);
             setDisconnectedDevices((devices || []).filter(device => !device.isOnline));
