@@ -158,7 +158,7 @@ public sealed class DeviceRequestSignatureMiddleware
                 .Where(x => x.TenantId == tenantId && x.DeviceId == deviceId)
                 .ToListAsync(context.RequestAborted);
             var nonceValue = nonce.ToString("D");
-            if (deviceNonces.Any(x => x.Nonce == nonceValue && x.ExpiresAtUtc > now))
+            if (deviceNonces.Any(x => x.Nonce == nonceValue))
             {
                 await Reject(context, StatusCodes.Status401Unauthorized, "DEVICE_SIGNATURE_REPLAYED");
                 return;
