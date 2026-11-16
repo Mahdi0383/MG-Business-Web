@@ -118,3 +118,11 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Missing secure cryptography, malformed payloads, cross-device rows and tampered payloads fail closed before network transmission; no acknowledgement is written for rejected local queue data.
 - Added regression tests for payload tampering and foreign-device queue entries.
 - This hardens the browser sync transport boundary; it does not replace server authorization, device cryptographic enrollment or signed authority leases.
+
+### Customer edit concurrency contract — 2026-11-16
+
+- Added ADR-008 defining versioned customer updates, database-enforced optimistic concurrency, operation idempotency, origin-device echo handling and atomic local/inbound projection requirements.
+- The current API still lacks a required baseVersion and database concurrency token; inbound projection still supports customer creation only. Customer updates therefore remain disabled and fail-closed.
+- The next implementation increment must add the version migration and 409 stale-write behavior before wiring the browser outbox or inbound update handler.
+- Required two-device, duplicate-delivery, origin-echo, stale-version, crash-atomicity and SQLite/PostgreSQL tests are specified in ADR-008.
+
