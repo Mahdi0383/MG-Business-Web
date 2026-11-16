@@ -8,7 +8,7 @@ namespace MG.Business.Api.Endpoints;
 
 public static class CafeEndpoints
 {
-    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "Viewer"];
+    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "KitchenStaff", "Viewer"];
     private static readonly string[] CreateRoles = ["Owner", "Manager", "Cashier", "Waiter"];
     private static readonly string[] KitchenRoles = ["Owner", "Manager", "Waiter", "KitchenStaff"];
 
