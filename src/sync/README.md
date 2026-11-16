@@ -27,7 +27,7 @@ Incoming inbox reads and replay batches are branch-scoped: a branch receives its
 
 This is infrastructure only. Existing demo screens and current live business forms are not yet routed through this journal, and generic POST requests are deliberately not auto-queued. Each business workflow must be converted to an explicit local command handler that validates and applies the local projection in the same transaction as enqueueing the operation.
 
-The current server pull endpoint exposes an append-only operation stream. Applying inbound commands to local domain projections, per-device pull cursors, cryptographic device enrollment, signed leases/fencing, conflict review, service-worker lifecycle and end-to-end multi-node failover are subsequent work. Do not interpret the presence of this module as a complete offline mode.
+The current server pull endpoint exposes an append-only operation stream. Applying inbound commands to local domain projections, server-side per-device acknowledgement telemetry with branch-aware semantics, cryptographic device enrollment, signed leases/fencing, conflict review, service-worker lifecycle and end-to-end multi-node failover are subsequent work. The browser already keeps independent local scan cursors per tenant/branch; the server acknowledgement cursor is a separate monotonic telemetry value and must not be treated as proof that every branch's operations were applied. Do not interpret the presence of this module as a complete offline mode.
 
 ## Conflict classification foundation
 
