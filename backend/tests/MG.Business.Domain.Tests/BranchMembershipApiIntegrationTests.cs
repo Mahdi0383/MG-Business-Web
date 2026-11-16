@@ -53,6 +53,42 @@ public sealed class BranchMembershipApiIntegrationTests
         staff.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
         var otherBranch = await staff.GetAsync("/api/context");
         Assert.Equal(HttpStatusCode.Forbidden, otherBranch.StatusCode);
+
+        var disabled = await owner.PatchAsJsonAsync($"/api/branches/{branch.Id}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.OK, disabled.StatusCode);
+        staff.DefaultRequestHeaders.Remove("X-MG-Branch");
+        staff.DefaultRequestHeaders.Add("X-MG-Branch", branch.Id.ToString());
+        var inactiveBranch = await staff.GetAsync("/api/context");
+        Assert.Equal(HttpStatusCode.Forbidden, inactiveBranch.StatusCode);
+    }
+
+    [Fact]
+    public async Task TenantMustRetainAtLeastOneActiveOwner()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"owner-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Owner Safety",
+            slug = $"owner-safe-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+
+        var memberships = await owner.GetFromJsonAsync<MembershipResponse[]>("/api/memberships");
+        var ownerMembership = Assert.Single(memberships!);
+
+        var demote = await owner.PutAsJsonAsync($"/api/memberships/{ownerMembership.Id}", new
+        {
+            role = TenantRole.Manager,
+            branchId = (Guid?)null
+        });
+        Assert.Equal(HttpStatusCode.Conflict, demote.StatusCode);
+
+        var remove = await owner.DeleteAsync($"/api/memberships/{ownerMembership.Id}");
+        Assert.Equal(HttpStatusCode.Conflict, remove.StatusCode);
     }
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
@@ -92,4 +128,5 @@ public sealed class BranchMembershipApiIntegrationTests
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record BranchResponse(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAtUtc);
     private sealed record TenantContextResponse(Guid? TenantId, Guid? BranchId, Guid? UserId, string? Role);
+    private sealed record MembershipResponse(Guid Id, Guid UserId, string Email, string? DisplayName, string Role, Guid? BranchId);
 }
