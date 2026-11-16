@@ -26,7 +26,7 @@ export class SyncAgent {
       const afterSequence = await this.operationStore.getCursor(tenantId, branchId);
       const response = await this.apiClient.get(
         `/api/sync/operations?afterSequence=${afterSequence}&limit=${boundedPageSize}`,
-        { tenantId, branchId }
+        { tenantId, branchId, actorId }
       );
       if (!Array.isArray(response?.operations)
         || response.operations.length > boundedPageSize
@@ -75,7 +75,7 @@ export class SyncAgent {
         deviceId,
         sequence: response.nextSequence,
         branchId
-      }, { tenantId, branchId });
+      }, { tenantId, branchId, actorId });
       return { status: response.hasMore ? "more-available" : "pulled", received: response.operations.length, nextSequence: response.nextSequence, hasMore: Boolean(response.hasMore) };
     } catch (error) {
       if (isNetworkFailure(error)) return { status: "offline", received: 0, error };
