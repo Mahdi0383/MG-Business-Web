@@ -842,6 +842,42 @@ test("queues offline inventory movements atomically and advances the stock basel
   assert.equal((await store.getInventoryStock(tenantId, branchId))[0].quantityOnHand, 7);
 });
 
+test("preserves unrounded weighted-average inventory value across acknowledged offline issues", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = `raw-stock-tenant-${crypto.randomUUID()}`;
+  const branchId = crypto.randomUUID();
+  const actorId = `raw-stock-actor-${crypto.randomUUID()}`;
+  const productId = crypto.randomUUID();
+  await store.cacheInventorySnapshot({
+    tenantId, branchId,
+    products: [{ id: productId, sku: "RAW-1", name: "Raw value item", tracksInventory: true, isActive: true }],
+    stockRows: [{
+      productId, branchId, quantityOnHand: 3,
+      inventoryValue: 3.02, rawInventoryValue: 3.02, averageUnitCost: 1.0067
+    }]
+  });
+
+  const first = await store.createStockMovement({
+    tenantId, branchId, actorId,
+    movement: { productId, type: 2, quantity: 1, idempotencyKey: crypto.randomUUID() }
+  });
+  assert.equal(first.baseQuantityOnHand, 3);
+  assert.equal(first.baseInventoryValue, 3.02);
+  assert.equal(first.resultQuantityOnHand, 2);
+  assert.equal(first.resultInventoryValue, 2.01);
+  assert.ok(first.resultRawInventoryValue > 2.01);
+
+  await store.acknowledge([{ operationId: first.operationId, sequence: 1 }]);
+  const second = await store.createStockMovement({
+    tenantId, branchId, actorId,
+    movement: { productId, type: 2, quantity: 1, idempotencyKey: crypto.randomUUID() }
+  });
+  assert.equal(second.baseQuantityOnHand, 2);
+  assert.equal(second.baseInventoryValue, 2.01);
+  assert.ok(second.resultRawInventoryValue > 1.00);
+  assert.ok(second.resultRawInventoryValue < 1.02);
+});
+
 test("applies a remote inventory movement to the cached branch stock projection", async () => {
   const store = new LocalOperationStore();
   const tenantId = `remote-stock-tenant-${crypto.randomUUID()}`;
