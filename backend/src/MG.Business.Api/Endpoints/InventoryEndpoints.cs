@@ -22,7 +22,7 @@ public static class InventoryEndpoints
             var products = await db.Products.AsNoTracking()
                 .Where(x => x.TenantId == tenant.TenantId)
                 .OrderBy(x => x.Name)
-                .Select(x => new ProductResponse(x.Id, x.Sku, x.Name, x.BaseUnit, x.TracksInventory, x.IsActive))
+                .Select(x => new ProductResponse(x.Id, x.Sku, x.Name, x.BaseUnit, x.TracksInventory, x.DefaultSalePrice, x.IsActive))
                 .ToListAsync(cancellationToken);
             return Results.Ok(products);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
@@ -35,7 +35,7 @@ public static class InventoryEndpoints
             Product product;
             try
             {
-                product = new Product(tenantId, request.Sku, request.Name, request.BaseUnit, request.TracksInventory);
+                product = new Product(tenantId, request.Sku, request.Name, request.BaseUnit, request.TracksInventory, request.DefaultSalePrice);
             }
             catch (ArgumentException exception)
             {
@@ -53,7 +53,7 @@ public static class InventoryEndpoints
             }
 
             return Results.Created($"/api/inventory/products/{product.Id}",
-                new ProductResponse(product.Id, product.Sku, product.Name, product.BaseUnit, product.TracksInventory, product.IsActive));
+                new ProductResponse(product.Id, product.Sku, product.Name, product.BaseUnit, product.TracksInventory, product.DefaultSalePrice, product.IsActive));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
         group.MapGet("/stock", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
@@ -156,7 +156,7 @@ public static class InventoryEndpoints
         return endpoints;
     }
 
-    public sealed record CreateProductRequest(string Sku, string Name, string BaseUnit, bool TracksInventory = true);
-    public sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, bool IsActive);
+    public sealed record CreateProductRequest(string Sku, string Name, string BaseUnit, bool TracksInventory = true, decimal DefaultSalePrice = 0m);
+    public sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
     public sealed record CreateStockMovementRequest(Guid ProductId, StockMovementType Type, decimal Quantity, decimal? UnitCost, string? Reference);
 }
