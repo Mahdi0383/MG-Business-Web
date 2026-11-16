@@ -193,7 +193,10 @@ def seed_accounts(db, tenant_id):
         ("2000", "حساب‌های پرداختنی", "liability", "credit"),
         ("3000", "سرمایه", "equity", "credit"),
         ("4000", "درآمد فروش", "revenue", "credit"),
+        ("4100", "سایر درآمدها", "revenue", "credit"),
         ("5000", "هزینه‌های عملیاتی", "expense", "debit"),
+        ("5100", "بهای تمام‌شده کالای فروش‌رفته", "expense", "debit"),
+        ("5200", "ضایعات و کسری انبار", "expense", "debit"),
     ]
     for code, name, account_type, normal in defaults:
         db.execute("INSERT OR IGNORE INTO accounts(id,tenant_id,code,name,account_type,normal_balance) VALUES(?,?,?,?,?,?)",
@@ -207,6 +210,41 @@ def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind,
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,occurred_at[:10],title,"transaction",tx_id,user_id,now))
     lines = ((cash,amount,0),(counterpart,0,amount)) if kind == "income" else ((counterpart,amount,0),(cash,0,amount))
     for account_id, debit, credit in lines:
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+
+def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost):
+    amount = abs(quantity_delta) * unit_cost
+    if amount <= 0:
+        return
+    accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    if movement_type == "purchase":
+        lines = ((accounts["1200"],amount,0),(accounts["2000"],0,amount))
+    elif movement_type == "sale":
+        lines = ((accounts["5100"],amount,0),(accounts["1200"],0,amount))
+    elif movement_type == "waste":
+        lines = ((accounts["5200"],amount,0),(accounts["1200"],0,amount))
+    elif quantity_delta > 0:
+        lines = ((accounts["1200"],amount,0),(accounts["4100"],0,amount))
+    else:
+        lines = ((accounts["5200"],amount,0),(accounts["1200"],0,amount))
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"گردش انبار "+movement_id,
+                                      "inventory_movement",movement_id,user_id,now))
+    for account_id,debit,credit in lines:
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+
+def post_order_cogs_journal(db, tenant_id, user_id, order_id, cost_total):
+    if cost_total <= 0:
+        return
+    accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"بهای تمام‌شده سفارش "+order_id,
+                                      "order_cogs",order_id,user_id,now))
+    for account_id,debit,credit in ((accounts["5100"],cost_total,0),(accounts["1200"],0,cost_total)):
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
 
@@ -597,6 +635,7 @@ class Handler(SimpleHTTPRequestHandler):
                 movement_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
                 db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,user["tenant_id"],product_id,user["id"],movement_type,delta,unit_cost,note,now))
+                post_inventory_movement_journal(db,user["tenant_id"],user["id"],movement_id,movement_type,delta,unit_cost)
                 audit(db,user["tenant_id"],user["id"],"inventory.movement.created","inventory_movement",movement_id,
                       {"productId":product_id,"quantityDelta":delta,"movementType":movement_type})
                 db.commit()
