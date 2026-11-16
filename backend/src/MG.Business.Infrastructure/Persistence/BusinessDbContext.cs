@@ -25,6 +25,8 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<SyncOperation> SyncOperations => Set<SyncOperation>();
     public DbSet<DevicePresence> DevicePresences => Set<DevicePresence>();
+    public DbSet<DeviceEnrollmentChallenge> DeviceEnrollmentChallenges => Set<DeviceEnrollmentChallenge>();
+    public DbSet<DeviceCredential> DeviceCredentials => Set<DeviceCredential>();
     public DbSet<SyncDeviceCursor> SyncDeviceCursors => Set<SyncDeviceCursor>();
     public DbSet<SyncDeviceBranchCursor> SyncDeviceBranchCursors => Set<SyncDeviceBranchCursor>();
 
@@ -309,6 +311,31 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasIndex(x => new { x.TenantId, x.LastAcknowledgedSequence });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DeviceEnrollmentChallenge>(entity =>
+        {
+            entity.ToTable("device_enrollment_challenges");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ChallengeSha256).HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.ActorId, x.DeviceId, x.ExpiresAtUtc });
+            entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DeviceCredential>(entity =>
+        {
+            entity.ToTable("device_credentials");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId });
+            entity.Property(x => x.PublicKeySpkiBase64).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.CredentialSha256).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.KeyVersion).IsConcurrencyToken().IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.ActorId });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<DevicePresence>(entity =>
