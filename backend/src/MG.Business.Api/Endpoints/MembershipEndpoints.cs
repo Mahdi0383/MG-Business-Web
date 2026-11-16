@@ -78,6 +78,10 @@ public static class MembershipEndpoints
                 x.TenantId == tenant.TenantId && x.Id == membershipId && x.IsActive, cancellationToken);
             if (membership is null) return Results.NotFound();
 
+            if (membership.Role == TenantRole.Owner && request.Role != TenantRole.Owner
+                && !await HasAnotherActiveOwnerAsync(db, tenant.TenantId!.Value, membership.Id, cancellationToken))
+                return Results.Conflict(new { message = "هر کسب‌وکار باید حداقل یک مالک فعال داشته باشد." });
+
             membership.ChangeRole(request.Role);
             membership.AssignBranch(request.BranchId);
             await db.SaveChangesAsync(cancellationToken);
@@ -92,6 +96,9 @@ public static class MembershipEndpoints
             if (membership is null) return Results.NotFound();
             if (membership.UserId == tenant.UserId)
                 return Results.BadRequest(new { message = "مالک نمی‌تواند عضویت خودش را از این مسیر غیرفعال کند." });
+            if (membership.Role == TenantRole.Owner
+                && !await HasAnotherActiveOwnerAsync(db, tenant.TenantId!.Value, membership.Id, cancellationToken))
+                return Results.Conflict(new { message = "هر کسب‌وکار باید حداقل یک مالک فعال داشته باشد." });
 
             membership.Deactivate();
             await db.SaveChangesAsync(cancellationToken);
@@ -100,6 +107,11 @@ public static class MembershipEndpoints
 
         return endpoints;
     }
+
+    private static Task<bool> HasAnotherActiveOwnerAsync(BusinessDbContext db, Guid tenantId,
+        Guid excludedMembershipId, CancellationToken cancellationToken) =>
+        db.TenantMemberships.AnyAsync(x => x.TenantId == tenantId && x.Id != excludedMembershipId
+            && x.IsActive && x.Role == TenantRole.Owner, cancellationToken);
 
     public sealed record CreateMembershipRequest(string Email, TenantRole Role, Guid? BranchId);
     public sealed record UpdateMembershipRequest(TenantRole Role, Guid? BranchId);
