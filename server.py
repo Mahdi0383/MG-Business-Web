@@ -1578,19 +1578,31 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403, {"error": "دسترسی دریافت از مشتری ندارید."})
                 customer_id = path.split("/")[-2]
                 amount, payment_method = data.get("amount"), data.get("paymentMethod","cash")
+                payment_id=str(data.get("id") or secrets.token_urlsafe(18))
                 if type(amount) is not int or amount <= 0 or amount > 9007199254740991 or payment_method not in ("cash","card","online"):
                     return self.send_json(400, {"error": "مبلغ یا روش دریافت معتبر نیست."})
+                if not 1<=len(payment_id)<=100: return self.send_json(400,{"error":"شناسه دریافت معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
                 customer = db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone()
                 if not customer:
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری پیدا نشد."})
+                existing=db.execute("SELECT credit FROM customer_ledger WHERE tenant_id=? AND customer_id=? AND source_type='payment' AND source_id=?",
+                                    (user["tenant_id"],customer_id,payment_id)).fetchone()
+                if existing:
+                    if existing["credit"]==amount:
+                        balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                                           (user["tenant_id"],customer_id)).fetchone()[0]
+                        db.commit()
+                        return self.send_json(200,{"ok":True,"paymentId":payment_id,"remainingBalance":balance,"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه دریافت قبلاً با مبلغ متفاوت استفاده شده است."})
                 balance = db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
                                      (user["tenant_id"],customer_id)).fetchone()[0]
                 if amount > balance:
                     db.rollback()
                     return self.send_json(409, {"error": "مبلغ دریافت از مانده بدهی مشتری بیشتر است."})
-                payment_id, now = secrets.token_urlsafe(18), int(time.time())
+                now = int(time.time())
                 db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                     VALUES(?,?,?,?,?,?,0,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
                     "payment",payment_id,amount,"دریافت از مشتری",now))
