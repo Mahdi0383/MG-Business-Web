@@ -1629,7 +1629,7 @@ public sealed class SyncApiIntegrationTests
     public void DeviceCredentialRevocationIsIdempotent()
     {
         var now = DateTimeOffset.UtcNow;
-        var credential = new DeviceCredential(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+        var credential = new DeviceCredential(Guid.NewGuid(), Guid.NewGuid(), null, Guid.NewGuid(),
             Convert.ToBase64String(new byte[] { 1, 2, 3 }), new string('d', 64), now);
 
         Assert.True(credential.IsActive);
