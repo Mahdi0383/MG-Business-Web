@@ -91,6 +91,8 @@ export class LocalOperationStore {
 
   async enqueue({ tenantId, branchId = null, operationType, payload, schemaVersion = 1, authorityEpoch = 0 }) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
     if (typeof operationType !== "string" || !operationType.trim() || operationType.trim().length > 100)
       throw new TypeError("operationType must be 1–100 characters.");
     if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError("schemaVersion must be a positive integer.");
