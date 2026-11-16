@@ -7,6 +7,16 @@ export function isPendingOperationVisible(operation, branchId, allowTenantWide, 
   return operation.branchId === branchId || (allowTenantWide && operation.branchId == null);
 }
 
+export function isJsonObjectPayload(payloadJson) {
+  if (typeof payloadJson !== "string") return false;
+  try {
+    const payload = JSON.parse(payloadJson);
+    return payload !== null && typeof payload === "object" && !Array.isArray(payload);
+  } catch {
+    return false;
+  }
+}
+
 export function isSameIncomingEnvelope(existing, incoming) {
   if (!existing || typeof existing !== "object" || Array.isArray(existing)
     || !incoming || typeof incoming !== "object" || Array.isArray(incoming)) return false;
@@ -304,7 +314,8 @@ export class LocalOperationStore {
         throw new TypeError("Incoming operation envelope is invalid.");
       if (branchId !== null && operation.branchId != null && operation.branchId !== branchId)
         throw new Error("Incoming operation does not belong to the active branch.");
-      JSON.parse(operation.payloadJson);
+      if (!isJsonObjectPayload(operation.payloadJson))
+        throw new TypeError("Incoming operation payload must be a JSON object.");
       const actualHash = await sha256(operation.payloadJson);
       if (actualHash !== operation.payloadSha256.toUpperCase())
         throw new Error("Incoming operation payload integrity check failed.");
