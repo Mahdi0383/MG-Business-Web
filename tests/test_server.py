@@ -80,7 +80,10 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["tenant"]["name"], "MG Test Shop")
 
-        bad_code = make_license(["cafe"], "bad-license")[:-2] + "xx"
+        valid_code = make_license(["cafe"], "bad-license")
+        parts = valid_code.split(".")
+        parts[2] = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+        bad_code = ".".join(parts)
         status, result = self.request("POST", "/api/licenses/activate", {"code": bad_code}, token)
         self.assertEqual(status, 400)
         limited_code = make_license(["cafe","accounting","inventory","customers","reports"], "license-limited")
