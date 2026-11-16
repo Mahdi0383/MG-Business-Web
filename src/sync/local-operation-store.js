@@ -586,17 +586,23 @@ export class LocalOperationStore {
       operation.acknowledgedAtUtc = new Date().toISOString();
       writeStore.put(operation);
 
-      if (operation.operationType === "customer.profile.created") {
+      if (operation.operationType === "customer.profile.created"
+        || operation.operationType === "customer.profile.updated") {
         let payload;
         try { payload = JSON.parse(operation.payloadJson); } catch { payload = null; }
         if (typeof payload?.customerId === "string") {
           const customerRequest = customerStore.get([operation.tenantId, payload.customerId]);
           customerRequest.onsuccess = () => {
             const customer = customerRequest.result;
-            if (!customer) return;
+            if (!customer || customer.lastOperationId !== operation.operationId) return;
             customer.syncStatus = "synced";
             customer.serverSequence = acknowledgement.sequence;
             customer.updatedAtUtc = new Date().toISOString();
+            if (operation.operationType === "customer.profile.updated") {
+              if (!Number.isSafeInteger(payload.baseVersion) || customer.version !== payload.baseVersion) return;
+              customer.version = payload.baseVersion + 1;
+              delete customer.pendingBaseVersion;
+            }
             customerStore.put(customer);
           };
         }
