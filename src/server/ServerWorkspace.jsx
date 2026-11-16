@@ -98,6 +98,8 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     } catch { /* Local storage may be unavailable in private browsing. */ }
     try {
       const serverRows = await client.get("/api/customers");
+      await operationStore.cacheServerCustomers(tenant.id, serverRows || []);
+      localRows = await operationStore.getCustomers(tenant.id);
       const merged = new Map((localRows || []).map(row => [row.id, { ...row }]));
       for (const row of serverRows || []) {
         const local = merged.get(row.id);
