@@ -1182,6 +1182,14 @@ public sealed class SyncApiIntegrationTests
         Assert.Contains(ownerPull.Operations, operation => operation.OperationId == globalOperationId);
         Assert.DoesNotContain(ownerPull.Operations, operation => operation.OperationId == mainOperationId);
 
+        owner.DefaultRequestHeaders.Remove("X-MG-Branch");
+        var tenantWideOwnerPull = await owner.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.NotNull(tenantWideOwnerPull);
+        Assert.Equal(3, tenantWideOwnerPull!.Operations.Length);
+        Assert.Contains(tenantWideOwnerPull.Operations, operation => operation.OperationId == mainOperationId);
+        Assert.Contains(tenantWideOwnerPull.Operations, operation => operation.OperationId == secondaryOperationId);
+        Assert.Contains(tenantWideOwnerPull.Operations, operation => operation.OperationId == globalOperationId);
+
         var unassignedPull = await unassignedStaff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
         Assert.NotNull(unassignedPull);
         Assert.Empty(unassignedPull!.Operations);
