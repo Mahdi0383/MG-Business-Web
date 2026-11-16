@@ -41,7 +41,7 @@ export function classifyIncomingOperation(operation, currentState = null) {
       && Math.round(Number(payload.baseInventoryValue) * 100) === Number(payload.baseInventoryValue) * 100
       && (payload.reference == null || (typeof payload.reference === "string" && payload.reference.length <= 250))
       && ([1, 5, 6].includes(Number(payload.type))
-        ? Number.isFinite(Number(payload.unitCost)) && Number(payload.unitCost) >= 0
+        ? payload.unitCost != null && Number.isFinite(Number(payload.unitCost)) && Number(payload.unitCost) >= 0
           && Math.round(Number(payload.unitCost) * 100) === Number(payload.unitCost) * 100
         : payload.unitCost == null);
     if (!valid) {
