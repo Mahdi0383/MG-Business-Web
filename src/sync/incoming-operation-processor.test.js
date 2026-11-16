@@ -64,3 +64,31 @@ test("stops on adapter failure and does not process later operations", async () 
 test("rejects incomplete dependencies", () => {
   assert.throws(() => new IncomingOperationProcessor({}), /required/);
 });
+
+test("stops ordered replay at the first unresolved conflict", async () => {
+  const rows = [
+    { sequence: 2, operationId: "op-2", operationType: "customer.profile.updated",
+      payloadJson: JSON.stringify({ name: "must-wait" }) },
+    { sequence: 1, operationId: "op-1", operationType: "accounting.entry.posted",
+      payloadJson: JSON.stringify({ amount: 100 }) }
+  ];
+  const calls = [];
+  const adapter = {
+    async readConflictState() { return { version: 1 }; },
+    async recordConflict({ sequence }) { calls.push(["conflict", sequence]); },
+    async applyAndAcknowledge({ sequence }) { calls.push(["apply", sequence]); }
+  };
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return rows; } },
+    adapter,
+    classify: operation => operation.operationType.startsWith("accounting.")
+      ? { disposition: "manual-review", reason: "sensitive-operation" }
+      : { disposition: "apply", reason: "eligible" }
+  });
+
+  const result = await processor.processBatch("tenant-1");
+
+  assert.equal(result.applied, 0);
+  assert.deepEqual(calls, [["conflict", 1]]);
+  assert.equal(result.results[0].sequence, 1);
+});
