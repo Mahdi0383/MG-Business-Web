@@ -17,6 +17,7 @@ public sealed class AddCryptographicDeviceEnrollment : Migration
                 TenantId = table.Column<Guid>(type: "uuid", nullable: false),
                 DeviceId = table.Column<Guid>(type: "uuid", nullable: false),
                 ActorId = table.Column<Guid>(type: "uuid", nullable: false),
+                BranchId = table.Column<Guid>(type: "uuid", nullable: true),
                 PublicKeySpkiBase64 = table.Column<string>(type: "character varying(2048)", maxLength: 2048, nullable: false),
                 CredentialSha256 = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
                 KeyVersion = table.Column<int>(type: "integer", nullable: false),
@@ -30,6 +31,7 @@ public sealed class AddCryptographicDeviceEnrollment : Migration
                 table.PrimaryKey("PK_device_credentials", x => new { x.TenantId, x.DeviceId });
                 table.ForeignKey("FK_device_credentials_tenants_TenantId", x => x.TenantId, "tenants", "Id", onDelete: ReferentialAction.Cascade);
                 table.ForeignKey("FK_device_credentials_AspNetUsers_ActorId", x => x.ActorId, "AspNetUsers", "Id", onDelete: ReferentialAction.Cascade);
+                table.ForeignKey("FK_device_credentials_branches_TenantId_BranchId", x => new { x.TenantId, x.BranchId }, "branches", new[] { "TenantId", "Id" }, onDelete: ReferentialAction.Cascade);
             });
 
         migrationBuilder.CreateTable(
@@ -56,6 +58,7 @@ public sealed class AddCryptographicDeviceEnrollment : Migration
 
         migrationBuilder.CreateIndex(name: "IX_device_credentials_ActorId", table: "device_credentials", column: "ActorId");
         migrationBuilder.CreateIndex(name: "IX_device_credentials_TenantId_ActorId", table: "device_credentials", columns: new[] { "TenantId", "ActorId" });
+        migrationBuilder.CreateIndex(name: "IX_device_credentials_TenantId_BranchId", table: "device_credentials", columns: new[] { "TenantId", "BranchId" });
         migrationBuilder.CreateIndex(name: "IX_device_enrollment_challenges_ActorId", table: "device_enrollment_challenges", column: "ActorId");
         migrationBuilder.CreateIndex(name: "IX_device_enrollment_challenges_TenantId_ActorId_DeviceId_ExpiresAtUtc", table: "device_enrollment_challenges", columns: new[] { "TenantId", "ActorId", "DeviceId", "ExpiresAtUtc" });
         migrationBuilder.CreateIndex(name: "IX_device_enrollment_challenges_TenantId_BranchId", table: "device_enrollment_challenges", columns: new[] { "TenantId", "BranchId" });
