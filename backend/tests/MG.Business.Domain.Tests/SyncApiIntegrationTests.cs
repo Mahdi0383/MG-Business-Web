@@ -1770,6 +1770,15 @@ public sealed class SyncApiIntegrationTests
                 new Dictionary<string, string?> { ["SyncSecurity:RequireDeviceSignatures"] = requireDeviceSignatures.ToString(), ["SyncSecurity:RequireAuthorityLeases"] = requireAuthorityLeases.ToString(), ["SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64"] = authoritySigningPrivateKeyBase64 }));
             builder.ConfigureServices(services =>
             {
+                if (!string.IsNullOrWhiteSpace(authoritySigningPrivateKeyBase64))
+                {
+                    var signerConfiguration = new ConfigurationBuilder().AddInMemoryCollection(
+                        new Dictionary<string, string?>
+                        {
+                            ["SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64"] = authoritySigningPrivateKeyBase64
+                        }).Build();
+                    services.AddSingleton(new AuthorityLeaseSigner(signerConfiguration));
+                }
                 services.RemoveAll<DbContextOptions<BusinessDbContext>>();
                 services.RemoveAll<IDbContextOptionsConfiguration<BusinessDbContext>>();
                 services.RemoveAll<BusinessDbContext>();
