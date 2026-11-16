@@ -547,6 +547,10 @@ class Handler(SimpleHTTPRequestHandler):
                     "customers": "SELECT * FROM customers WHERE tenant_id=?",
                     "customer_ledger": "SELECT * FROM customer_ledger WHERE tenant_id=?",
                     "inventory_movements": "SELECT * FROM inventory_movements WHERE tenant_id=?",
+                    "suppliers": "SELECT * FROM suppliers WHERE tenant_id=?",
+                    "purchase_invoices": "SELECT * FROM purchase_invoices WHERE tenant_id=?",
+                    "purchase_invoice_items": "SELECT * FROM purchase_invoice_items WHERE tenant_id=?",
+                    "supplier_payments": "SELECT * FROM supplier_payments WHERE tenant_id=?",
                     "orders": "SELECT * FROM orders WHERE tenant_id=?",
                     "order_items": "SELECT * FROM order_items WHERE tenant_id=?",
                     "game_devices": "SELECT * FROM game_devices WHERE tenant_id=?",
@@ -1071,7 +1075,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
                 allowed = ("users","accounts","products","customers","customer_ledger","game_devices","transactions","journal_entries",
-                           "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
+                           "journal_lines","inventory_movements","suppliers","purchase_invoices","purchase_invoice_items","supplier_payments",
+                           "orders","order_items","game_sessions","audit_log")
                 if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
                     return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
                 total_rows = sum(len(tables.get(name,[])) for name in allowed)
@@ -1092,12 +1097,14 @@ class Handler(SimpleHTTPRequestHandler):
                             if not set(record).issubset(column_map[name]):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
-                    delete_order = ("game_sessions","order_items","orders","inventory_movements","journal_lines",
-                                    "journal_entries","transactions","customer_ledger","products","customers","game_devices","accounts","audit_log")
+                    delete_order = ("game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
+                                    "inventory_movements","journal_lines","journal_entries","transactions","customer_ledger",
+                                    "products","customers","suppliers","game_devices","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
-                    insert_order = ("accounts","products","customers","customer_ledger","game_devices","transactions","journal_entries",
-                                    "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
+                    insert_order = ("accounts","products","customers","customer_ledger","suppliers","game_devices","transactions",
+                                    "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
+                                    "supplier_payments","orders","order_items","game_sessions","audit_log")
                     for name in insert_order:
                         records = tables.get(name,[])
                         if name == "journal_entries":
