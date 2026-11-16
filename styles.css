@@ -39,3 +39,5 @@
 .offline-card{max-width:470px}.offline-card p{line-height:1.9}.offline-card button{width:100%;margin-top:12px}
 
 .module-table-head.supplier-ledger,.module-table-row.supplier-ledger{grid-template-columns:1.5fr .8fr .8fr .8fr 1fr}@media(max-width:700px){.module-table-head.supplier-ledger,.module-table-row.supplier-ledger{grid-template-columns:1.3fr .7fr .7fr .7fr .9fr;font-size:9px;gap:5px;padding:9px 6px}}
+
+.module-table-head.supplier-list,.module-table-row.supplier-list{grid-template-columns:1.4fr 1fr auto}.module-table-head.supplier-ledger,.module-table-row.supplier-ledger{grid-template-columns:1.2fr 1fr .9fr .9fr .9fr}.supplier-ledger-panel{margin:20px 0}.supplier-ledger-panel .ledger-head{margin-top:18px}@media(max-width:700px){.module-table-head.supplier-list,.module-table-row.supplier-list{grid-template-columns:1fr .8fr auto;gap:6px;padding:9px 7px;font-size:10px}.module-table-head.supplier-ledger,.module-table-row.supplier-ledger{grid-template-columns:1.2fr .8fr .8fr .8fr .8fr;gap:5px;padding:8px 5px;font-size:9px}}
