@@ -1,6 +1,6 @@
 # Browser offline journal
 
-The browser client now has a durable IndexedDB operation store and a push agent.
+The browser client now has a durable IndexedDB operation store, a push agent and a production service worker that caches the application shell and same-origin static assets. API/auth/sync routes are explicitly excluded from caching.
 
 - A stable browser profile device ID is created and persisted in IndexedDB.
 - Business commands can be explicitly appended with tenant/branch, actor-independent device identity, schema version, authority epoch, payload JSON and SHA-256 hash.
