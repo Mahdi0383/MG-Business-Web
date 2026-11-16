@@ -7,6 +7,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<Account> Accounts => Set<Account>();
+    public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
+    public DbSet<JournalEntryLine> JournalEntryLines => Set<JournalEntryLine>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -19,6 +22,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
             entity.HasIndex(x => x.Slug).IsUnique();
+            entity.HasAlternateKey(x => new { x.Id });
         });
 
         modelBuilder.Entity<Branch>(entity =>
@@ -28,7 +32,52 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Code).HasMaxLength(32).IsRequired();
             entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasAlternateKey(x => new { x.TenantId, x.Id });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Account>(entity =>
+        {
+            entity.ToTable("accounts");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
+            entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasAlternateKey(x => new { x.TenantId, x.Id });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<JournalEntry>(entity =>
+        {
+            entity.ToTable("journal_entries");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Description).HasMaxLength(500).IsRequired();
+            entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.Property(x => x.EntryDate).HasConversion(
+                value => value.ToDateTime(TimeOnly.MinValue),
+                value => DateOnly.FromDateTime(value));
+            entity.HasAlternateKey(x => new { x.TenantId, x.Id });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasMany(x => x.Lines).WithOne().HasForeignKey(x => new { x.TenantId, x.JournalEntryId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<JournalEntryLine>(entity =>
+        {
+            entity.ToTable("journal_entry_lines", table =>
+            {
+                table.HasCheckConstraint("ck_journal_line_one_side", "(debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)");
+                table.HasCheckConstraint("ck_journal_line_non_negative", "debit >= 0 AND credit >= 0");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Debit).HasPrecision(18, 2);
+            entity.Property(x => x.Credit).HasPrecision(18, 2);
+            entity.Property(x => x.Description).HasMaxLength(300);
+            entity.HasOne<Account>().WithMany().HasForeignKey(x => new { x.TenantId, x.AccountId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }
