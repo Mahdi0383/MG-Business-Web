@@ -51,6 +51,10 @@ public static class InventoryEndpoints
             {
                 return Results.Conflict(new { message = "کد کالا تکراری است یا اطلاعات با محدودیت پایگاه داده سازگار نیست." });
             }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست کالا را با اطمینان ثبت کند؛ اطلاعات را بررسی و دوباره تلاش کنید." });
+            }
 
             return Results.Created($"/api/inventory/products/{product.Id}",
                 new ProductResponse(product.Id, product.Sku, product.Name, product.BaseUnit, product.TracksInventory, product.DefaultSalePrice, product.IsActive));
