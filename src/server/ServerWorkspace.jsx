@@ -147,6 +147,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
       setProducts(productRows || []);
       setCustomers(customerRows || []);
       setAccounts(accountRows || []);
+      const activeProducts = (productRows || []).filter(product => product.isActive);
 
       const assets = (accountRows || []).filter(x => x.type === "Asset");
       const revenues = (accountRows || []).filter(x => x.type === "Revenue");
@@ -157,8 +158,8 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
       const inventory = assets.find(x => x.code === "1200") || assets[0];
       const cogs = expenses.find(x => x.code === "5000") || expenses[0];
 
-      if (!productRows?.length) {
-        setError("برای ثبت فروش ابتدا حداقل یک کالا یا خدمت ثبت کنید.");
+      if (!activeProducts.length) {
+        setError("برای ثبت فروش ابتدا حداقل یک کالای فعال یا خدمت ثبت کنید.");
         setPage("products");
         return;
       }
@@ -179,7 +180,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         inventoryAccountId: inventory?.id || "",
         costOfGoodsSoldAccountId: cogs?.id || "",
         paymentReference: "",
-        lines: [{ productId: productRows[0].id, quantity: "1", unitPrice: String(productRows[0].defaultSalePrice || 0), discount: "0" }]
+        lines: [{ productId: activeProducts[0].id, quantity: "1", unitPrice: String(activeProducts[0].defaultSalePrice || 0), discount: "0" }]
       });
       setModal("sale");
     } catch (openError) {
@@ -427,9 +428,9 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         {modal === "sale" && <>
           <label>مشتری (برای فروش نسیه الزامی است)<select value={form.customerId} onChange={e => setForm({ ...form, customerId: e.target.value })}><option value="">فروش نقدی بدون مشتری</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name} — {customer.code}</option>)}</select></label>
           <div className="mg-sale-lines">
-            <div className="mg-sale-lines-head"><b>اقلام فاکتور</b><button type="button" className="mg-mini-btn" onClick={() => setForm({ ...form, lines: [...form.lines, { productId: products[0]?.id || "", quantity: "1", unitPrice: String(products[0]?.defaultSalePrice || 0), discount: "0" }] })}>＋ افزودن قلم</button></div>
+            <div className="mg-sale-lines-head"><b>اقلام فاکتور</b><button type="button" className="mg-mini-btn" onClick={() => setForm({ ...form, lines: [...form.lines, { productId: products.find(product => product.isActive)?.id || "", quantity: "1", unitPrice: String(products.find(product => product.isActive)?.defaultSalePrice || 0), discount: "0" }] })}>＋ افزودن قلم</button></div>
             {form.lines.map((line, index) => <div className="mg-sale-line" key={index}>
-              <select aria-label="کالا" required value={line.productId} onChange={e => updateSaleLine(index, "productId", e.target.value)}><option value="">انتخاب کالا</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>)}</select>
+              <select aria-label="کالا" required value={line.productId} onChange={e => updateSaleLine(index, "productId", e.target.value)}><option value="">انتخاب کالا</option>{products.filter(product => product.isActive).map(product => <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>)}</select>
               <input aria-label="تعداد" type="number" min="0.001" step="0.001" required value={line.quantity} onChange={e => updateSaleLine(index, "quantity", e.target.value)} />
               <input aria-label="قیمت واحد" type="number" min="0" step="0.01" required value={line.unitPrice} onChange={e => updateSaleLine(index, "unitPrice", e.target.value)} />
               <input aria-label="تخفیف قلم" type="number" min="0" step="0.01" value={line.discount} onChange={e => updateSaleLine(index, "discount", e.target.value)} />
