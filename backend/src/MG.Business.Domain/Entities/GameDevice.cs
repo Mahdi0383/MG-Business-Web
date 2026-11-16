@@ -16,6 +16,8 @@ public sealed class GameDevice
             throw new ArgumentOutOfRangeException(nameof(hourlyRate));
         if (billingIntervalMinutes is < 1 or > 60)
             throw new ArgumentOutOfRangeException(nameof(billingIntervalMinutes));
+        if (decimal.Round(hourlyRate * billingIntervalMinutes / 60m, 2, MidpointRounding.AwayFromZero) <= 0m)
+            throw new ArgumentOutOfRangeException(nameof(hourlyRate), "The minimum billable interval must produce a positive charge.");
 
         Id = Guid.NewGuid();
         TenantId = tenantId;
