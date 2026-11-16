@@ -252,3 +252,21 @@ test("rejects malformed incoming operation envelopes before persistence", async 
   );
   assert.equal(persisted, false);
 });
+
+test("does not misreport local validation errors as network outages", async () => {
+  const api = {
+    async get() {
+      return { operations: [], nextSequence: 4, hasMore: false };
+    },
+    async post() { assert.fail("invalid local state must not be acknowledged"); }
+  };
+  const store = {
+    async getCursor() { return 3; },
+    async storeIncomingPage() { throw new TypeError("tenantId is required."); }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    /tenantId is required/
+  );
+});
