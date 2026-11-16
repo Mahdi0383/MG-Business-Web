@@ -1349,7 +1349,7 @@ public sealed class SyncApiIntegrationTests
 
         var controlCharacter = await client.PostAsJsonAsync("/api/sync/heartbeat", new
         {
-            deviceId = Guid.NewGuid(), deviceName = "MG\\nBrowser", platform = "Web", clientVersion = "1.0"
+            deviceId = Guid.NewGuid(), deviceName = "MG\nBrowser", platform = "Web", clientVersion = "1.0"
         });
         Assert.Equal(HttpStatusCode.BadRequest, controlCharacter.StatusCode);
 
