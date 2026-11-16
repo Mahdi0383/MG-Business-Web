@@ -413,6 +413,21 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/me":
                 tenant = db.execute("SELECT id,name FROM tenants WHERE id=?", (user["tenant_id"],)).fetchone()
                 return self.send_json(200, {"user": public_user(user), "tenant": dict(tenant)})
+            if path == "/api/modules":
+                rows = db.execute("""SELECT module_key,expires_at,license_id FROM tenant_modules
+                    WHERE tenant_id=? AND enabled=1 AND (expires_at IS NULL OR expires_at>?)""",
+                    (user["tenant_id"],int(time.time()))).fetchall()
+                keys = ["overview"]+[row["module_key"] for row in rows]
+                return self.send_json(200, {"modules":sorted(set(keys)),
+                    "expiresAt":min((row["expires_at"] for row in rows if row["expires_at"]),default=None)})
+            if path == "/api/licenses/status":
+                row = db.execute("SELECT plan,expires_at,status FROM licenses WHERE tenant_id=? ORDER BY activated_at DESC LIMIT 1",
+                                 (user["tenant_id"],)).fetchone()
+                if not row:
+                    trial = db.execute("SELECT MIN(expires_at) FROM tenant_modules WHERE tenant_id=? AND license_id='trial'",
+                                       (user["tenant_id"],)).fetchone()[0]
+                    return self.send_json(200, {"plan":"trial","expiresAt":trial,"status":"trial"})
+                return self.send_json(200, dict(row))
             if path == "/api/backup":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان کامل دریافت کند."})
@@ -739,6 +754,32 @@ class Handler(SimpleHTTPRequestHandler):
                 except sqlite3.IntegrityError:
                     db.rollback()
                     return self.send_json(409, {"error": "بازیابی به‌دلیل ناسازگاری ارتباط رکوردها انجام نشد؛ اطلاعات قبلی حفظ شد."})
+            if path == "/api/licenses/activate":
+                if user["role"] != "owner":
+                    return self.send_json(403, {"error": "فقط مالک می‌تواند لایسنس را فعال کند."})
+                try:
+                    license = verify_license_code(data.get("code"))
+                except ValueError as exc:
+                    return self.send_json(400, {"error": str(exc)})
+                code_hash = hashlib.sha256(data["code"].encode()).hexdigest()
+                now, tenant_id = int(time.time()), user["tenant_id"]
+                db.execute("BEGIN IMMEDIATE")
+                existing = db.execute("SELECT tenant_id FROM licenses WHERE code_hash=?", (code_hash,)).fetchone()
+                if existing and existing["tenant_id"] != tenant_id:
+                    db.rollback()
+                    return self.send_json(409, {"error": "این کد لایسنس قبلاً برای فضای کاری دیگری فعال شده است."})
+                db.execute("""INSERT OR REPLACE INTO licenses(id,tenant_id,code_hash,plan,expires_at,activated_at,status)
+                    VALUES(?,?,?,?,?,?,'active')""", (license["license_id"],tenant_id,code_hash,license["plan"],license["expires_at"],now))
+                db.execute("DELETE FROM tenant_modules WHERE tenant_id=?", (tenant_id,))
+                entitlements = set(license["modules"]) | {"overview","settings"}
+                for module in entitlements:
+                    db.execute("""INSERT INTO tenant_modules(tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+                        VALUES(?,?,1,?,?,?)""", (tenant_id,module,license["expires_at"],license["license_id"],now))
+                audit(db,tenant_id,user["id"],"license.activated","license",license["license_id"],
+                      {"plan":license["plan"],"modules":sorted(entitlements)})
+                db.commit()
+                return self.send_json(200, {"ok":True,"plan":license["plan"],"modules":sorted(entitlements),
+                                            "expiresAt":license["expires_at"]})
             if path == "/api/logout":
                 token = self.headers.get("Authorization", "")[7:].strip()
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
