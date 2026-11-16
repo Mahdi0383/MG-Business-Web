@@ -196,6 +196,13 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE p.tenant_id=? AND p.active=1
                     GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/inventory/movements":
+                rows = db.execute("""SELECT m.id,m.product_id AS productId,p.name AS productName,
+                    m.movement_type AS movementType,m.quantity_delta AS quantityDelta,
+                    m.unit_cost AS unitCost,m.note,m.created_at AS createdAt
+                    FROM inventory_movements m JOIN products p ON p.id=m.product_id
+                    WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/customers":
                 rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
                     FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
