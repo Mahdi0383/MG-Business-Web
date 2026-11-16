@@ -212,7 +212,10 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def seed_accounts(db, tenant_id):
     defaults = [
-        ("1000", "صندوق و بانک", "asset", "debit"),
+        ("1000", "صندوق نقدی", "asset", "debit"),
+        ("1010", "وجوه در راه کارت‌خوان", "asset", "debit"),
+        ("1020", "وجوه در راه پرداخت آنلاین", "asset", "debit"),
+        ("1100", "حساب‌های دریافتنی", "asset", "debit"),
         ("1200", "موجودی کالا", "asset", "debit"),
         ("2000", "حساب‌های پرداختنی", "liability", "credit"),
         ("3000", "سرمایه", "equity", "credit"),
@@ -226,9 +229,9 @@ def seed_accounts(db, tenant_id):
         db.execute("INSERT OR IGNORE INTO accounts(id,tenant_id,code,name,account_type,normal_balance) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,code,name,account_type,normal))
 
-def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at):
+def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000'):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
-    cash, counterpart = accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
+    cash, counterpart = accounts[debit_account_code] if kind == "income" else accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,occurred_at[:10],title,"transaction",tx_id,user_id,now))
@@ -733,7 +736,8 @@ class Handler(SimpleHTTPRequestHandler):
                 occurred_at = time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now))
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,'income','فروش کافه',?,?)""", (tx_id,user["tenant_id"],user["id"],title,total,occurred_at,now))
-                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at)
+                payment_account = {"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment]
+                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at,payment_account)
                 audit(db,user["tenant_id"],user["id"],"order.created","order",order_id,{"total":total,"items":len(products)})
                 db.commit()
                 return self.send_json(201, {"id":order_id,"orderNumber":order_number,"subtotal":subtotal,"discount":discount,"total":total})
