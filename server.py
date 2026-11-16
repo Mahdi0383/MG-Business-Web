@@ -647,7 +647,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(404, {"error": "نشست فعال پیدا نشد."})
                 now = int(time.time())
                 elapsed = max(0,now-session["started_at"])
-                amount = 0 if session["is_free"] else (session["rate_per_hour"]*elapsed+3599)//3600
+                billed_minutes = (elapsed+59)//60
+                amount = 0 if session["is_free"] else (session["rate_per_hour"]*billed_minutes+59)//60
                 db.execute("UPDATE game_sessions SET status='ended',ended_at=?,amount_due=? WHERE id=? AND tenant_id=?",
                            (now,amount,session_id,user["tenant_id"]))
                 if amount > 0:
