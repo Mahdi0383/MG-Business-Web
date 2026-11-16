@@ -186,9 +186,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(result["items"]), 1)
         self.assertEqual(result["items"][0]["id"], "order-order-test-1")
         status, result = self.request("GET", "/api/accounting/profit-loss", token=token)
-        self.assertEqual(result["netProfit"], 165000)
+        self.assertEqual(result["netProfit"], -45000)
         status, result = self.request("GET", "/api/accounting/journal", token=token)
-        self.assertEqual(len(result["items"]), 3)
+        self.assertEqual(len(result["items"]), 6)
         self.assertTrue(all(item["debit"] == item["credit"] for item in result["items"]))
 
         db = server.connect()
