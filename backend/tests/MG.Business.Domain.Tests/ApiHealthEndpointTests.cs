@@ -26,6 +26,11 @@ public sealed class ApiHealthEndpointTests
     public async Task ReadyEndpoint_ReturnsHealthyWhenDatabaseIsReachable()
     {
         using var factory = CreateFactory();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            await db.Database.EnsureCreatedAsync();
+        }
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/health/ready");
