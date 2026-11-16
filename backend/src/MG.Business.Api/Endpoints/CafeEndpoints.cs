@@ -25,11 +25,11 @@ public static class CafeEndpoints
             if (status.HasValue)
                 query = query.Where(x => x.Status == status.Value);
 
-            var tickets = await query.OrderBy(x => x.CreatedAtUtc)
+            var tickets = await query.Take(100)
                 .Select(x => new TicketResponse(x.Id, x.SalesOrderId, x.ServiceType.ToString(),
                     x.TableLabel, x.Notes, x.Status.ToString(), x.CreatedAtUtc, x.PreparingAtUtc, x.ReadyAtUtc))
-                .Take(100).ToListAsync(cancellationToken);
-            return Results.Ok(tickets);
+                .ToListAsync(cancellationToken);
+            return Results.Ok(tickets.OrderBy(x => x.CreatedAtUtc));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
         group.MapPost("/tickets", async (CreateTicketRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
