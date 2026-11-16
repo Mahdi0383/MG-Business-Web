@@ -57,6 +57,16 @@ CREATE TABLE IF NOT EXISTS products(
  UNIQUE(tenant_id,sku)
 );
 CREATE INDEX IF NOT EXISTS idx_products_tenant_active ON products(tenant_id,active,name);
+CREATE TABLE IF NOT EXISTS inventory_movements(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ product_id TEXT NOT NULL REFERENCES products(id), created_by TEXT NOT NULL REFERENCES users(id),
+ movement_type TEXT NOT NULL CHECK(movement_type IN ('purchase','sale','adjustment','waste')),
+ quantity_delta INTEGER NOT NULL CHECK(quantity_delta<>0),
+ unit_cost INTEGER NOT NULL DEFAULT 0 CHECK(unit_cost>=0),
+ note TEXT NOT NULL DEFAULT '' CHECK(length(note)<=300),
+ created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inventory_tenant_product_date ON inventory_movements(tenant_id,product_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS customers(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  full_name TEXT NOT NULL CHECK(length(full_name) BETWEEN 1 AND 160),
@@ -178,6 +188,14 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
                     FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/inventory":
+                rows = db.execute("""SELECT p.id AS productId,p.name,p.sku,p.category,
+                    COALESCE(SUM(m.quantity_delta),0) AS quantity,p.cost_price AS costPrice
+                    FROM products p LEFT JOIN inventory_movements m
+                    ON m.product_id=p.id AND m.tenant_id=p.tenant_id
+                    WHERE p.tenant_id=? AND p.active=1
+                    GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/customers":
                 rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
                     FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
@@ -289,6 +307,42 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"product.created","product",product_id,{"sellPrice":sell_price})
                 db.commit()
                 return self.send_json(201, {"id": product_id, "ok": True})
+            if path == "/api/inventory/movements":
+                if user["role"] not in ("owner", "manager"):
+                    return self.send_json(403, {"error": "دسترسی ثبت گردش انبار ندارید."})
+                product_id = data.get("productId"); delta = data.get("quantityDelta")
+                movement_type = data.get("movementType"); unit_cost = data.get("unitCost", 0)
+                note = data.get("note", "")
+                if not isinstance(product_id,str) or not 1 <= len(product_id) <= 100:
+                    return self.send_json(400, {"error": "شناسه کالا معتبر نیست."})
+                if type(delta) is not int or delta == 0 or abs(delta) > 100000000:
+                    return self.send_json(400, {"error": "تعداد باید عدد صحیح و غیرصفر باشد."})
+                if movement_type not in ("purchase","sale","adjustment","waste"):
+                    return self.send_json(400, {"error": "نوع گردش انبار معتبر نیست."})
+                if movement_type == "purchase" and delta < 0 or movement_type in ("sale","waste") and delta > 0:
+                    return self.send_json(400, {"error": "جهت تعداد با نوع گردش انبار سازگار نیست."})
+                if type(unit_cost) is not int or unit_cost < 0:
+                    return self.send_json(400, {"error": "بهای واحد معتبر نیست."})
+                if not isinstance(note,str) or len(note) > 300:
+                    return self.send_json(400, {"error": "یادداشت بیش از حد طولانی است."})
+                db.execute("BEGIN IMMEDIATE")
+                product = db.execute("SELECT id FROM products WHERE id=? AND tenant_id=? AND active=1",
+                                     (product_id,user["tenant_id"])).fetchone()
+                if not product:
+                    db.rollback()
+                    return self.send_json(404, {"error": "کالای فعال پیدا نشد."})
+                current = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE tenant_id=? AND product_id=?",
+                                     (user["tenant_id"],product_id)).fetchone()[0]
+                if current + delta < 0:
+                    db.rollback()
+                    return self.send_json(409, {"error": "موجودی کافی نیست؛ موجودی فعلی: %s" % current})
+                movement_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
+                db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,user["tenant_id"],product_id,user["id"],movement_type,delta,unit_cost,note,now))
+                audit(db,user["tenant_id"],user["id"],"inventory.movement.created","inventory_movement",movement_id,
+                      {"productId":product_id,"quantityDelta":delta,"movementType":movement_type})
+                db.commit()
+                return self.send_json(201, {"id": movement_id, "ok": True})
             if path == "/api/customers":
                 if user["role"] not in ("owner", "manager", "cashier"):
                     return self.send_json(403, {"error": "دسترسی مدیریت مشتریان ندارید."})
