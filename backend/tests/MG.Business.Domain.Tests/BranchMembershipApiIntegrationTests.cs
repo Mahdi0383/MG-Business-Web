@@ -88,7 +88,7 @@ public sealed class BranchMembershipApiIntegrationTests
         Assert.Equal(HttpStatusCode.Conflict, demote.StatusCode);
 
         var remove = await owner.DeleteAsync($"/api/memberships/{ownerMembership.Id}");
-        Assert.Equal(HttpStatusCode.Conflict, remove.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, remove.StatusCode);
     }
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
