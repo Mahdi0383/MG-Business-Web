@@ -15,12 +15,13 @@ The API exposes:
 - `GET /health/live`: process liveness
 - `GET /health/ready`: database connectivity readiness
 
-Set `Database:Provider=PostgreSql` and `ConnectionStrings:Business` using environment variables for PostgreSQL. Never commit production credentials.
+Set `Database__Provider=PostgreSql` and `ConnectionStrings__Business` using environment variables for PostgreSQL. Never commit production credentials.
 
 ## Structure
 - `MG.Business.Domain`: core business entities and invariants
 - `MG.Business.Infrastructure`: EF Core persistence and provider configuration
 - `MG.Business.Api`: HTTP composition root and health endpoints
+- `MG.Business.Domain.Tests`: domain invariant tests
 
 ## Important security boundary
 Tenant and branch entities are only foundational data models. No tenant-scoped business endpoints are exposed until authentication, authorization, tenant resolution, and isolation tests are implemented together. A caller-supplied tenant header is not an authorization mechanism.
