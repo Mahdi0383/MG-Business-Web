@@ -32,6 +32,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
 - [x] Transactional inbound customer creation projection with atomic inbox acknowledgement and durable duplicate-conflict records; customer updates remain fail-closed until server-side update handling is implemented.
 - [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
+- [x] Persist branch-scoped unresolved incoming conflicts and surface their open count in the workspace sync status; automatic resolution remains intentionally unavailable.
 - [x] Customer workspace falls back to the durable local customer projection on fetch/network failure, including online-but-unreachable API conditions; HTTP/API errors remain visible rather than being masked.
 - [x] Revalidate persisted inbox payload SHA-256 immediately before replay; missing, malformed or tampered hashes fail closed.
 - [x] Enforce branch/tenant/manager visibility in local inbox reads and processing, including unassigned tenant-wide context.
@@ -96,3 +97,10 @@ The current repository is a foundation, not a finished commercial product. A foc
 - The customer workspace previously fell back to IndexedDB only when the browser reported `navigator.onLine === false`. Browsers can report an active network connection while the tenant API is unreachable, which caused a valid local customer projection to be hidden during real outages.
 - Added a shared network-unavailable classifier and use it in the customer loader. Fetch-level network failures now display locally stored customers; HTTP responses such as authorization, validation and server errors are not silently converted into offline success.
 - Added unit coverage for fetch failures versus HTTP/application errors. This improves offline read availability for customers only; it does not claim that other business modules are offline-ready.
+
+
+### Incoming customer replay safety and conflict visibility — 2026-11-16
+
+- The local inbox processor now applies only the supported customer-create projection path. Customer profile/contact update command types remain fail-closed for manual review until a complete outbound edit workflow and version-precondition contract exist; this avoids accepting commands that the local product cannot safely originate or reconcile.
+- Incoming conflict records retain their originating branch. The local store exposes unresolved conflicts through the tenant/status/created-time index, and the workspace status line shows the open conflict count alongside pending outbox and unapplied inbox counts.
+- This is conflict visibility, not conflict resolution. Operators cannot yet merge or discard conflicts through a governed workflow, and unresolved entries intentionally block later journal replay in sequence order.
