@@ -491,6 +491,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "journal_lines": "SELECT * FROM journal_lines WHERE tenant_id=?",
                     "products": "SELECT * FROM products WHERE tenant_id=?",
                     "customers": "SELECT * FROM customers WHERE tenant_id=?",
+                    "customer_ledger": "SELECT * FROM customer_ledger WHERE tenant_id=?",
                     "inventory_movements": "SELECT * FROM inventory_movements WHERE tenant_id=?",
                     "orders": "SELECT * FROM orders WHERE tenant_id=?",
                     "order_items": "SELECT * FROM order_items WHERE tenant_id=?",
@@ -801,7 +802,7 @@ class Handler(SimpleHTTPRequestHandler):
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
-                allowed = ("users","accounts","products","customers","game_devices","transactions","journal_entries",
+                allowed = ("users","accounts","products","customers","customer_ledger","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
                 if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
                     return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
@@ -824,10 +825,10 @@ class Handler(SimpleHTTPRequestHandler):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("game_sessions","order_items","orders","inventory_movements","journal_lines",
-                                    "journal_entries","transactions","products","customers","game_devices","accounts","audit_log")
+                                    "journal_entries","transactions","customer_ledger","products","customers","game_devices","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
-                    insert_order = ("accounts","products","customers","game_devices","transactions","journal_entries",
+                    insert_order = ("accounts","products","customers","customer_ledger","game_devices","transactions","journal_entries",
                                     "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
                     for name in insert_order:
                         records = tables.get(name,[])
