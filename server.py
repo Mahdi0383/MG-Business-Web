@@ -855,6 +855,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if not tenant or not module_enabled(db,tenant["id"],"cafe"):
                     return self.send_json(404, {"error": "ثبت سفارش آنلاین فعال نیست."})
                 tenant_id = tenant["id"]
+                client_order_id = data.get("clientOrderId")
+                if client_order_id is not None and (not isinstance(client_order_id,str) or not 8 <= len(client_order_id) <= 100):
+                    return self.send_json(400, {"error": "شناسه سفارش آنلاین معتبر نیست."})
+                if client_order_id:
+                    existing_order = db.execute("SELECT id,order_number AS orderNumber,total FROM orders WHERE id=? AND tenant_id=?",
+                                                 (client_order_id,tenant_id)).fetchone()
+                    if existing_order:
+                        return self.send_json(200, {"ok":True,"orderNumber":existing_order["orderNumber"],"total":existing_order["total"],"duplicate":True})
                 actor = db.execute("SELECT id FROM users WHERE tenant_id=? AND active=1 ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1",
                                    (tenant_id,)).fetchone()
                 if not actor:
@@ -892,7 +900,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if subtotal <= 0:
                     db.rollback()
                     return self.send_json(400, {"error": "مبلغ سفارش معتبر نیست."})
-                order_id, created = secrets.token_urlsafe(18), int(now)
+                order_id, created = client_order_id or secrets.token_urlsafe(18), int(now)
                 order_number = "MG-ON-%s-%s" % (time.strftime("%Y%m%d"),secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
                     VALUES(?,?,?,?,?,'paid',?,0,?,'credit',?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created))
