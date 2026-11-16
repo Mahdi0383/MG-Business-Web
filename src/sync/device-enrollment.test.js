@@ -87,4 +87,3 @@ test("recovers a lost enrollment response with the same persisted private key", 
   assert.equal(recovered.privateKey.extractable, false);
   assert.ok(recovered.publicKeySpkiBase64);
 });
-});
