@@ -13,7 +13,7 @@ function openDatabase() {
   if (!databasePromise) {
     databasePromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = event => {
         const database = request.result;
         if (!database.objectStoreNames.contains(OPERATIONS_STORE)) {
           const operations = database.createObjectStore(OPERATIONS_STORE, { keyPath: "operationId" });
@@ -26,7 +26,7 @@ function openDatabase() {
         if (!database.objectStoreNames.contains(INBOX_STORE))
           inbox = database.createObjectStore(INBOX_STORE, { keyPath: ["tenantId", "sequence"] });
         else
-          inbox = request.transaction.objectStore(INBOX_STORE);
+          inbox = event.target.transaction.objectStore(INBOX_STORE);
         if (inbox.indexNames.contains("byTenantApplied"))
           inbox.deleteIndex("byTenantApplied");
         inbox.createIndex("byTenantApplied", ["tenantId", "applied"]);
