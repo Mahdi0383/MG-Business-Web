@@ -46,7 +46,7 @@ git pull --ff-only
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger` و `POST /api/customers/{id}/payments`
 - `GET /api/inventory` و `POST /api/inventory/movements`
 - `GET /api/accounting/accounts`، `GET /api/accounting/journal`، `GET /api/accounting/trial-balance`، `GET /api/accounting/balance-sheet` و `GET /api/accounting/profit-loss`
-- `GET/POST /api/gamenet/devices`، `GET /api/gamenet/sessions` و `POST /api/gamenet/sessions/{id}/end`
+- `GET/POST /api/gamenet/devices`، `POST/DELETE /api/gamenet/devices/{id}`، `GET /api/gamenet/sessions` و `POST /api/gamenet/sessions/{id}/end`
 
 توکن نشست به‌صورت hash در SQLite نگهداری می‌شود؛ رمز عبور با PBKDF2-HMAC-SHA256 و salt تصادفی ذخیره می‌شود. ورود و سفارش عمومی rate-limit پایه دارند؛ داده‌ها در API به tenant محدود هستند و تغییرات مهم در audit log ثبت می‌شوند. این API هنوز به بازبینی امنیتی مستقل، TLS، مدیریت کاربران و نقش‌های کامل و آزمون نفوذ قبل از انتشار عمومی نیاز دارد. برای دسترسی از شبکه عمومی، سرور را مستقیم بدون HTTPS و تنظیمات امنیتی در معرض اینترنت قرار ندهید.
 
