@@ -14,6 +14,19 @@ namespace MG.Business.Domain.Tests;
 public sealed class SyncApiIntegrationTests
 {
     [Fact]
+    public void DevicePresenceCannotBeTakenOverByAnotherTenantMember()
+    {
+        var presence = new DevicePresence(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null,
+            "MG Browser", "Web", "1.0", DateTimeOffset.UtcNow);
+        var originalActor = presence.ActorId;
+
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            presence.Heartbeat(Guid.NewGuid(), null, "Other Browser", "Web", "2.0", DateTimeOffset.UtcNow));
+        Assert.Equal(originalActor, presence.ActorId);
+        Assert.Equal("MG Browser", presence.DeviceName);
+    }
+
+    [Fact]
     public void DeviceCursorCannotBeTakenOverByAnotherTenantMember()
     {
         var tenantId = Guid.NewGuid();
