@@ -304,8 +304,10 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       } catch { /* Keep the pending idempotency intent when its status cannot be verified. */ }
       const activeAssets = (accountRows || []).filter(account => account.type === "Asset" && account.isActive);
       const cash = activeAssets.find(account => account.code === "1000") || activeAssets[0];
-      const receivable = activeAssets.find(account => account.code === "1100") || activeAssets[0];
-      if (!cash || !receivable) throw new Error("حساب دریافت وجه و حساب دریافتنی فعال باید در سرفصل‌های حسابداری تعریف شده باشند.");
+      const receivable = activeAssets.find(account => account.code === "1100" && account.id !== cash?.id)
+        || activeAssets.find(account => account.id !== cash?.id);
+      if (!cash || !receivable || cash.id === receivable.id)
+        throw new Error("برای ثبت دریافت، دو حساب داراییِ فعال و مستقل برای وجه دریافتی و دریافتنی تعریف کنید.");
       setAccounts(accountRows || []);
       setForm({
         orderId: latestOrder.id,
@@ -799,8 +801,8 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           </div>
           <label>مبلغ دریافت (تومان)<input required type="number" min="0.01" max={form.balanceDue} step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></label>
           <label>روش دریافت<select required value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}><option value="1">نقدی</option><option value="2">کارت‌خوان</option><option value="3">انتقال بانکی</option><option value="4">کیف پول</option></select></label>
-          <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
-          <label>حساب دریافتنی<select required value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{assetAccounts.filter(account => account.id !== form.receivableAccountId).map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>حساب دریافتنی<select required value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}>{assetAccounts.filter(account => account.id !== form.paymentAccountId).map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
           <label>شناسه پرداخت / توضیحات<input maxLength="100" value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
           <div className="mg-server-modal-hint"><b>سوابق دریافت:</b> {(form.paymentHistory || []).length ? form.paymentHistory.map(payment => `${money(payment.amount)} · ${payment.method} · ${dateTime(payment.createdAtUtc)}`).join(" | ") : "هنوز دریافتی ثبت نشده است."}</div>
         </>}
