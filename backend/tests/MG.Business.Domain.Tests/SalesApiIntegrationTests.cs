@@ -223,6 +223,70 @@ public sealed class SalesApiIntegrationTests
     }
 
     [Fact]
+    public async Task SaleRejectsInvalidLineAndDiscountPrecisionBeforePersistence()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sales-precision-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Sales Precision Store",
+            slug = $"sales-precision-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var revenue = await CreateAccountAsync(client, "4000", "Sales Revenue", AccountType.Revenue);
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "PRECISION-SERVICE",
+            name = "Precision Service",
+            baseUnit = "service",
+            tracksInventory = false,
+            defaultSalePrice = 10m
+        });
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
+
+        async Task<HttpResponseMessage> CreateSale(decimal quantity, decimal? unitPrice, decimal lineDiscount, decimal orderDiscount)
+        {
+            return await client.PostAsJsonAsync("/api/sales/orders", new
+            {
+                customerId = (Guid?)null,
+                discount = orderDiscount,
+                amountPaid = 10m,
+                paymentMethod = PaymentMethod.Cash,
+                revenueAccountId = revenue.Id,
+                paymentAccountId = Guid.NewGuid(),
+                receivableAccountId = (Guid?)null,
+                inventoryAccountId = (Guid?)null,
+                costOfGoodsSoldAccountId = (Guid?)null,
+                paymentReference = (string?)null,
+                lines = new[] { new { productId = product!.Id, quantity, unitPrice, discount = lineDiscount } }
+            });
+        }
+
+        using var invalidQuantity = await CreateSale(1.0001m, 10m, 0m, 0m);
+        using var invalidPrice = await CreateSale(1m, 10.001m, 0m, 0m);
+        using var invalidLineDiscount = await CreateSale(1m, 10m, 0.001m, 0m);
+        using var invalidOrderDiscount = await CreateSale(1m, 10m, 0m, 0.001m);
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidQuantity.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidPrice.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLineDiscount.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidOrderDiscount.StatusCode);
+
+        var orders = await client.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
+        Assert.Empty(orders!);
+        var trial = await client.GetFromJsonAsync<TrialBalanceResponse>("/api/accounting/trial-balance");
+        Assert.Equal(0m, trial!.TotalDebit);
+        Assert.Equal(0m, trial.TotalCredit);
+    }
+
+    [Fact]
     public async Task BranchScopedCashierListsOnlySalesFromAssignedBranch()
     {
         using var factory = CreateFactory();
