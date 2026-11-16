@@ -726,7 +726,7 @@ export class LocalOperationStore {
     const index = transaction.objectStore(CONFLICTS_STORE).index("byTenantStatusCreatedAt");
     const rows = await new Promise((resolve, reject) => {
       const matching = [];
-      const request = index.openCursor(IDBKeyRange.bound([tenantId, "open", ""], [tenantId, "open", "\\uffff"]), "prev");
+      const request = index.openCursor(IDBKeyRange.bound([tenantId, "open", ""], [tenantId, "open", "\uffff"]), "prev");
       request.onerror = () => reject(request.error || new Error("Could not read unresolved sync conflicts."));
       request.onsuccess = () => {
         const cursor = request.result;
