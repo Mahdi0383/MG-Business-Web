@@ -280,10 +280,17 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     setSaving(true);
     setError("");
     try {
-      const [accountRows, paymentRows] = await Promise.all([
+      const [accountRows, paymentRows, orderRows] = await Promise.all([
         client.get("/api/accounting/accounts"),
-        client.get(`/api/sales/orders/${order.id}/payments`)
+        client.get(`/api/sales/orders/${order.id}/payments`),
+        client.get("/api/sales/orders")
       ]);
+      const latestOrder = (orderRows || []).find(row => row.id === order.id) || order;
+      setSales(orderRows || []);
+      if (Number(latestOrder.balanceDue || 0) <= 0) {
+        setError("این فاکتور قبلاً تسویه شده است.");
+        return;
+      }
       const intentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${order.id}`;
       try {
         const pendingIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
@@ -301,12 +308,12 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       if (!cash || !receivable) throw new Error("حساب دریافت وجه و حساب دریافتنی فعال باید در سرفصل‌های حسابداری تعریف شده باشند.");
       setAccounts(accountRows || []);
       setForm({
-        orderId: order.id,
-        orderNumber: order.number,
-        total: Number(order.total || 0),
-        paidAmount: Number(order.paidAmount || 0),
-        balanceDue: Number(order.balanceDue || 0),
-        amount: String(order.balanceDue),
+        orderId: latestOrder.id,
+        orderNumber: latestOrder.number,
+        total: Number(latestOrder.total || 0),
+        paidAmount: Number(latestOrder.paidAmount || 0),
+        balanceDue: Number(latestOrder.balanceDue || 0),
+        amount: String(latestOrder.balanceDue),
         paymentMethod: "1",
         paymentAccountId: cash.id,
         receivableAccountId: receivable.id,
