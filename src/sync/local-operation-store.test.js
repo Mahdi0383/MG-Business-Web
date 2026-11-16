@@ -90,7 +90,7 @@ test("branch-filtered pull acknowledges the scanned journal cursor", async () =>
   const operation = {
     sequence: 3,
     operationId: "operation-visible",
-    payloadJson: "{\\"name\\":\\"MG\\"}",
+    payloadJson: "{\"name\":\"MG\"}",
     payloadSha256: "A".repeat(64),
     schemaVersion: 1
   };
