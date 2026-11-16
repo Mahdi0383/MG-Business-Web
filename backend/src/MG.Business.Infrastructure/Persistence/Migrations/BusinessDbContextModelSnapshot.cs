@@ -1238,6 +1238,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
 
                     b.Property<long>("AuthorityEpoch").HasColumnType("bigint");
                     b.Property<Guid?>("BranchId").HasColumnType("uuid");
+                    b.Property<Guid>("ActorId").HasColumnType("uuid");
                     b.Property<Guid>("DeviceId").HasColumnType("uuid");
                     b.Property<Guid>("Id").HasColumnType("uuid");
                     b.Property<Guid>("OperationId").HasColumnType("uuid");
@@ -1258,6 +1259,12 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
                 {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("MG.Business.Domain.Entities.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
