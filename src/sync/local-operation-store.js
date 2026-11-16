@@ -301,7 +301,7 @@ export class LocalOperationStore {
     if (!Number.isSafeInteger(initial.version) || initial.version < 1)
       throw new Error("Customer projection has no valid server-confirmed version.");
 
-    const normalized = normalizeLocalCustomer({ ...initial, ...customer });
+    const normalized = normalizeLocalCustomer({ ...initial, ...customer, code: initial.code });
     const baseVersion = initial.version;
     const payload = {
       customerId, baseVersion, name: normalized.name,
