@@ -65,7 +65,6 @@ public static class SyncEndpoints
             var cutoff = DateTimeOffset.UtcNow.AddSeconds(-90);
             var devices = await db.DevicePresences.AsNoTracking()
                 .Where(x => x.TenantId == tenantId)
-                .OrderByDescending(x => x.LastSeenAtUtc)
                 .Select(x => new
                 {
                     x.DeviceId, x.ActorId, x.BranchId, x.DeviceName, x.Platform,
@@ -73,7 +72,7 @@ public static class SyncEndpoints
                 })
                 .ToListAsync(cancellationToken);
 
-            return Results.Ok(devices.Select(device => new
+            return Results.Ok(devices.OrderByDescending(device => device.LastSeenAtUtc).Select(device => new
             {
                 device.DeviceId, device.ActorId, device.BranchId, device.DeviceName,
                 device.Platform, device.ClientVersion, device.FirstSeenAtUtc, device.LastSeenAtUtc,
