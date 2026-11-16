@@ -253,6 +253,22 @@ export class DeviceEnrollmentClient {
     return updated;
   }
 
+  async revokeDevice({ tenantId, branchId = null, actorId, deviceId }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()
+      || typeof actorId !== "string" || !actorId.trim()
+      || typeof deviceId !== "string" || !deviceId.trim())
+      throw new TypeError("Tenant, actor and device identities are required to revoke a device.");
+    const result = await this.apiClient.post(
+      "/api/sync/enrollment/revoke",
+      { deviceId },
+      { tenantId, branchId, actorId }
+    );
+    const currentDeviceId = await this.operationStore.getDeviceId(actorId, tenantId, branchId);
+    if (currentDeviceId === deviceId)
+      await this.operationStore.clearAuthorityLease?.({ tenantId, branchId });
+    return result;
+  }
+
   async ensureAuthorityLease({ tenantId, branchId = null, actorId, canAcquire = false }) {
     const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
     const now = Date.now();
