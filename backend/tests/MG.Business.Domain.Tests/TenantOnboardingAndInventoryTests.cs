@@ -45,6 +45,26 @@ public sealed class TenantOnboardingAndInventoryTests
         var products = await client.GetFromJsonAsync<ProductCreated[]>("/api/inventory/products");
         Assert.Single(products!);
 
+        var secondProduct = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "TEA-002",
+            name = "چای",
+            baseUnit = "cup",
+            tracksInventory = true
+        });
+        Assert.Equal(HttpStatusCode.Created, secondProduct.StatusCode);
+
+        var catalog = await client.GetFromJsonAsync<ProductCatalogPage>(
+            "/api/inventory/products/catalog?page=1&pageSize=1&search=چای&activeOnly=true");
+        Assert.NotNull(catalog);
+        Assert.Equal(1, catalog.TotalCount);
+        Assert.Equal(1, catalog.TotalPages);
+        Assert.Single(catalog.Items);
+        Assert.Equal("TEA-002", catalog.Items[0].Sku);
+
+        var invalidCatalog = await client.GetAsync("/api/inventory/products/catalog?page=0&pageSize=201");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidCatalog.StatusCode);
+
         client.DefaultRequestHeaders.Remove("X-MG-Tenant");
         client.DefaultRequestHeaders.Add("X-MG-Tenant", Guid.NewGuid().ToString());
         var crossTenant = await client.GetAsync("/api/inventory/products");
@@ -219,6 +239,8 @@ public sealed class TenantOnboardingAndInventoryTests
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record ProductCreated(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, bool IsActive);
+    private sealed record ProductCatalogPage(int Page, int PageSize, int TotalCount, int TotalPages, ProductCatalogItem[] Items);
+    private sealed record ProductCatalogItem(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
     private sealed record MovementPage(int Page, int PageSize, int TotalCount, int TotalPages, MovementItem[] Items);
     private sealed record MovementItem(Guid Id, Guid ProductId, Guid BranchId, string Type, decimal Quantity, decimal UnitCost, decimal SignedQuantity, string? Reference, DateTimeOffset CreatedAtUtc);
