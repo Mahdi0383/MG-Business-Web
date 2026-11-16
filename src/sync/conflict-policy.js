@@ -78,6 +78,15 @@ export function classifyIncomingOperation(operation, currentState = null) {
     const baseVersion = payload?.baseVersion;
     const currentVersion = currentState?.version;
 
+    if (currentState?.lastOperationId === operation.operationId) {
+      return {
+        disposition: "apply",
+        reason: "originating-device-echo",
+        expectedVersion: baseVersion,
+        operationId: operation.operationId ?? null
+      };
+    }
+
     if (!Number.isSafeInteger(baseVersion) || !Number.isSafeInteger(currentVersion)) {
       return {
         disposition: "manual-review",
