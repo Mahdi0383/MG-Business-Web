@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS tenants(
 );
 CREATE TABLE IF NOT EXISTS users(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
- username TEXT NOT NULL COLLATE NOCASE, password_hash TEXT NOT NULL,
+ username TEXT NOT NULL COLLATE NOCASE UNIQUE, password_hash TEXT NOT NULL,
  role TEXT NOT NULL CHECK(role IN ('owner','manager','cashier','viewer')),
  active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
  created_at INTEGER NOT NULL, UNIQUE(tenant_id, username), UNIQUE(id,tenant_id)
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS sessions(
  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);\nCREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_global ON users(username COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS transactions(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  created_by TEXT NOT NULL REFERENCES users(id),
