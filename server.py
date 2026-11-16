@@ -884,6 +884,17 @@ class Handler(SimpleHTTPRequestHandler):
             audit(db,user["tenant_id"],user["id"],"transaction.voided","transaction",tx_id)
             db.commit()
             return self.send_json(200, {"ok": True, "voided": True})
+        except sqlite3.IntegrityError:
+            db.rollback()
+            return self.send_json(409, {"error":"عملیات با محدودیت‌های داده سازگار نیست."})
+        except sqlite3.OperationalError as exc:
+            db.rollback()
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                return self.send_json(503, {"error":"پایگاه داده مشغول است؛ چند لحظه بعد دوباره تلاش کنید."})
+            return self.send_json(500, {"error":"خطای عملیاتی پایگاه داده رخ داد."})
+        except sqlite3.Error:
+            db.rollback()
+            return self.send_json(500, {"error":"خطای پایگاه داده رخ داد."})
         finally: db.close()
 
     def do_POST(self):
