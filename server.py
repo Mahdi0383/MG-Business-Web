@@ -1422,9 +1422,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if email is not None and (not isinstance(email,str) or len(email)>254): return self.send_json(400,{"error":"ایمیل معتبر نیست."})
                 if not isinstance(notes,str) or len(notes)>2000: return self.send_json(400,{"error":"یادداشت معتبر نیست."})
                 sid=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                if not 1<=len(sid)<=100: return self.send_json(400,{"error":"شناسه تأمین‌کننده معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM suppliers WHERE tenant_id=? AND name=?",(user["tenant_id"],name.strip())).fetchone():
+                    db.rollback(); return self.send_json(409,{"error":"این نام تأمین‌کننده قبلاً ثبت شده است."})
                 db.execute("INSERT INTO suppliers(id,tenant_id,name,phone,email,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (sid,user["tenant_id"],name.strip(),phone,email,notes,now,now))
+                    (sid,user["tenant_id"],name.strip(),phone.strip() if phone and phone.strip() else None,email.strip() if email and email.strip() else None,notes,now,now))
                 audit(db,user["tenant_id"],user["id"],"supplier.created","supplier",sid); db.commit()
                 return self.send_json(201,{"id":sid,"ok":True})
             if path == "/api/purchase-invoices":
@@ -1438,7 +1441,11 @@ class Handler(SimpleHTTPRequestHandler):
                 except (TypeError,ValueError): return self.send_json(400,{"error":"تاریخ فاکتور باید YYYY-MM-DD باشد."})
                 if not isinstance(items,list) or not 1<=len(items)<=500 or type(discount) is not int or discount<0: return self.send_json(400,{"error":"اقلام یا تخفیف فاکتور معتبر نیست."})
                 invoice_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                if not 1<=len(invoice_id)<=100: return self.send_json(400,{"error":"شناسه فاکتور معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM purchase_invoices WHERE tenant_id=? AND invoice_number=?",
+                              (user["tenant_id"],number.strip())).fetchone():
+                    db.rollback(); return self.send_json(409,{"error":"این شماره فاکتور خرید قبلاً ثبت شده است."})
                 if not db.execute("SELECT 1 FROM suppliers WHERE id=? AND tenant_id=? AND active=1",(sid,user["tenant_id"])).fetchone():
                     db.rollback(); return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
                 prepared=[]; subtotal=0
