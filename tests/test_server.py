@@ -76,6 +76,19 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(result["items"]), 1)
         self.assertEqual(result["items"][0]["amount"], 150000)
 
+        status, result = self.request("GET", "/api/accounting/profit-loss", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["revenue"], 150000)
+        db = server.connect()
+        try:
+            totals = db.execute("""SELECT SUM(l.debit),SUM(l.credit) FROM journal_lines l
+                JOIN journal_entries e ON e.id=l.entry_id
+                WHERE e.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
+                  AND e.source_type='transaction' AND e.source_id='tx-test-1'""").fetchone()
+            self.assertEqual((totals[0], totals[1]), (150000, 150000))
+        finally:
+            db.close()
+
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-bad", "title": "Invalid amount", "amount": True,
             "kind": "income", "createdAt": "2026-11-16T12:00:00Z"
@@ -133,6 +146,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/transactions", token=token)
         self.assertEqual(result["items"], [])
+        status, result = self.request("GET", "/api/accounting/profit-loss", token=token)
+        self.assertEqual(result["netProfit"], 0)
+        status, result = self.request("GET", "/api/accounting/journal", token=token)
+        self.assertEqual(len(result["items"]), 2)
+        self.assertTrue(all(item["debit"] == item["credit"] for item in result["items"]))
 
         db = server.connect()
         try:
