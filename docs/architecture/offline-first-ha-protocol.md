@@ -115,7 +115,7 @@ Delivery is **at least once**. Exactly-once network delivery is not assumed. The
 ## 9. Current implementation status (honest boundary)
 
 Implemented on the feature branch:
-- tenant-scoped append-only sync journal and idempotent push/pull transport;
+- tenant-scoped append-only sync journal, idempotent push/pull transport and monotonic per-device acknowledgement cursors;
 - browser IndexedDB outbound queue and inbound inbox with cursor persistence;
 - PWA application-shell caching;
 - tenant heartbeat registration and Owner/Manager stale-device polling.
