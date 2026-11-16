@@ -515,7 +515,9 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       await loadData();
       if (successNotice) setError(successNotice);
     } catch (saveError) {
-      if (modal === "salePayment" && saveError?.status === 400 && paymentIntentStorageKey) {
+      const paymentWasDefinitelyRejected = saveError?.status === 400 || saveError?.status === 404
+        || (saveError?.status === 409 && saveError?.message?.includes("مبلغ دریافت از مانده فاکتور بیشتر است"));
+      if (modal === "salePayment" && paymentWasDefinitelyRejected && paymentIntentStorageKey) {
         try { window.localStorage.removeItem(paymentIntentStorageKey); } catch { /* Keep the original validation error visible. */ }
       }
       setError(formatApiError(saveError));
