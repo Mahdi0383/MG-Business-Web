@@ -216,9 +216,11 @@ function AuthShell({ apiBaseUrl }) {
 
     const refreshPendingCount = async () => {
       try {
+        const branchId = selectedBranch?.id || null;
+        const allowTenantWide = ["Owner", "Manager"].includes(selectedTenant?.role);
         const [pending, incoming] = await Promise.all([
-          operationStoreRef.current.getPendingCount(tenantId),
-          operationStoreRef.current.getInboxCount(tenantId)
+          operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide),
+          operationStoreRef.current.getInboxCount(tenantId, branchId)
         ]);
         if (active) { setPendingOperations(pending); setIncomingOperations(incoming); }
       } catch {
@@ -286,7 +288,7 @@ function AuthShell({ apiBaseUrl }) {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [stage, selectedTenant?.id, selectedBranch?.id]);
+  }, [stage, selectedTenant?.id, selectedTenant?.role, selectedBranch?.id]);
 
   useEffect(() => {
     if (stage !== "workspace" || !selectedTenant?.id) return undefined;
