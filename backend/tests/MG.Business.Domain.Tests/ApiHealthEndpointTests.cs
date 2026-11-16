@@ -1,0 +1,40 @@
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+
+namespace MG.Business.Domain.Tests;
+
+public sealed class ApiHealthEndpointTests
+{
+    [Fact]
+    public async Task LiveEndpoint_ReturnsHealthyResponse()
+    {
+        using var factory = CreateFactory("Data Source=:memory:");
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/health/live");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("live", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ReadyEndpoint_ReturnsHealthyWhenDatabaseIsReachable()
+    {
+        using var factory = CreateFactory("Data Source=:memory:");
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/health/ready");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static WebApplicationFactory<Program> CreateFactory(string connectionString) =>
+        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Database:Provider"] = "Sqlite",
+                    ["ConnectionStrings:Business"] = connectionString
+                })));
+}
