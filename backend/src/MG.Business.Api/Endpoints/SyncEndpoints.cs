@@ -31,12 +31,9 @@ public static class SyncEndpoints
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
 
-            var maximumSequence = await db.SyncOperations.AsNoTracking()
-                .Where(x => x.TenantId == tenantId)
-                .Select(x => (long?)x.Sequence)
-                .MaxAsync(cancellationToken) ?? 0;
-            if (request.Sequence > maximumSequence)
-                return Results.BadRequest(new { message = "Acknowledgement cannot advance beyond the tenant journal." });
+            if (request.Sequence > 0 && !await db.SyncOperations.AsNoTracking()
+                .AnyAsync(x => x.TenantId == tenantId && x.Sequence == request.Sequence, cancellationToken))
+                return Results.BadRequest(new { message = "Acknowledgement sequence does not belong to this tenant journal." });
 
             var now = DateTimeOffset.UtcNow;
             var cursor = await db.SyncDeviceCursors.SingleOrDefaultAsync(
@@ -298,7 +295,8 @@ public static class SyncEndpoints
     }
 
     public sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);
-    public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence);\n    public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
+    public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence);
+    public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
     public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
         Guid OperationId, Guid DeviceId, Guid? BranchId, string OperationType,
