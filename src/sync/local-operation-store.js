@@ -122,20 +122,26 @@ export class LocalOperationStore {
   async acknowledge(acknowledgements) {
     if (!Array.isArray(acknowledgements) || acknowledgements.length === 0) return;
     const database = await openDatabase();
-    const transaction = database.transaction(OPERATIONS_STORE, "readwrite");
-    const done = transactionDone(transaction);
-    const store = transaction.objectStore(OPERATIONS_STORE);
+    const readTransaction = database.transaction(OPERATIONS_STORE, "readonly");
+    const readDone = transactionDone(readTransaction);
+    const readStore = readTransaction.objectStore(OPERATIONS_STORE);
+    const existing = await Promise.all(acknowledgements.map(item => requestResult(readStore.get(item.operationId))));
+    await readDone;
 
-    for (const acknowledgement of acknowledgements) {
-      const operation = await requestResult(store.get(acknowledgement.operationId));
-      if (!operation) continue;
+    const writeTransaction = database.transaction(OPERATIONS_STORE, "readwrite");
+    const writeDone = transactionDone(writeTransaction);
+    const writeStore = writeTransaction.objectStore(OPERATIONS_STORE);
+    existing.forEach((operation, index) => {
+      if (!operation) return;
+      const acknowledgement = acknowledgements[index];
+      if (!Number.isSafeInteger(acknowledgement.sequence) || acknowledgement.sequence < 1)
+        throw new TypeError("Server acknowledgement sequence is invalid.");
       operation.state = "acknowledged";
       operation.serverSequence = acknowledgement.sequence;
       operation.acknowledgedAtUtc = new Date().toISOString();
-      store.put(operation);
-    }
-
-    await done;
+      writeStore.put(operation);
+    });
+    await writeDone;
   }
 
   async getPendingCount(tenantId) {
