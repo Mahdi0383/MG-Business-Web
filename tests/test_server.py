@@ -257,6 +257,11 @@ class ApiIntegrationTests(unittest.TestCase):
         })
         self.assertEqual(status, 201)
         self.assertTrue(result["orderNumber"].startswith("MG-ON-"))
+        db = server.connect()
+        try:
+            self.assertIsNotNone(db.execute("SELECT 1 FROM orders WHERE id='public-public-order-01'").fetchone())
+        finally:
+            db.close()
         order_number = result["orderNumber"]
         status, result = self.request("POST", "/api/public/orders", {
             "clientOrderId": "public-order-01", "customerName": "Online Guest", "phone": "+491111111",
