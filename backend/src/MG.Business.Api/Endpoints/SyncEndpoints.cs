@@ -403,23 +403,30 @@ public static class SyncEndpoints
                 return Results.BadRequest(new { message = "afterSequence cannot be negative." });
 
             var take = Math.Clamp(limit ?? 100, 1, 200);
-            var operations = await db.SyncOperations.AsNoTracking()
+            // Scan the tenant journal in sequence order, but expose only operations
+            // visible to the active branch. Advance over hidden rows as well so a
+            // branch-scoped device cannot get stuck behind another branch's entries.
+            var journalWindow = await db.SyncOperations.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && x.Sequence > afterSequence)
                 .OrderBy(x => x.Sequence)
                 .Take(take)
+                .ToListAsync(cancellationToken);
+
+            var operations = journalWindow
+                .Where(x => tenant.BranchId is null || x.BranchId is null || x.BranchId == tenant.BranchId)
                 .Select(x => new
                 {
                     x.Sequence, x.OperationId, x.ActorId, x.DeviceId, x.BranchId,
                     x.OperationType, x.SchemaVersion, x.AuthorityEpoch,
                     x.OccurredAtUtc, x.ReceivedAtUtc, x.PayloadJson, x.PayloadSha256
                 })
-                .ToListAsync(cancellationToken);
+                .ToList();
 
             return Results.Ok(new
             {
                 operations,
-                nextSequence = operations.Count == 0 ? afterSequence : operations[^1].Sequence,
-                hasMore = operations.Count == take
+                nextSequence = journalWindow.Count == 0 ? afterSequence : journalWindow[^1].Sequence,
+                hasMore = journalWindow.Count == take
             });
         });
 
