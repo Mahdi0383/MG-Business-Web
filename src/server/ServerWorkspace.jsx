@@ -247,6 +247,14 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           name: form.name.trim(),
           type: Number(form.type)
         });
+      } else if (modal === "gameDevice") {
+        await client.post("/api/gamenet/devices", {
+          serviceProductId: form.serviceProductId,
+          code: form.code.trim(),
+          name: form.name.trim(),
+          hourlyRate: Number(form.hourlyRate),
+          billingIntervalMinutes: Number(form.billingIntervalMinutes)
+        });
       } else if (modal === "gameStart") {
         await client.post("/api/gamenet/sessions", {
           deviceId: form.deviceId,
@@ -330,6 +338,33 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
       await loadData();
     } catch (updateError) {
       setError(formatApiError(updateError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openCreateDevice = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const productRows = await client.get("/api/inventory/products");
+      const serviceProducts = (productRows || []).filter(product => product.isActive && !product.tracksInventory);
+      setProducts(productRows || []);
+      if (!serviceProducts.length) {
+        setError("برای تعریف دستگاه، ابتدا در بخش کالاها یک خدمت بدون موجودی انبار ثبت کنید.");
+        setPage("products");
+        return;
+      }
+      setForm({
+        serviceProductId: serviceProducts[0].id,
+        code: "",
+        name: "",
+        hourlyRate: "",
+        billingIntervalMinutes: "15"
+      });
+      setModal("gameDevice");
+    } catch (deviceError) {
+      setError(formatApiError(deviceError));
     } finally {
       setSaving(false);
     }
@@ -461,7 +496,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         </section>}
 
         {page === "gamenet" && <section className="mg-server-panel">
-          <div className="mg-server-panel-head"><div><h2>دستگاه‌ها و سانس‌های فعال</h2><p>{count(activeSessions.length)} سانس در حال اجرا</p></div><button className="mg-secondary-btn" onClick={loadData}>↻ بروزرسانی</button></div>
+          <div className="mg-server-panel-head"><div><h2>دستگاه‌ها و سانس‌های فعال</h2><p>{count(activeSessions.length)} سانس در حال اجرا</p></div><div className="mg-server-panel-actions">{canStartGame && <button className="mg-primary-btn" onClick={openCreateDevice}>＋ افزودن دستگاه</button>}<button className="mg-secondary-btn" onClick={loadData}>↻ بروزرسانی</button></div></div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>دستگاه</th><th>نرخ ساعتی</th><th>بازه محاسبه</th><th>وضعیت</th><th>عملیات</th></tr></thead>
             <tbody>{devices.map(device => <tr key={device.id}><td>{device.code}</td><td>{device.name}</td><td>{money(device.hourlyRate)}</td><td>{count(device.billingIntervalMinutes)} دقیقه</td><td>{device.hasActiveSession ? "در حال استفاده" : "آزاد"}</td><td>{canStartGame && !device.hasActiveSession && <button className="mg-mini-btn" disabled={saving} onClick={() => openStartGame(device.id)}>شروع سانس</button>}</td></tr>)}</tbody>
           </table>{!devices.length && <div className="mg-server-empty">دستگاهی برای این شعبه ثبت نشده است.</div>}</div>
@@ -473,7 +508,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
 
     {modal && <div className="mg-server-overlay" onMouseDown={event => event.target === event.currentTarget && setModal("")}>
       <form className="mg-server-modal" onSubmit={save}>
-        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
+        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
 
         {modal === "product" && <>
           <label>کد کالا<input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></label>
@@ -495,6 +530,14 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <label>کد حساب<input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
           <label>عنوان حساب<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
           <label>نوع حساب<select required value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="1">دارایی</option><option value="2">بدهی</option><option value="3">حقوق مالکانه</option><option value="4">درآمد</option><option value="5">هزینه</option></select></label>
+        </>}
+
+        {modal === "gameDevice" && <>
+          <label>خدمت متصل به دستگاه<select required value={form.serviceProductId} onChange={e => setForm({ ...form, serviceProductId: e.target.value })}>{products.filter(product => product.isActive && !product.tracksInventory).map(product => <option key={product.id} value={product.id}>{product.name} — {product.sku}</option>)}</select></label>
+          <label>کد دستگاه<input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
+          <label>نام دستگاه<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
+          <label>نرخ ساعتی (تومان)<input required type="number" min="0.01" step="0.01" value={form.hourlyRate} onChange={e => setForm({ ...form, hourlyRate: e.target.value })} /></label>
+          <label>بازه محاسبه (دقیقه)<input required type="number" min="1" step="1" value={form.billingIntervalMinutes} onChange={e => setForm({ ...form, billingIntervalMinutes: e.target.value })} /></label>
         </>}
 
         {modal === "gameStart" && <>
@@ -545,7 +588,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         </>}
 
 
-        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
+        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
       </form>
     </div>}
   </div>;
