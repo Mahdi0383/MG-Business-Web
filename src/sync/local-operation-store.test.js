@@ -282,7 +282,7 @@ test("incoming sequence reuse requires the complete immutable journal envelope t
     authorityEpoch: 0,
     occurredAtUtc: "2026-11-16T10:00:00.000Z",
     receivedAtUtc: "2026-11-16T10:00:01.000Z",
-    payloadJson: "{\\"name\\":\\"MG\\"}",
+    payloadJson: JSON.stringify({ name: "MG" }),
     payloadSha256: "b618f9a65827379fd2f866d0ca039122397e99c4d3f7d37052083c4095339f8a"
   };
   assert.equal(isSameIncomingEnvelope(envelope, { ...envelope }), true);
