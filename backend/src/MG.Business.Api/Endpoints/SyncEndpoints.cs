@@ -57,11 +57,11 @@ public static class SyncEndpoints
                 cursor = new SyncDeviceCursor(tenantId, request.DeviceId, actorId, request.Sequence, now);
                 db.SyncDeviceCursors.Add(cursor);
             }
-            else if (cursor.ActorId != actorId)
+            else if (cursor!.ActorId != actorId)
             {
                 return Results.Forbid();
             }
-            else if (!cursor.Advance(actorId, request.Sequence, now))
+            else if (!cursor!.Advance(actorId, request.Sequence, now))
             {
                 return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = true });
             }
