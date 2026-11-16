@@ -54,9 +54,6 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const [kitchenTickets, setKitchenTickets] = useState([]);
   const [devices, setDevices] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
-  const [gameQuote, setGameQuote] = useState(null);
-  const [gameSettlementAccounts, setGameSettlementAccounts] = useState([]);
-  const [closingSession, setClosingSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState("");
@@ -312,43 +309,6 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
             setError(`فاکتور ${createdSale.number} ثبت شد، اما ارسال به آشپزخانه انجام نشد: ${formatApiError(kitchenError)}`);
           }
         }
-      } else if (modal === "game-start") {
-        await client.post("/api/gamenet/sessions", {
-          deviceId: form.deviceId,
-          customerId: form.customerId || null
-        });
-      } else if (modal === "game-close") {
-        if (!closingSession || !gameQuote) throw new Error("اطلاعات سانس برای تسویه در دسترس نیست.");
-        const quotedTotal = Number(gameQuote.totalAmount);
-        let finalAmountPaid = Number(form.amountPaid || 0);
-        if (finalAmountPaid < 0 || finalAmountPaid > quotedTotal)
-          throw new Error("مبلغ دریافتی باید بین صفر و مبلغ صورتحساب باشد.");
-
-        const latestQuote = await client.get(`/api/gamenet/sessions/${closingSession.id}/quote`);
-        const latestTotal = Number(latestQuote.totalAmount);
-        if (Math.abs(finalAmountPaid - quotedTotal) < 0.01 && latestTotal !== quotedTotal)
-          finalAmountPaid = latestTotal;
-        if (finalAmountPaid > latestTotal)
-          throw new Error("مبلغ سانس تغییر کرده است؛ مبلغ دریافتی را بازبینی کنید.");
-
-        const finalBalance = Math.max(0, latestTotal - finalAmountPaid);
-        if (finalBalance > 0 && !closingSession.customerId)
-          throw new Error("برای تسویه ناقص یا نسیه، هنگام شروع سانس باید مشتری انتخاب شده باشد.");
-        if (finalAmountPaid > 0 && !form.paymentAccountId)
-          throw new Error("حساب دریافت وجه را انتخاب کنید.");
-        if (finalBalance > 0 && !form.receivableAccountId)
-          throw new Error("حساب دریافتنی را انتخاب کنید.");
-
-        await client.post(`/api/gamenet/sessions/${closingSession.id}/close`, {
-          amountPaid: finalAmountPaid,
-          paymentMethod: finalAmountPaid === 0 ? 5 : Number(form.paymentMethod || 1),
-          revenueAccountId: form.revenueAccountId,
-          paymentAccountId: finalAmountPaid > 0 ? form.paymentAccountId : null,
-          receivableAccountId: finalBalance > 0 ? form.receivableAccountId : null,
-          paymentReference: form.paymentReference.trim() || null
-        });
-        setClosingSession(null);
-        setGameQuote(null);
       }
 
       setModal("");
@@ -582,20 +542,6 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           </div>}
         </>}
 
-        {modal === "game-start" && <>
-          <p className="mg-server-modal-hint">مشتری اختیاری است؛ برای ثبت بدهی در پایان سانس باید مشتری انتخاب شود.</p>
-          <label>مشتری<select value={form.customerId} onChange={e => setForm({ ...form, customerId: e.target.value })}><option value="">بدون مشتری / پرداخت کامل</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name} — {customer.code}</option>)}</select></label>
-        </>}
-
-        {modal === "game-close" && <>
-          <div className="mg-sale-summary"><span>مدت قابل‌محاسبه: <b>{count(gameQuote?.billedMinutes)} دقیقه</b></span><span>مبلغ سانس: <b>{money(gameQuote?.totalAmount)}</b></span><span>مشتری: <b>{closingSession?.customerId ? closingSession.customerId.slice(0, 8) : "بدون مشتری"}</b></span></div>
-          <label>مبلغ دریافتی (صفر = نسیه)<input type="number" min="0" max={gameQuote?.totalAmount || 0} step="0.01" value={form.amountPaid} onChange={e => setForm({ ...form, amountPaid: e.target.value })} /></label>
-          <label>روش پرداخت<select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}><option value="1">نقدی</option><option value="2">کارت‌خوان</option><option value="3">انتقال بانکی</option><option value="4">کیف پول</option></select></label>
-          <label>حساب درآمد<select required value={form.revenueAccountId} onChange={e => setForm({ ...form, revenueAccountId: e.target.value })}>{gameSettlementAccounts.filter(account => account.type === "Revenue").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
-          {Number(form.amountPaid || 0) > 0 && <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{gameSettlementAccounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>}
-          {Number(form.amountPaid || 0) < Number(gameQuote?.totalAmount || 0) && <label>حساب دریافتنی<select required value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}>{gameSettlementAccounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>}
-          <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
-        </>}
 
         <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
       </form>
