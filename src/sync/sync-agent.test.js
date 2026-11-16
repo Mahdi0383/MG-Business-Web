@@ -39,7 +39,7 @@ test("keeps pending operations untouched when the network is unavailable", async
     async acknowledge() { acknowledgeCalled = true; }
   };
 
-  const result = await new SyncAgent(api, store).pushPending("tenant-1");
+  const result = await new SyncAgent(api, store).pushPending("tenant-1", { actorId: "actor-1" });
 
   assert.equal(result.status, "offline");
   assert.equal(result.acknowledged, 0);
