@@ -136,3 +136,9 @@ export function formatApiError(error) {
   if (error instanceof TypeError) return "ارتباط با سرور برقرار نشد. نشانی API، اینترنت و تنظیمات CORS را بررسی کنید.";
   return error?.message || "خطای غیرمنتظره رخ داد.";
 }
+
+
+export function isNetworkUnavailable(error) {
+  return error instanceof TypeError
+    || (typeof navigator !== "undefined" && navigator.onLine === false);
+}
