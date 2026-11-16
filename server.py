@@ -616,26 +616,6 @@ class Handler(SimpleHTTPRequestHandler):
                     LEFT JOIN customers c ON c.id=gs.customer_id AND c.tenant_id=gs.tenant_id
                     WHERE d.tenant_id=? ORDER BY d.name""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
-            if path.startswith("/api/gamenet/devices/"):
-                if not module_enabled(db,user["tenant_id"],"gamenet"):
-                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
-                if user["role"] not in ("owner","manager"):
-                    return self.send_json(403, {"error": "دسترسی ویرایش دستگاه‌ها ندارید."})
-                device_id = path.rsplit("/",1)[-1]
-                name, device_type = data.get("name"), data.get("deviceType")
-                hourly_rate, is_free = data.get("hourlyRate"), data.get("isFree")
-                if not isinstance(name,str) or not 1 <= len(name.strip()) <= 100 or device_type not in ("pc","console","other") or type(hourly_rate) is not int or hourly_rate < 0 or type(is_free) is not bool:
-                    return self.send_json(400, {"error": "اطلاعات دستگاه معتبر نیست."})
-                db.execute("BEGIN IMMEDIATE")
-                changed = db.execute("""UPDATE game_devices SET name=?,device_type=?,hourly_rate=?,is_free=?
-                    WHERE id=? AND tenant_id=? AND active=1""",
-                    (name.strip(),device_type,hourly_rate,int(is_free),device_id,user["tenant_id"])).rowcount
-                if not changed:
-                    db.rollback()
-                    return self.send_json(404, {"error": "دستگاه فعال پیدا نشد."})
-                audit(db,user["tenant_id"],user["id"],"gamenet.device.updated","game_device",device_id)
-                db.commit()
-                return self.send_json(200, {"ok":True})
             if path == "/api/gamenet/sessions":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
@@ -1085,6 +1065,26 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"gamenet.device.created","game_device",device_id)
                 db.commit()
                 return self.send_json(201, {"id":device_id,"ok":True})
+            if path.startswith("/api/gamenet/devices/"):
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error": "دسترسی ویرایش دستگاه‌ها ندارید."})
+                device_id = path.rsplit("/",1)[-1]
+                name, device_type = data.get("name"), data.get("deviceType")
+                hourly_rate, is_free = data.get("hourlyRate"), data.get("isFree")
+                if not isinstance(name,str) or not 1 <= len(name.strip()) <= 100 or device_type not in ("pc","console","other") or type(hourly_rate) is not int or hourly_rate < 0 or type(is_free) is not bool:
+                    return self.send_json(400, {"error": "اطلاعات دستگاه معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                changed = db.execute("""UPDATE game_devices SET name=?,device_type=?,hourly_rate=?,is_free=?
+                    WHERE id=? AND tenant_id=? AND active=1""",
+                    (name.strip(),device_type,hourly_rate,int(is_free),device_id,user["tenant_id"])).rowcount
+                if not changed:
+                    db.rollback()
+                    return self.send_json(404, {"error": "دستگاه فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"gamenet.device.updated","game_device",device_id)
+                db.commit()
+                return self.send_json(200, {"ok":True})
             if path == "/api/gamenet/sessions":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
