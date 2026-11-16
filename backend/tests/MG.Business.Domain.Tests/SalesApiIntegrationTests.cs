@@ -565,6 +565,15 @@ public sealed class SalesApiIntegrationTests
         Assert.Equal(HttpStatusCode.BadRequest, excessivePrecision.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, onAccountReceipt.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, foreignCashAccount.StatusCode);
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "invalid-same-account");
+        using var sameSettlementAccount = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 10m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = cash.Id,
+            paymentReference = "SAME-ACCOUNT"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, sameSettlementAccount.StatusCode);
 
         client.DefaultRequestHeaders.Remove("Idempotency-Key");
         client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-first-40");
