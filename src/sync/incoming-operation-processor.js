@@ -67,7 +67,9 @@ export class IncomingOperationProcessor {
 
     return {
       tenantId,
-      received: rows.length,
+      received: orderedRows.length,
+      processed: results.length,
+      blockedByConflict: results.some(item => item.disposition !== "applied"),
       applied: results.filter(item => item.disposition === "applied").length,
       conflicts: results.filter(item => item.disposition !== "applied"),
       results
