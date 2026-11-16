@@ -523,7 +523,10 @@ class Handler(SimpleHTTPRequestHandler):
                 configured = db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
                 return self.send_json(200, {"configured": configured})
             if path == "/api/public/menu":
-                tenant = db.execute("SELECT id,name FROM tenants ORDER BY created_at LIMIT 1").fetchone()
+                tenants = db.execute("SELECT id,name FROM tenants ORDER BY created_at LIMIT 2").fetchall()
+                if len(tenants) > 1:
+                    return self.send_json(409, {"error": "برای انتشار چند کسب‌وکار، ابتدا دامنه اختصاصی هر کسب‌وکار را پیکربندی کنید."})
+                tenant = tenants[0] if tenants else None
                 if not tenant or not module_enabled(db,tenant["id"],"cafe"):
                     return self.send_json(404, {"error": "منوی آنلاین این کسب‌وکار فعال نیست."})
                 rows = db.execute("""SELECT p.id,p.name,p.category,p.sell_price AS sellPrice,
@@ -1013,7 +1016,10 @@ class Handler(SimpleHTTPRequestHandler):
                     if not isinstance(line,dict) or not isinstance(line.get("productId"),str) or type(line.get("quantity")) is not int or not 1 <= line["quantity"] <= 30:
                         return self.send_json(400, {"error": "قلم سفارش معتبر نیست."})
                     normalized[line["productId"]] = normalized.get(line["productId"],0)+line["quantity"]
-                tenant = db.execute("SELECT id FROM tenants ORDER BY created_at LIMIT 1").fetchone()
+                tenants = db.execute("SELECT id FROM tenants ORDER BY created_at LIMIT 2").fetchall()
+                if len(tenants) > 1:
+                    return self.send_json(409, {"error": "برای پذیرش سفارش چند کسب‌وکار، ابتدا دامنه اختصاصی هر کسب‌وکار را پیکربندی کنید."})
+                tenant = tenants[0] if tenants else None
                 if not tenant or not module_enabled(db,tenant["id"],"cafe"):
                     return self.send_json(404, {"error": "ثبت سفارش آنلاین فعال نیست."})
                 tenant_id = tenant["id"]
