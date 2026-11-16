@@ -237,6 +237,41 @@ public sealed class AccountingApiIntegrationTests
         Assert.Equal(HttpStatusCode.Forbidden, trialBalance.StatusCode);
     }
 
+    [Fact]
+    public async Task InvalidAccountDetailsReturnValidationErrorInsteadOfServerFailure()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"account-validation-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Account Validation Store",
+            slug = $"account-validation-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+
+        using var emptyName = await client.PostAsJsonAsync("/api/accounting/accounts", new
+        {
+            code = "INVALID-ACCOUNT",
+            name = "   ",
+            type = AccountType.Asset
+        });
+        using var invalidType = await client.PostAsJsonAsync("/api/accounting/accounts", new
+        {
+            code = "INVALID-TYPE",
+            name = "Invalid Type",
+            type = (AccountType)999
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, emptyName.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidType.StatusCode);
+        var accounts = await client.GetFromJsonAsync<AccountCreated[]>("/api/accounting/accounts");
+        Assert.Empty(accounts!);
+    }
+
     private static async Task<AccountCreated> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
