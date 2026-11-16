@@ -19,10 +19,18 @@ jobs:
         with:
           python-version: "3.x"
       - name: Check JavaScript syntax
-        run: node --check app.js
+        run: |
+          node --check app.js
+          node --check core.js
+          node --check public-order.js
+          node --check service-worker.js
+      - name: Compile Python sources
+        run: python -m py_compile server.py license_tool.py tests/test_server.py tests/check_project.py
       - name: Check repository structure and DOM references
         run: python tests/check_project.py
       - name: Run domain unit tests
         run: node --test tests/core.test.js
+      - name: Run backend integration tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Run backend API integration tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
