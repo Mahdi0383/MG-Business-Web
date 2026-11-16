@@ -746,7 +746,7 @@ export class LocalOperationStore {
     const database = await openDatabase();
     const transaction = database.transaction(CONFLICTS_STORE, "readonly");
     const done = transactionDone(transaction);
-    const index = transaction.objectStore(CONFLICTS_STORE).index("byTenantStatus");
+    const index = transaction.objectStore(CONFLICTS_STORE).index("byTenantStatusCreatedAt");
     const rows = await new Promise((resolve, reject) => {
       const matching = [];
       const request = index.openCursor(IDBKeyRange.only([tenantId, "open"]), "prev");
