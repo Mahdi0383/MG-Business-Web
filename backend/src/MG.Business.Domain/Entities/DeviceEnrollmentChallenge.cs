@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace MG.Business.Domain.Entities;
 
 public sealed class DeviceEnrollmentChallenge
