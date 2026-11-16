@@ -569,6 +569,26 @@ public static class SyncEndpoints
                     if (product is null)
                         return Results.NotFound(new { code = "inventory_product_not_found", productId = command.ProductId });
 
+                    var idempotencyKey = item.Request.OperationId.ToString("D");
+                    var previouslyAppliedMovement = await db.StockMovements.AsNoTracking().SingleOrDefaultAsync(
+                        x => x.TenantId == tenantId && x.BranchId == inventoryBranchId
+                            && x.IdempotencyKey == idempotencyKey,
+                        cancellationToken);
+                    if (previouslyAppliedMovement is not null)
+                    {
+                        if (previouslyAppliedMovement.ProductId != command.ProductId
+                            || previouslyAppliedMovement.Type != command.Type
+                            || previouslyAppliedMovement.Quantity != command.Quantity
+                            || previouslyAppliedMovement.Reference != command.Reference
+                            || (inbound && previouslyAppliedMovement.UnitCost != command.UnitCost))
+                            return Results.Conflict(new
+                            {
+                                code = "inventory_idempotency_conflict",
+                                message = "This operation ID was already used for a different stock movement."
+                            });
+                    }
+                    else
+                    {
                     var stateKey = (command.ProductId, inventoryBranchId);
                     if (!inventoryStates.TryGetValue(stateKey, out var valuationState))
                     {
@@ -608,6 +628,8 @@ public static class SyncEndpoints
                         item.Request.OperationId.ToString("D"), item.Hash);
                     db.StockMovements.Add(movementRecord);
                     valuationState.Apply(movementRecord);
+                    }
+
                 }
 
                 if ((item.Request.OperationType is "customer.profile.created" or "customer.profile.updated" or "customer.profile.deactivated")
