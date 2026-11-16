@@ -203,11 +203,14 @@ public static class SalesEndpoints
             if (!orderExists)
                 return Results.NotFound(new { message = "فاکتور در شعبه فعال پیدا نشد." });
 
-            var payments = await db.SalesPayments.AsNoTracking()
-                .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.SalesOrderId == orderId)
-                .OrderBy(x => x.CreatedAtUtc)
+            var paymentQuery = db.SalesPayments.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.SalesOrderId == orderId);
+            // SQLite cannot translate ordering over DateTimeOffset consistently; keep the
+            // tenant/branch filter in SQL and order the bounded invoice history in memory.
+            var paymentRows = await paymentQuery.ToListAsync(cancellationToken);
+            var payments = paymentRows.OrderBy(x => x.CreatedAtUtc)
                 .Select(x => new SalesPaymentResponse(x.Id, x.Amount, x.Method.ToString(), x.Reference, x.CreatedAtUtc))
-                .ToListAsync(cancellationToken);
+                .ToList();
             return Results.Ok(payments);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
