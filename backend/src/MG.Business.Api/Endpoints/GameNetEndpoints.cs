@@ -189,6 +189,19 @@ public static class GameNetEndpoints
                         return Results.Conflict(new { message = "فاکتور ثبت‌شده برای این جلسه پیدا نشد؛ عملیات به بررسی مدیر نیاز دارد." });
                     if (request.AmountPaid != existingOrder.PaidAmount)
                         return Results.Conflict(new { message = "این جلسه قبلاً با مبلغ دیگری تسویه شده است؛ نتیجه ثبت‌شده را از تاریخچه فاکتور بررسی کنید." });
+                    var existingEntry = await db.JournalEntries.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Reference == existingOrder.Number, cancellationToken);
+                    if (existingEntry is null)
+                        return Results.Conflict(new { message = "سند حسابداری جلسه پیدا نشد؛ نتیجه ثبت‌شده نیاز به بررسی مدیر دارد." });
+                    var existingLines = await db.JournalEntryLines.AsNoTracking()
+                        .Where(x => x.TenantId == tenantId && x.JournalEntryId == existingEntry.Id)
+                        .ToListAsync(cancellationToken);
+                    if (!existingLines.Any(x => x.AccountId == request.RevenueAccountId && x.Credit == existingOrder.Total)
+                        || (existingOrder.PaidAmount > 0m && !existingLines.Any(x =>
+                            x.AccountId == request.PaymentAccountId && x.Debit == existingOrder.PaidAmount))
+                        || (existingOrder.BalanceDue > 0m && !existingLines.Any(x =>
+                            x.AccountId == request.ReceivableAccountId && x.Debit == existingOrder.BalanceDue)))
+                        return Results.Conflict(new { message = "حساب‌های درخواست با سند مالی ثبت‌شده یکسان نیستند؛ از همان اطلاعات درخواست اولیه استفاده کنید." });
                     if (existingOrder.PaidAmount > 0m)
                     {
                         var existingPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
