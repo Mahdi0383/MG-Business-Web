@@ -243,6 +243,19 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["status"], "ended")
 
+        status, result = self.request("POST", "/api/gamenet/devices", {
+            "id": "pc-free", "name": "Free PC", "deviceType": "pc",
+            "hourlyRate": 120000, "isFree": True
+        }, token)
+        self.assertEqual(status, 201)
+        status, result = self.request("POST", "/api/gamenet/sessions", {
+            "id": "session-free", "deviceId": "pc-free", "playersCount": 1
+        }, token)
+        self.assertEqual(status, 201)
+        status, result = self.request("POST", "/api/gamenet/sessions/session-free/end", {}, token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["amountDue"], 0)
+
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
