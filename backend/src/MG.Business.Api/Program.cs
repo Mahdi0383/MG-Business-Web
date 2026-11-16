@@ -85,6 +85,9 @@ if (builder.Environment.IsProduction())
     if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures"))
         throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireDeviceSignatures.");
 
+    if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireAuthorityLeases"))
+        throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireAuthorityLeases.");
+
     if (!authorityLeaseSigner.IsConfigured)
         throw new InvalidOperationException("Production deployments must configure SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64 for signed authority leases.");
 
