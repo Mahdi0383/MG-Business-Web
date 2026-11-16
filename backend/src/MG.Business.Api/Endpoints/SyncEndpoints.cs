@@ -482,6 +482,8 @@ public static class SyncEndpoints
                 && prepared.Any(item => item.Request.BranchId is null))
                 return Results.Forbid();
 
+            await using var transaction = await db.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, cancellationToken);
             var operationIds = prepared.Select(x => x.Request.OperationId).ToArray();
             var existing = await db.SyncOperations.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
@@ -491,6 +493,7 @@ public static class SyncEndpoints
             // One aggregate may only be mutated once per batch. Otherwise two commands
             // with the same base version could both be accepted against one tracked entity.
             var customerCommandIds = new HashSet<Guid>();
+            var inventoryStates = new Dictionary<(Guid ProductId, Guid BranchId), InventoryValuationAccumulator>();
             var inserted = new List<SyncOperation>();
             foreach (var item in prepared)
             {
@@ -507,6 +510,104 @@ public static class SyncEndpoints
                         return Results.Conflict(new { operationId = item.Request.OperationId, message = "Operation ID was previously used with a different payload." });
                     acknowledgements.Add(prior.OperationId, new SyncOperationAck(prior.OperationId, prior.Sequence, true));
                     continue;
+                }
+
+                if (item.Request.OperationType == "inventory.stock.movement.created")
+                {
+                    if (tenant.Role is not ("Owner" or "Manager" or "InventoryManager"))
+                        return Results.Forbid();
+                    if (item.Request.SchemaVersion != 1 || item.Request.BranchId is not Guid inventoryBranchId)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["inventory"] = ["Inventory movement requires schema version 1 and an explicit branch."]
+                        });
+
+                    InventoryMovementCreatedCommand? command;
+                    try
+                    {
+                        command = JsonSerializer.Deserialize<InventoryMovementCreatedCommand>(
+                            item.Request.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    }
+                    catch (JsonException)
+                    {
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["inventory"] = ["Inventory movement payload is invalid."]
+                        });
+                    }
+
+                    if (command is null || command.ProductId == Guid.Empty
+                        || !Enum.IsDefined(command.Type)
+                        || command.Quantity <= 0m || decimal.Round(command.Quantity, 3) != command.Quantity
+                        || command.BaseQuantityOnHand < 0m
+                        || command.BaseInventoryValue < 0m
+                        || decimal.Round(command.BaseInventoryValue, 2) != command.BaseInventoryValue
+                        || (command.Reference?.Length ?? 0) > 250)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["inventory"] = ["Inventory movement has invalid product, type, quantity, or base valuation."]
+                        });
+
+                    var inbound = command.Type is StockMovementType.Receipt
+                        or StockMovementType.SalesReturn or StockMovementType.AdjustmentIncrease;
+                    if (inbound && (command.UnitCost is null || command.UnitCost < 0m
+                        || decimal.Round(command.UnitCost.Value, 2) != command.UnitCost.Value))
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["unitCost"] = ["Inbound inventory movements require a non-negative unit cost with at most two decimals."]
+                        });
+                    if (!inbound && command.UnitCost is not null)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["unitCost"] = ["Outbound inventory movement cost is calculated from the weighted average."]
+                        });
+
+                    var product = await db.Products.SingleOrDefaultAsync(
+                        x => x.TenantId == tenantId && x.Id == command.ProductId
+                            && x.IsActive && x.TracksInventory,
+                        cancellationToken);
+                    if (product is null)
+                        return Results.NotFound(new { code = "inventory_product_not_found", productId = command.ProductId });
+
+                    var stateKey = (command.ProductId, inventoryBranchId);
+                    if (!inventoryStates.TryGetValue(stateKey, out var valuationState))
+                    {
+                        valuationState = new InventoryValuationAccumulator();
+                        var history = await db.StockMovements.AsNoTracking()
+                            .Where(x => x.TenantId == tenantId && x.BranchId == inventoryBranchId
+                                && x.ProductId == command.ProductId)
+                            .ToListAsync(cancellationToken);
+                        foreach (var movement in history.OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id))
+                            valuationState.Apply(movement);
+                        inventoryStates.Add(stateKey, valuationState);
+                    }
+
+                    var currentValuation = valuationState.ToValuation();
+                    if (currentValuation.QuantityOnHand != command.BaseQuantityOnHand
+                        || currentValuation.InventoryValue != command.BaseInventoryValue)
+                        return Results.Conflict(new
+                        {
+                            code = "inventory_balance_conflict",
+                            productId = command.ProductId,
+                            currentQuantityOnHand = currentValuation.QuantityOnHand,
+                            currentInventoryValue = currentValuation.InventoryValue,
+                            message = "Inventory changed after this offline movement was prepared. Reconcile the stock balance before retrying."
+                        });
+                    if (!inbound && command.Quantity > currentValuation.QuantityOnHand)
+                        return Results.Conflict(new
+                        {
+                            code = "inventory_insufficient_stock",
+                            productId = command.ProductId,
+                            currentQuantityOnHand = currentValuation.QuantityOnHand
+                        });
+
+                    var unitCost = inbound ? command.UnitCost!.Value : currentValuation.AverageUnitCost;
+                    var movementRecord = new StockMovement(
+                        tenantId, inventoryBranchId, command.ProductId, command.Type,
+                        command.Quantity, unitCost, command.Reference,
+                        item.Request.OperationId.ToString("D"), item.Hash);
+                    db.StockMovements.Add(movementRecord);
+                    valuationState.Apply(movementRecord);
                 }
 
                 if ((item.Request.OperationType is "customer.profile.created" or "customer.profile.updated" or "customer.profile.deactivated")
@@ -664,9 +765,11 @@ public static class SyncEndpoints
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
             }
             catch (DbUpdateConcurrencyException)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 foreach (var operation in inserted)
                     db.Entry(operation).State = EntityState.Detached;
                 return Results.Conflict(new
@@ -677,6 +780,7 @@ public static class SyncEndpoints
             }
             catch (DbUpdateException)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 // A concurrent request may have committed the same idempotent operations first.
                 // Detach failed inserts, reload the winners, and acknowledge only exact matches.
                 foreach (var operation in inserted)
@@ -770,6 +874,9 @@ public static class SyncEndpoints
         Guid CustomerId, int BaseVersion, string Name, string? Phone, string? Email,
         string? Address, string? Notes);
     public sealed record CustomerDeactivatedCommand(Guid CustomerId, int BaseVersion);
+    public sealed record InventoryMovementCreatedCommand(
+        Guid ProductId, StockMovementType Type, decimal Quantity, decimal? UnitCost,
+        decimal BaseQuantityOnHand, decimal BaseInventoryValue, string? Reference);
 
     public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence, Guid? BranchId = null);
     private static void ValidateDeviceMetadata(string? value, string field, int maxLength,
