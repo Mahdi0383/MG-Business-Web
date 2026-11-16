@@ -49,7 +49,7 @@ API فعلی:
 - `GET/POST /api/orders` و `DELETE /api/orders/{id}` (ثبت و برگشت سفارش)
 - `GET /api/reports/sales-by-product` و `GET /api/backup` و `POST /api/backup/restore` (پشتیبان کامل و بازیابی اتمیک در همان فضای کاری؛ کاربران و رمزهای ورود فعلی حفظ می‌شوند)
 - `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
-- `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/inventory` و `POST /api/inventory/movements`
+- `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger`، `POST /api/customers/{id}/payments`، `GET /api/inventory` و `POST /api/inventory/movements`
 - `GET /api/accounting/accounts`، `GET /api/accounting/journal`، `GET /api/accounting/trial-balance` و `GET /api/accounting/profit-loss`
 - `GET/POST /api/gamenet/devices`، `GET /api/gamenet/sessions` و `POST /api/gamenet/sessions/{id}/end`
 
@@ -66,7 +66,7 @@ API فعلی:
 - ذخیره‌سازی محلی در مرورگر.
 - سرور API مبتنی بر Python و SQLite، ایجاد فضای کاری/مالک، ورود با نشست bearer، محدودسازی تلاش ورود، ثبت/خواندن/برگشت تراکنش و audit log.
 - دفتر حساب‌ها پایه، ثبت خودکار سند دوبل برای درآمد/هزینه و سند معکوس به‌جای حذف سند مالی.
-- کاتالوگ کالا، پرونده پایه مشتری، گردش انبار، محاسبه موجودی و جلوگیری از موجودی منفی.
+- کاتالوگ کالا، پرونده مشتری، دفتر بدهکار/بستانکار مشتری، دریافت جزئی از بدهی، گردش انبار، محاسبه موجودی و جلوگیری از موجودی منفی.
 - گزارش اولیه سود و زیان بر مبنای دفتر کل.
 - کافه POS پایه: سبد سفارش، تخفیف، انتخاب مشتری و روش پرداخت؛ ثبت اتمیک سفارش، کسر موجودی و ثبت درآمد/بهای تمام‌شده.
 - گیم‌نت پایه: مدیریت دستگاه، نشست زمان‌دار، تعرفه ساعتی، حالت رایگان/پولی و محاسبه خودکار هزینه؛ محدودیت یک نشست فعال برای هر دستگاه.
