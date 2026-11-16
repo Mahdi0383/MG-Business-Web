@@ -182,6 +182,81 @@ export class DeviceEnrollmentClient {
     return record;
   }
 
+  async ensureAuthorityLease({ tenantId, branchId = null, actorId, canAcquire = false }) {
+    const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
+    const now = Date.now();
+    const cached = record.authorityLease;
+    if (cached?.verified === true && cached.tenantId === tenantId
+      && (cached.branchId || null) === (branchId || null)
+      && Date.parse(cached.expiresAtUtc) > now + 30_000) {
+      await this.operationStore.setAuthorityLease({ tenantId, branchId, lease: cached });
+      return cached;
+    }
+
+    let response;
+    if (canAcquire) {
+      try {
+        response = await this.apiClient.post("/api/sync/authority-lease", {}, { tenantId, branchId, actorId });
+      } catch {
+        response = await this.apiClient.get("/api/sync/authority-lease", { tenantId, branchId, actorId });
+      }
+    } else {
+      response = await this.apiClient.get("/api/sync/authority-lease", { tenantId, branchId, actorId });
+    }
+
+    const pinnedPublicKey = import.meta.env?.VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64;
+    if (!pinnedPublicKey || response?.publicKeySpkiBase64 !== pinnedPublicKey)
+      throw new Error("The authority lease signing key does not match the configured trusted public key.");
+    if (response.tenantId !== tenantId || (response.branchId || null) !== (branchId || null)
+      || !Number.isSafeInteger(response.epoch) || response.epoch < 1
+      || typeof response.leaseId !== "string" || typeof response.deviceId !== "string"
+      || typeof response.scopeKey !== "string" || typeof response.signatureBase64 !== "string")
+      throw new Error("MG server returned an invalid authority lease.");
+
+    const expectedScope = branchId ? branchId.replaceAll("-", "").toLowerCase() : "tenant-wide";
+    if (response.scopeKey !== expectedScope)
+      throw new Error("The authority lease belongs to a different branch scope.");
+
+    const issuedAt = Date.parse(response.issuedAtUtc);
+    const expiresAt = Date.parse(response.expiresAtUtc);
+    if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt)
+      || issuedAt > now + 30_000 || expiresAt <= now || expiresAt <= issuedAt
+      || expiresAt - issuedAt > 5 * 60_000)
+      throw new Error("The authority lease is expired or has an invalid validity window.");
+
+    const publicKey = await crypto.subtle.importKey(
+      "spki",
+      fromBase64(pinnedPublicKey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"]
+    );
+    const canonical = [
+      "MG-AUTHORITY-LEASE-V1",
+      response.tenantId,
+      response.branchId || "",
+      response.scopeKey,
+      response.deviceId,
+      response.leaseId,
+      String(response.epoch),
+      String(issuedAt),
+      String(expiresAt)
+    ].join("\n");
+    const verified = await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      publicKey,
+      fromBase64(response.signatureBase64),
+      new TextEncoder().encode(canonical)
+    );
+    if (!verified)
+      throw new Error("The authority lease signature could not be verified.");
+
+    const lease = { ...response, verified: true };
+    await this.writeCredential({ ...record, authorityLease: lease });
+    await this.operationStore.setAuthorityLease({ tenantId, branchId, lease });
+    return lease;
+  }
+
   async createRequestHeaders({ method, path, tenantId, branchId = null, actorId, bodyJson = "" }) {
     if (typeof path !== "string" || !path.startsWith("/api/sync/"))
       throw new TypeError("A sync API path is required for device request signing.");
