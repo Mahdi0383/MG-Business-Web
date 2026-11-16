@@ -1240,6 +1240,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "DeviceId", "BranchId");
                     b.HasIndex("ActorId");
                     b.HasIndex("TenantId", "BranchId", "LastAcknowledgedSequence").HasDatabaseName("IX_sync_device_branch_cursor_scope_seq");
+                    b.HasIndex("TenantId", "BranchId").HasDatabaseName("IX_sync_device_branch_cursor_branch");
                     b.ToTable("sync_device_branch_cursors", (string)null);
                 });
 
@@ -1248,6 +1249,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.HasOne("MG.Business.Domain.Entities.Branch", null)
                         .WithMany()
                         .HasForeignKey("TenantId", "BranchId")
+                        .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
