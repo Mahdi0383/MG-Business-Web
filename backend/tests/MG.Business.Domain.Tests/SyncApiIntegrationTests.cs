@@ -260,6 +260,86 @@ public sealed class SyncApiIntegrationTests
     }
 
     [Fact]
+    public async Task CustomerUpdateBatchRollsBackEarlierMutationsWhenAnyBaseVersionIsStale()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-customer-batch-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Customer Batch Store",
+            slug = $"customer-batch-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var firstCreate = await client.PostAsJsonAsync("/api/customers", new
+        {
+            code = "BATCH-001", name = "First Before", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        var secondCreate = await client.PostAsJsonAsync("/api/customers", new
+        {
+            code = "BATCH-002", name = "Second Before", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        var first = await firstCreate.Content.ReadFromJsonAsync<CustomerEndpoints.CustomerResponse>();
+        var second = await secondCreate.Content.ReadFromJsonAsync<CustomerEndpoints.CustomerResponse>();
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Batch Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var firstPayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = first!.Id, baseVersion = 1, name = "First Must Roll Back",
+            phone = (string?)null, email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        var stalePayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = second!.Id, baseVersion = 99, name = "Stale Second",
+            phone = (string?)null, email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        var push = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.updated", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = firstPayload, payloadSha256 = (string?)null
+                },
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.updated", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = stalePayload, payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, push.StatusCode);
+
+        var firstAfter = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse>($"/api/customers/{first.Id}");
+        var secondAfter = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse>($"/api/customers/{second.Id}");
+        Assert.Equal(1, firstAfter!.Version);
+        Assert.Equal("First Before", firstAfter.Name);
+        Assert.Equal(1, secondAfter!.Version);
+        Assert.Equal("Second Before", secondAfter.Name);
+        var journal = await client.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.Empty(journal!.Operations);
+    }
+
+    [Fact]
     public async Task CustomerSyncCommandsRequireCustomerWriteRole()
     {
         using var factory = CreateFactory();
