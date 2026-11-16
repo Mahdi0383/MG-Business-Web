@@ -311,7 +311,7 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         status, result = self.request("POST", "/api/gamenet/sessions", {
-            "id": "session-01", "deviceId": "pc-01", "playersCount": 2
+            "id": "session-01", "deviceId": "pc-01", "customerId": "customer-1", "playersCount": 2
         }, token)
         self.assertEqual(status, 201)
         status, result = self.request("POST", "/api/gamenet/sessions", {
@@ -327,6 +327,8 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status, 200)
         self.assertGreaterEqual(result["amountDue"], 120000)
+        status, result = self.request("GET", "/api/customers", token=token)
+        self.assertEqual(result["items"][0]["balance"], 155000)
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["status"], "ended")
