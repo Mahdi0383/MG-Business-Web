@@ -37,6 +37,7 @@ public sealed class Customer
     public string? Address { get; private set; }
     public string? Notes { get; private set; }
     public bool IsActive { get; private set; }
+    public int Version { get; private set; } = 1;
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
     public void UpdateContact(string name, string? phone, string? email, string? address, string? notes)
@@ -47,6 +48,7 @@ public sealed class Customer
         Email = NormalizeOptional(email, 254)?.ToLowerInvariant();
         Address = NormalizeOptional(address, 500);
         Notes = NormalizeOptional(notes, 1000);
+        checked { Version++; }
     }
 
     public void Deactivate() => IsActive = false;
