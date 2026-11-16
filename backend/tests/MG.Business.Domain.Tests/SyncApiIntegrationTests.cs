@@ -1697,6 +1697,62 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(lease.LeaseId, observed!.LeaseId);
         Assert.Equal(lease.Epoch, observed.Epoch);
 
+        foreach (var device in new[] { first, second })
+        {
+            var heartbeatBody = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                deviceId = device.DeviceId,
+                deviceName = "Authority Node",
+                platform = "Test",
+                clientVersion = "1.0"
+            });
+            using var heartbeat = await SendSigned("POST", "/api/sync/heartbeat", device, heartbeatBody);
+            Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+            var payloadJson = System.Text.Json.JsonSerializer.Serialize(new { testValue = "fenced" });
+            var operationBody = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                operations = new[]
+                {
+                    new
+                    {
+                        operationId = Guid.NewGuid(),
+                        deviceId = device.DeviceId,
+                        branchId = tenant.BranchId,
+                        operationType = "test.authority-lease",
+                        schemaVersion = 1,
+                        authorityEpoch = lease.Epoch,
+                        occurredAtUtc = DateTimeOffset.UtcNow,
+                        payloadJson,
+                        payloadSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson)))
+                    }
+                }
+            });
+            using var pushed = await SendSigned("POST", "/api/sync/operations", device, operationBody);
+            Assert.Equal(HttpStatusCode.Accepted, pushed.StatusCode);
+        }
+
+        using var zeroEpoch = await SendSigned("POST", "/api/sync/operations", first,
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                operations = new[]
+                {
+                    new
+                    {
+                        operationId = Guid.NewGuid(),
+                        deviceId = first.DeviceId,
+                        branchId = tenant.BranchId,
+                        operationType = "test.authority-lease",
+                        schemaVersion = 1,
+                        authorityEpoch = 0,
+                        occurredAtUtc = DateTimeOffset.UtcNow,
+                        payloadJson = "{}",
+                        payloadSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("{}")))
+                    }
+                }
+            }));
+        Assert.Equal(HttpStatusCode.Conflict, zeroEpoch.StatusCode);
+
         using var competingAcquire = await SendSigned("POST", "/api/sync/authority-lease", second, "{}");
         Assert.Equal(HttpStatusCode.Conflict, competingAcquire.StatusCode);
 
