@@ -1,19 +1,34 @@
+import base64
+import hashlib
+import hmac
 import json
+import os
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import server
 
 
+def make_license(modules, license_id):
+    payload = {"license_id": license_id, "modules": modules, "plan": "integration",
+               "expires_at": int(time.time()) + 86400}
+    encoded = base64.urlsafe_b64encode(json.dumps(payload,separators=(",",":"),sort_keys=True).encode()).decode().rstrip("=")
+    signed = ("MG1." + encoded).encode()
+    secret = os.environ["MG_LICENSE_SECRET"]
+    signature = base64.urlsafe_b64encode(hmac.new(secret.encode(),signed,hashlib.sha256).digest()).decode().rstrip("=")
+    return "MG1." + encoded + "." + signature
+
+
 class ApiIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory()
+        os.environ['MG_LICENSE_SECRET'] = 'integration-test-secret-which-is-long-enough-123456'\n        cls.temp = tempfile.TemporaryDirectory()
         server.DATA_DIR = Path(cls.temp.name)
         server.DB_PATH = Path(cls.temp.name) / "test.sqlite3"
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -63,6 +78,21 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["tenant"]["name"], "MG Test Shop")
+
+        bad_code = make_license(["cafe"], "bad-license")[:-2] + "xx"
+        status, result = self.request("POST", "/api/licenses/activate", {"code": bad_code}, token)
+        self.assertEqual(status, 400)
+        limited_code = make_license(["cafe","accounting","inventory","customers","reports"], "license-limited")
+        status, result = self.request("POST", "/api/licenses/activate", {"code": limited_code}, token)
+        self.assertEqual(status, 200)
+        self.assertNotIn("gamenet", result["modules"])
+        status, result = self.request("GET", "/api/gamenet/devices", token=token)
+        self.assertEqual(status, 403)
+        full_code = make_license(["cafe","gamenet","accounting","customers","inventory","reports"], "license-full")
+        status, result = self.request("POST", "/api/licenses/activate", {"code": full_code}, token)
+        self.assertEqual(status, 200)
+        status, result = self.request("GET", "/api/modules", token=token)
+        self.assertIn("gamenet", result["modules"])
 
         status, result = self.request("POST", "/api/users", {
             "username": "cashier", "password": "cashier-long-password", "role": "cashier"
