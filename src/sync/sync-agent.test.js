@@ -60,6 +60,7 @@ test("rejects acknowledgements that do not match the submitted batch", async () 
 test("pulls remote operations and persists the page with its cursor", async () => {
   const saved = [];
   const requests = [];
+  const acknowledgements = [];
   const api = {
     async get(path) {
       requests.push(path);
@@ -71,10 +72,12 @@ test("pulls remote operations and persists the page with its cursor", async () =
         nextSequence: 5,
         hasMore: false
       };
-    }
+    },
+    async post(path, body) { acknowledgements.push({ path, body }); return { sequence: body.sequence }; }
   };
   const store = {
     async getCursor(tenantId) { assert.equal(tenantId, "tenant-1"); return 3; },
+    async getDeviceId() { return "device-1"; },
     async storeIncomingPage(tenantId, operations, cursor) { saved.push({ tenantId, operations, cursor }); }
   };
 
@@ -86,6 +89,8 @@ test("pulls remote operations and persists the page with its cursor", async () =
   assert.equal(requests[0], "/api/sync/operations?afterSequence=3&limit=100");
   assert.equal(saved[0].cursor, 5);
   assert.equal(saved[0].operations.length, 2);
+  assert.equal(acknowledgements[0].path, "/api/sync/acknowledgements");
+  assert.deepEqual(acknowledgements[0].body, { deviceId: "device-1", sequence: 5 });
 });
 
 test("does not persist a non-monotonic pull page", async () => {
@@ -97,7 +102,8 @@ test("does not persist a non-monotonic pull page", async () => {
         nextSequence: 6,
         hasMore: false
       };
-    }
+    },
+    async post() { assert.fail("invalid pull pages must not be acknowledged"); }
   };
   const store = {
     async getCursor() { return 5; },
