@@ -562,6 +562,7 @@ public static class SyncEndpoints
                         || !Enum.IsDefined(command.Type)
                         || command.Quantity <= 0m || decimal.Round(command.Quantity, 3) != command.Quantity
                         || command.BaseQuantityOnHand < 0m
+                        || decimal.Round(command.BaseQuantityOnHand, 3) != command.BaseQuantityOnHand
                         || command.BaseInventoryValue < 0m
                         || decimal.Round(command.BaseInventoryValue, 2) != command.BaseInventoryValue
                         || (command.Reference?.Length ?? 0) > 250)
