@@ -138,6 +138,17 @@ class ApiIntegrationTests(unittest.TestCase):
             "createdAt": "2026-11-16T12:00:00.000Z"
         }, token)
         self.assertEqual(status, 201)
+        status, duplicate_tx = self.request("POST", "/api/transactions", {
+            "id":"tx-test-1","title":"Cafe sale","amount":150000,
+            "kind":"income","category":"Cafe","createdAt":"2026-11-16T12:00:00.000Z"
+        }, token)
+        self.assertEqual(status,200)
+        self.assertTrue(duplicate_tx["duplicate"])
+        status, conflict_tx = self.request("POST", "/api/transactions", {
+            "id":"tx-test-1","title":"Different sale","amount":150000,
+            "kind":"income","category":"Cafe","createdAt":"2026-11-16T12:00:00.000Z"
+        }, token)
+        self.assertEqual(status,409)
 
         status, result = self.request("GET", "/api/transactions", token=token)
         self.assertEqual(status, 200)
