@@ -365,6 +365,8 @@ export class LocalOperationStore {
       }
     }
     await writeDone;
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("mg-customer-sync-updated"));
   }
 
   async getPendingCount(tenantId, branchId = null, allowTenantWide = false, deviceId) {
