@@ -119,7 +119,8 @@ Composite foreign keys and tenant-scoped indexes reinforce tenant isolation in t
 - Stock quantity and value are calculated from movement history using moving-average cost.
 - Outbound inventory movements run in serializable transactions and reject negative stock.
 - POS checkout records the sales order, payment, stock movements, revenue/receivable journal entry, and cost-of-goods-sold journal entry in one database transaction.
-- Game-net session closure creates a sales order and revenue journal entry.
+- Game-net session closure creates a sales order and revenue journal entry in one transaction. A retry after a committed close returns the original linked invoice; a changed settlement payload is rejected instead of creating a second financial record.
+- Inventory movement validation and stock-ledger valuation execute inside the serializable write transaction; non-stock service products cannot receive stock movements.
 - Café kitchen tickets follow explicit preparation-state transitions and link to a sales order.
 
 ## Current limitations — not production-ready yet
