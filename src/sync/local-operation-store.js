@@ -339,7 +339,6 @@ export class LocalOperationStore {
       }
       conflicts.put({
         ...conflict,
-        key: undefined,
         status: "open",
         createdAtUtc: existing?.createdAtUtc || new Date().toISOString(),
         updatedAtUtc: new Date().toISOString()
