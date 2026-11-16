@@ -1,97 +1,99 @@
-# ADR: Cryptographic device enrollment and request authentication
+# ADR: Cryptographic device enrollment, request authentication and authority leases
 
-Status: **Proposed — not implemented; release blocker**
+Status: **Implemented foundation; production release gate remains open**
 
 Date: 2026-11-17
 
-## Decision
+## Implemented device enrollment
 
-Replace browser-generated device UUID trust with a server-issued enrollment lifecycle. A UUID is a label only and MUST NOT authorize heartbeat, journal push/pull, acknowledgement, or authority-lease use.
+The browser no longer treats a UUID as proof of device identity. The current protocol uses Web Crypto ECDSA P-256 with SHA-256:
 
-The initial browser implementation uses Web Crypto ECDSA P-256 with SHA-256. The browser generates a non-extractable signing private key and exports only the public JWK. This proves possession of the enrolled key, but it is not hardware attestation: same-origin script compromise can still invoke the key, and browser-profile cloning may copy usable key material through platform mechanisms. Do not describe it as hardware-bound identity.
+1. An authenticated tenant member requests `POST /api/sync/enrollment/challenges`. The server derives tenant, actor and optional branch from authenticated context, creates a random 256-bit challenge and persists only its SHA-256 digest. Challenges expire within five minutes and are single-use.
+2. The browser creates a non-extractable P-256 private CryptoKey, stores it in IndexedDB, and sends its SPKI public key plus a proof signature to `POST /api/sync/enrollment/complete`.
+3. The server validates canonical P-256 SPKI, verifies the proof, consumes the challenge transactionally and issues a random 256-bit credential. Only the SHA-256 digest of that credential is persisted; the raw credential is returned once.
+4. Credentials are bound to tenant, actor, branch and device. Browser device IDs and key records are isolated by tenant/branch/actor scope.
+5. Recovery with the same enrolled key rotates the opaque credential and increments the key version. Explicit key rotation is available through `POST /api/sync/enrollment/rotate`; the new public key must prove possession against a fresh challenge.
+6. Authenticated self-service/Owner/Manager revocation is available through `POST /api/sync/enrollment/revoke`. Revocation also revokes leases held by that device.
 
-## Enrollment state machine
+This is software key protection, not hardware attestation. Same-origin script compromise can still invoke a non-extractable key. Browser-profile cloning and compromised endpoints remain in the threat model.
 
-PendingChallenge -> Active -> Rotating -> Active; terminal states are Revoked and Expired.
+## Enrollment and rotation canonical messages
 
-1. An authenticated TenantMember requests an enrollment challenge. The server derives tenant, actor, and branch from the authenticated context; client-supplied tenant/actor values are ignored.
-2. Server creates a cryptographically random 256-bit challenge, stores only its SHA-256 digest, binds it to tenant/actor/branch, device label, creation/expiry times (maximum five minutes), and a unique challenge ID. Enforce per-actor and per-IP rate limits.
-3. Browser generates an ECDSA P-256 key pair with extractable=false for the private key, stores the private CryptoKey in IndexedDB, and submits the public JWK plus challenge ID.
-4. Browser signs the UTF-8 canonical enrollment message defined below. Server validates JWK curve/key type/coordinates, rejects private JWK members, verifies the signature, and atomically consumes the unexpired challenge exactly once.
-5. Server issues a random 256-bit opaque credential. Persist only a keyed HMAC-SHA-256 digest (server-held pepper) of the credential, never the raw credential. Return the raw credential once; browser stores it in IndexedDB. Bind credential to device, tenant, actor, and current key version.
-6. Revocation, credential rotation, actor removal, tenant suspension, and device reset invalidate credentials immediately. Rotation requires proof from the current key and a fresh challenge; old credentials are revoked in the same transaction that activates the replacement.
+UTF-8, newline-delimited fields are signed with ECDSA P-256 / SHA-256. Signatures use the 64-byte IEEE P1363 representation.
 
-Enrollment is not silently performed by /heartbeat. Existing un-enrolled browser IDs must receive an explicit DEVICE_ENROLLMENT_REQUIRED response and remain unable to sync until enrolled.
+```text
+MG-DEVICE-ENROLLMENT-V1
+{tenantId}
+{branchId-or-empty}
+{actorId}
+{deviceId}
+{challengeId}
+{challengeBase64}
+```
 
-## Canonical signing
+Rotation uses the same field order with domain separator `MG-DEVICE-ROTATION-V1`.
 
-Use UTF-8 JSON canonicalization (RFC 8785/JCS) and reject duplicate JSON object keys before canonicalization. Sign a domain-separated string with newline separators:
+## Signed request authentication
 
-    MG-SYNC-REQUEST-V1
-    {HTTP_METHOD}
-    {NORMALIZED_PATH_AND_QUERY}
-    {tenantId}
-    {branchId-or-empty}
-    {deviceId}
-    {keyVersion}
-    {unixTimestampSeconds}
-    {requestNonce}
-    {sha256(canonical_request_body_bytes)}
+When `SyncSecurity:RequireDeviceSignatures=true`, middleware verifies every `/api/sync/*` request except the enrollment lifecycle routes. The browser's `MgApiClient` automatically attaches:
 
-Transmit credential, key version, timestamp, nonce, and base64url signature in dedicated headers. The server:
+- `X-MG-Device-Id`
+- `X-MG-Device-Key-Version`
+- `X-MG-Device-Credential`
+- `X-MG-Device-Timestamp` (Unix milliseconds)
+- `X-MG-Device-Nonce` (UUID)
+- `X-MG-Device-Signature` (Base64 P1363 signature)
 
-- authenticates the bearer user and resolves tenant/branch independently;
-- verifies credential digest, active status, actor/tenant/branch binding, and key version;
-- enforces a small timestamp skew window;
-- verifies ECDSA signature against the stored public key;
-- atomically inserts a unique (deviceId, requestNonce) replay record with expiry;
-- verifies the body hash over the exact canonical bytes;
-- rejects replay, stale key versions, revoked credentials, and mismatched context before any business mutation.
+The canonical request is:
 
-Nonce consumption and business mutation must share a transaction where possible. If the request is rejected after nonce consumption, the client retries with a new nonce while retaining the same operation idempotency IDs. Request authentication is not a replacement for per-command idempotency.
+```text
+MG-DEVICE-REQUEST-V1
+{HTTP_METHOD_UPPERCASE}
+{PATH_BASE + PATH + QUERY}
+{tenantId}
+{branchId-or-empty}
+{actorId}
+{deviceId}
+{keyVersion}
+{unixTimestampMilliseconds}
+{nonce}
+{sha256(exact UTF-8 request body bytes)}
+```
 
-## Authority leases and fencing
+The server independently resolves authenticated tenant/actor/branch context; validates active credential, branch, actor and key version; enforces a two-minute clock-skew window; verifies body hash and ECDSA signature; and inserts a unique tenant/device/nonce replay record before dispatching the request. Duplicate nonces and invalid credentials fail closed. Request idempotency keys remain independently required for business mutations.
 
-Device authentication alone does not grant write authority. A separate lease authority signs short-lived leases containing tenant ID, branch ID, device ID, monotonically increasing epoch, lease ID, issued-at, not-before, expires-at, and permitted command scopes.
+## Signed authority lease and fencing
 
-- Lease issuance is serialized per tenant/branch; epoch increments atomically and never decreases.
-- Lease signatures use a server-held asymmetric signing key; public verification keys are distributed to clients with key IDs and a rotation overlap window.
-- Every authoritative write validates signature, tenant/branch/device binding, expiry, scope, and current fencing epoch in the same database transaction as the mutation.
-- A higher epoch fences every lower epoch immediately. A lease expiry alone never permits two writers: promotion requires a committed epoch increment by the authoritative coordinator.
-- Offline clients may queue commands but cannot claim server authority. They reconcile after reconnect; financial and stock commands remain fail-closed until command handlers and conflict rules are complete.
-- Clock skew is bounded; leases are short-lived. The server clock is authoritative.
+A separate `DeviceAuthorityLease` aggregate and persistence table now provide tenant/branch scoped authority state.
 
-## Required persistence and constraints
+- `POST /api/sync/authority-lease` acquires or renews a short-lived (two-minute) lease. Acquisition is serialized using a serializable database transaction.
+- Only Owner/Manager can acquire; authenticated tenant members can read the current signed lease using `GET /api/sync/authority-lease`.
+- The issuer signs a canonical lease using ECDSA P-256 / SHA-256. Lease fields include tenant, branch, scope, device, lease ID, monotonic epoch, issued-at and expiry.
+- An expired/revoked lease advances the fencing epoch. A competing device cannot take over an unexpired lease.
+- When `SyncSecurity:RequireAuthorityLeases=true`, push rejects zero/stale epochs, wrong device, wrong branch, revoked leases and operations outside the lease validity window.
+- Browser verification uses a pinned SPKI key from `VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64`; offline commands obtain the epoch only after re-verifying the signature, device/scope binding and expiry from IndexedDB.
+- Credential rotation/revocation invalidates the device's active authority leases.
 
-Introduce separate records rather than overloading DevicePresence:
+## Required production configuration
 
-- DeviceEnrollmentChallenge: challenge digest, challenge ID, tenant/actor/optional branch, expiry, consumed timestamp, attempt count.
-- DeviceCredential: tenant/device/actor, public JWK or normalized public coordinates, key version, credential digest, created/rotated/revoked timestamps, status, last-used timestamp.
-- DeviceRequestNonce: device, nonce digest, expiry; unique device+nonce constraint and bounded cleanup.
-- AuthorityLease: tenant/branch, device, lease ID, epoch, scope, issued/expiry, signature/key ID, revoked timestamp; unique tenant+branch+epoch and tenant+branch+lease ID.
-- AuthorityEpoch: tenant/branch and current epoch with concurrency token.
+Production startup fails closed unless all of the following are configured:
 
-Use tenant-qualified foreign keys and unique constraints. Avoid logging raw credentials, challenge secrets, signatures containing personal payloads, or private key material. Retain audit events for enrollment, rotation, revocation, lease issue, and fencing.
+- `SyncSecurity:RequireDeviceSignatures=true`
+- `SyncSecurity:RequireAuthorityLeases=true`
+- `SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64` — a securely provisioned ECDSA P-256 PKCS#8 private key
+- `VITE_REQUIRE_AUTHORITY_LEASES=true`
+- `VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64` — the matching public SPKI key pinned in the built client
+- exact HTTPS CORS origins and trusted reverse-proxy IP addresses
 
-## Required adversarial tests
+Never commit private keys, credentials, or production secrets. Define an operational signing-key rotation procedure before live use; the current signer uses one configured key and does not yet implement multi-key key-ID overlap.
 
-- Challenge expires, is consumed twice, belongs to another actor/tenant/branch, or is guessed/replayed.
-- Invalid curve, malformed JWK, private-key fields, invalid signature, wrong domain separator, changed method/path/query/body/context, stale timestamp, duplicate nonce.
-- Credential revoked, rotated, wrong key version, credential copied to another tenant/device, actor membership disabled.
-- Concurrent enrollment consumption and concurrent key rotation.
-- Heartbeat cannot auto-enroll; every sync route rejects an un-enrolled or revoked device.
-- Two simultaneous lease issuances serialize; old epoch is rejected after promotion; expired, wrong-scope, wrong-branch, forged, and revoked leases fail closed.
-- Process crash between nonce reservation and command commit cannot create an accepted command without a durable idempotency outcome.
-- Browser IndexedDB loss requires re-enrollment; it must never silently fall back to UUID trust.
+## Remaining release blockers
 
-## Rollout and release gates
+- Add PostgreSQL concurrency/race tests for simultaneous lease acquisition and nonce replay, beyond the existing integration coverage.
+- Add an explicit signing-key rotation/key-ID overlap protocol and operational secret rotation runbook.
+- Add lease renewal/recovery and stale-operation reconciliation UX.
+- Complete transactional offline command handlers for inventory, sales, accounting, café and GameNet; currently Customer is the end-to-end local-first business slice.
+- Add multi-node partition, clock-skew, stale-leader, restart and disaster-recovery tests.
+- Complete security review/penetration testing and production deployment configuration validation.
 
-1. Add schema/entities/migrations and security-focused domain tests.
-2. Add challenge/complete/rotate/revoke endpoints and rate limits.
-3. Add browser key generation/storage and signed-request middleware; migrate UI to enrollment-required states.
-4. Require signatures on heartbeat, push, pull, and acknowledgement. Do not keep an insecure compatibility bypass in production.
-5. Implement signed leases and transactionally enforced fencing.
-6. Run SQLite and PostgreSQL integration suites, multi-instance concurrency tests, key rotation/revocation tests, and failover/split-brain chaos tests.
-7. Update operator docs and recovery procedures; only then remove the release blocker.
-
-Until all gates pass, this ADR is a design contract only. The current browser UUID heartbeat implementation remains explicitly untrusted and this branch is not production-ready.
+The implemented foundation does not mean the overall MG Business Platform is production-ready.
