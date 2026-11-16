@@ -27,6 +27,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<DevicePresence> DevicePresences => Set<DevicePresence>();
     public DbSet<DeviceEnrollmentChallenge> DeviceEnrollmentChallenges => Set<DeviceEnrollmentChallenge>();
     public DbSet<DeviceCredential> DeviceCredentials => Set<DeviceCredential>();
+    public DbSet<DeviceRequestNonce> DeviceRequestNonces => Set<DeviceRequestNonce>();
     public DbSet<SyncDeviceCursor> SyncDeviceCursors => Set<SyncDeviceCursor>();
     public DbSet<SyncDeviceBranchCursor> SyncDeviceBranchCursors => Set<SyncDeviceBranchCursor>();
 
@@ -339,6 +340,18 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DeviceRequestNonce>(entity =>
+        {
+            entity.ToTable("device_request_nonces");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId, x.Nonce });
+            entity.Property(x => x.Nonce).HasMaxLength(36).IsRequired();
+            entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.HasOne<DeviceCredential>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.DeviceId })
+                .HasPrincipalKey(x => new { x.TenantId, x.DeviceId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<DevicePresence>(entity =>
