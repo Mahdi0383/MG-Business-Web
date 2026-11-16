@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -68,6 +69,10 @@ public static class CafeEndpoints
             {
                 return Results.Conflict(new { message = "برای این فاکتور تیکت آشپزخانه ثبت شده یا وضعیت فاکتور تغییر کرده است." });
             }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست تیکت آشپزخانه را با اطمینان ثبت کند؛ فاکتور را بررسی و دوباره تلاش کنید." });
+            }
 
             return Results.Created($"/api/cafe/kitchen/tickets/{ticket.Id}", ToResponse(ticket));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(CreateRoles)));
@@ -96,6 +101,10 @@ public static class CafeEndpoints
             catch (DbUpdateException)
             {
                 return Results.Conflict(new { message = "ذخیره وضعیت تیکت با تعارض داده‌ها مواجه شد؛ تیکت را دوباره بررسی کنید." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست وضعیت تیکت را با اطمینان ذخیره کند؛ تیکت را تازه‌سازی کنید." });
             }
 
             return Results.Ok(ToResponse(ticket));
