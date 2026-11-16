@@ -86,6 +86,16 @@ public static class InventoryEndpoints
                 return Results.BadRequest(new { message = "ابتدا شعبه فعال را انتخاب کنید." });
             if (!Enum.IsDefined(request.Type))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["type"] = ["نوع گردش انبار معتبر نیست."] });
+            if (request.Quantity <= 0m || decimal.Round(request.Quantity, 3) != request.Quantity)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["quantity"] = ["مقدار باید مثبت و حداکثر تا سه رقم اعشار باشد."] });
+
+            var isInboundMovement = request.Type is StockMovementType.Receipt
+                or StockMovementType.SalesReturn or StockMovementType.AdjustmentIncrease;
+            if (isInboundMovement &&
+                (request.UnitCost is null || request.UnitCost < 0m || decimal.Round(request.UnitCost.Value, 2) != request.UnitCost.Value))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["unitCost"] = ["بهای واحد برای ورود موجودی الزامی، غیرمنفی و حداکثر تا دو رقم اعشار است."] });
+            if (!isInboundMovement && request.UnitCost is not null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["unitCost"] = ["برای خروج موجودی، بهای واحد به‌صورت خودکار از میانگین موجودی محاسبه می‌شود."] });
 
             var productExists = await db.Products.AnyAsync(x =>
                 x.TenantId == tenantId && x.Id == request.ProductId && x.IsActive && x.TracksInventory,
@@ -100,19 +110,14 @@ public static class InventoryEndpoints
                     .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.ProductId == request.ProductId)
                     .ToListAsync(cancellationToken);
                 var current = InventoryValuation.Calculate(history);
-                var isInbound = request.Type is StockMovementType.Receipt
-                    or StockMovementType.SalesReturn or StockMovementType.AdjustmentIncrease;
-
                 decimal unitCost;
-                if (isInbound)
+                if (isInboundMovement)
                 {
-                    if (request.UnitCost is null || request.UnitCost < 0m)
-                        return Results.ValidationProblem(new Dictionary<string, string[]> { ["unitCost"] = ["بهای واحد برای ورود موجودی الزامی و غیرمنفی است."] });
-                    unitCost = request.UnitCost.Value;
+                    unitCost = request.UnitCost!.Value;
                 }
                 else
                 {
-                    if (request.Quantity <= 0m || request.Quantity > current.QuantityOnHand)
+                    if (request.Quantity > current.QuantityOnHand)
                         return Results.Conflict(new { message = "موجودی کافی نیست؛ خروج موجودی منفی مجاز نیست.", current.QuantityOnHand });
                     unitCost = current.AverageUnitCost;
                 }
