@@ -55,16 +55,19 @@ test("rotates the browser device key with proof of possession and clears its old
   const actorId = "actor-rotate";
   const deviceId = "device-rotate";
   const calls = [];
+  const issuedChallenges = [];
   const api = {
     async post(path, body) {
       calls.push({ path, body });
       if (path.endsWith("/challenges")) {
         const challengeNumber = calls.filter(call => call.path.endsWith("/challenges")).length;
-        return {
+        const challenge = {
           challengeId: `challenge-${challengeNumber}`,
           challenge: Buffer.alloc(32, challengeNumber).toString("base64"),
           tenantId, branchId, actorId, deviceId
         };
+        issuedChallenges.push(challenge);
+        return challenge;
       }
       if (path.endsWith("/complete"))
         return { deviceId, keyVersion: 1, credential: Buffer.alloc(32, 1).toString("base64") };
@@ -94,10 +97,10 @@ test("rotates the browser device key with proof of possession and clears its old
     "spki", Buffer.from(rotation.body.publicKeySpkiBase64, "base64"),
     { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
   );
-  const challenge = calls.filter(call => call.path.endsWith("/challenges") && call.body.deviceId === deviceId).at(-1);
+  const challenge = issuedChallenges.at(-1);
   const canonical = [
     "MG-DEVICE-ROTATION-V1", tenantId, branchId, actorId, deviceId,
-    challenge.body.challengeId, challenge.body.challenge
+    challenge.challengeId, challenge.challenge
   ].join("\n");
   assert.equal(await crypto.subtle.verify(
     { name: "ECDSA", hash: "SHA-256" },
