@@ -237,6 +237,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("RevokedAtUtc").HasColumnType("timestamp with time zone");
                     b.Property<int>("KeyVersion").IsConcurrencyToken().HasColumnType("integer");
                     b.HasKey("TenantId", "DeviceId");
+                    b.HasIndex("ActorId");
                     b.HasIndex("TenantId", "ActorId");
                     b.ToTable("device_credentials", (string)null);
                 });
