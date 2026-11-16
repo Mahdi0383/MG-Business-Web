@@ -104,3 +104,10 @@ The current repository is a foundation, not a finished commercial product. A foc
 - The local inbox processor now applies only the supported customer-create projection path. Customer profile/contact update command types remain fail-closed for manual review until a complete outbound edit workflow and version-precondition contract exist; this avoids accepting commands that the local product cannot safely originate or reconcile.
 - Incoming conflict records retain their originating branch. The local store exposes unresolved conflicts through the tenant/status/created-time index, and the workspace status line shows the open conflict count alongside pending outbox and unapplied inbox counts.
 - This is conflict visibility, not conflict resolution. Operators cannot yet merge or discard conflicts through a governed workflow, and unresolved entries intentionally block later journal replay in sequence order.
+
+## Architecture baseline publication — 2026-11-16
+
+- Published [REFERENCE-ARCHITECTURE.md](./REFERENCE-ARCHITECTURE.md) as the normative target architecture and engineering contract.
+- Consolidated component ownership, trust boundaries, deployment/persistence strategy, domain boundaries, command envelope, API conventions, local transaction rules, sync/conflict lifecycle, fencing/failback, security, licensing, observability, backup/restore, verification suites and delivery gates.
+- Recorded seven architecture decisions: modular monolith first, local journal/at-least-once sync, append-only financial facts, fenced failover, separate creator control plane, SQLite/PostgreSQL deployment roles, and signed entitlement leases.
+- This is completion of the documented architecture baseline, not completion of its implementation. Gate 0 still requires threat-model review, contract verification and reproducible CI evidence. The implementation blockers in section 16 of the reference architecture remain release blockers.
