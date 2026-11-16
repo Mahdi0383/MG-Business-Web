@@ -1271,7 +1271,18 @@ class Handler(SimpleHTTPRequestHandler):
                 players = data.get("playersCount",1)
                 if not isinstance(device_id,str) or type(players) is not int or not 1 <= players <= 16:
                     return self.send_json(400, {"error": "دستگاه یا تعداد بازیکنان معتبر نیست."})
+                session_id=str(data.get("id") or secrets.token_urlsafe(18))
+                if not 1<=len(session_id)<=100: return self.send_json(400,{"error":"شناسه نشست معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                existing=db.execute("""SELECT device_id,customer_id,players_count,status,started_at FROM game_sessions
+                    WHERE id=? AND tenant_id=?""",(session_id,user["tenant_id"])).fetchone()
+                if existing:
+                    if (existing["device_id"]==device_id and existing["customer_id"]==customer_id and
+                        existing["players_count"]==players):
+                        db.commit()
+                        return self.send_json(200,{"id":session_id,"startedAt":existing["started_at"],"ok":True,"duplicate":True,"status":existing["status"]})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه نشست قبلاً برای اطلاعات متفاوت استفاده شده است."})
                 device = db.execute("SELECT * FROM game_devices WHERE id=? AND tenant_id=? AND active=1",
                                     (device_id,user["tenant_id"])).fetchone()
                 if not device:
@@ -1289,7 +1300,6 @@ class Handler(SimpleHTTPRequestHandler):
                     db.rollback(); return self.send_json(409,{"error":"این دستگاه در حال حاضر برای مشتری دیگری رزرو شده است."})
                 if active_reservation:
                     db.execute("UPDATE gamenet_reservations SET status='completed' WHERE id=?",(active_reservation["id"],))
-                session_id = str(data.get("id") or secrets.token_urlsafe(18))
                 db.execute("""INSERT INTO game_sessions(id,tenant_id,device_id,customer_id,started_by,started_at,status,
                     players_count,rate_per_hour,is_free,created_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?)""",
                     (session_id,user["tenant_id"],device_id,customer_id,user["id"],now,players,device["hourly_rate"],device["is_free"],now))
