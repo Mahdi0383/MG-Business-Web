@@ -1,3 +1,4 @@
+using System.Data;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -8,7 +9,7 @@ namespace MG.Business.Api.Endpoints;
 
 public static class AccountingEndpoints
 {
-    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Viewer"];
+    private static readonly string[] ReadRoles = ["Owner", "Manager", "Accountant", "Cashier", "Viewer"];
     private static readonly string[] WriteRoles = ["Owner", "Manager", "Accountant"];
 
     public static IEndpointRouteBuilder MapAccountingEndpoints(this IEndpointRouteBuilder endpoints)
@@ -24,6 +25,51 @@ public static class AccountingEndpoints
                 .ToListAsync(cancellationToken);
             return Results.Ok(accounts);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
+        group.MapPost("/accounts/initialize-default-chart", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId)
+                return Results.Forbid();
+
+            var defaults = new (string Code, string Name, AccountType Type)[]
+            {
+                ("1000", "صندوق", AccountType.Asset),
+                ("1010", "بانک و کارتخوان", AccountType.Asset),
+                ("1100", "حساب‌های دریافتنی", AccountType.Asset),
+                ("1200", "موجودی کالا", AccountType.Asset),
+                ("2000", "حساب‌های پرداختنی", AccountType.Liability),
+                ("3000", "سرمایه مالک", AccountType.Equity),
+                ("4000", "درآمد فروش", AccountType.Revenue),
+                ("5000", "بهای تمام‌شده کالای فروش‌رفته", AccountType.Expense),
+                ("6000", "هزینه‌های عملیاتی", AccountType.Expense)
+            };
+
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+            try
+            {
+                var existingCodes = await db.Accounts.Where(x => x.TenantId == tenantId)
+                    .Select(x => x.Code).ToListAsync(cancellationToken);
+                var missing = defaults.Where(item => !existingCodes.Contains(item.Code))
+                    .Select(item => new Account(tenantId, item.Code, item.Name, item.Type)).ToArray();
+                if (missing.Length > 0)
+                    db.Accounts.AddRange(missing);
+
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                var accounts = await db.Accounts.AsNoTracking()
+                    .Where(x => x.TenantId == tenantId && x.IsActive)
+                    .OrderBy(x => x.Code)
+                    .Select(x => new AccountResponse(x.Id, x.Code, x.Name, x.Type.ToString(), x.IsActive))
+                    .ToListAsync(cancellationToken);
+                return Results.Ok(accounts);
+            }
+            catch (DbUpdateException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "ایجاد سرفصل‌های پایه با تغییر هم‌زمان دیگری تداخل پیدا کرد؛ دوباره تلاش کنید." });
+            }
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
         group.MapPost("/accounts", async (CreateAccountRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
