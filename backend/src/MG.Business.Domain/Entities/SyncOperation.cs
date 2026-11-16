@@ -29,7 +29,7 @@ public sealed class SyncOperation
         OperationType = operationType.Trim();
         SchemaVersion = schemaVersion;
         AuthorityEpoch = authorityEpoch;
-        OccurredAtUtc = occurredAtUtc;
+        OccurredAtUtc = occurredAtUtc.ToUniversalTime();
         PayloadJson = payloadJson;
         PayloadSha256 = payloadSha256;
         ReceivedAtUtc = DateTimeOffset.UtcNow;
