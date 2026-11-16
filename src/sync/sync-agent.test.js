@@ -564,3 +564,35 @@ test("rejects a non-advancing cursor when the server claims more journal pages e
   assert.equal(calls.stored, null);
   assert.equal(calls.acknowledged, null);
 });
+
+
+test("rejects duplicate or out-of-order server journal sequences without acknowledging commands", async () => {
+  const pending = ["op-a", "op-b"].map((operationId, index) => {
+    const payloadJson = JSON.stringify({ index });
+    return {
+      operationId, deviceId: "device-1", tenantId: "tenant-1", branchId: null,
+      operationType: "test.created", schemaVersion: 1, authorityEpoch: 0,
+      occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson,
+      payloadSha256: index === 0
+        ? "0eb5b8d6f8a1a0e7a1c0b1a3e8e4b8e9b4e4e5d6f7a8b9c0d1e2f3a4b5c6d7e8"
+        : "f1d2d2f924e986ac86fdf7b36c94bcdf32beec15eaf6a9b0e8b1f3a9b5e3a4d7"
+    };
+  });
+  let acknowledged = false;
+  const api = {
+    async post() {
+      return { accepted: [
+        { operationId: "op-a", sequence: 9, duplicate: false },
+        { operationId: "op-b", sequence: 9, duplicate: false }
+      ] };
+    }
+  };
+  const store = {
+    async getDeviceId() { return "device-1"; },
+    async getPending() { return pending; },
+    async acknowledge() { acknowledged = true; }
+  };
+  const agent = new SyncAgent(api, store);
+  await assert.rejects(agent.pushPending("tenant-1", { actorId: "actor-1" }), /journal order/);
+  assert.equal(acknowledged, false);
+});
