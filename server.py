@@ -312,6 +312,14 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
 
+def module_enabled(db, tenant_id, module_key):
+    row = db.execute("SELECT enabled,expires_at FROM tenant_modules WHERE tenant_id=? AND module_key=?",
+                     (tenant_id,module_key)).fetchone()
+    return bool(row and row["enabled"] and (row["expires_at"] is None or row["expires_at"] > int(time.time())))
+
+def require_any_module(db, tenant_id, *module_keys):
+    return any(module_enabled(db,tenant_id,key) for key in module_keys)
+
 def verify_license_code(code):
     secret = os.environ.get("MG_LICENSE_SECRET")
     if not secret:
@@ -470,10 +478,14 @@ class Handler(SimpleHTTPRequestHandler):
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/products":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
                     FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/inventory":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT p.id AS productId,p.name,p.sku,p.category,
                     COALESCE(SUM(m.quantity_delta),0) AS quantity,p.cost_price AS costPrice
                     FROM products p LEFT JOIN inventory_movements m
@@ -482,6 +494,8 @@ class Handler(SimpleHTTPRequestHandler):
                     GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/inventory/movements":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT m.id,m.product_id AS productId,p.name AS productName,
                     m.movement_type AS movementType,m.quantity_delta AS quantityDelta,
                     m.unit_cost AS unitCost,m.note,m.created_at AS createdAt
@@ -489,16 +503,22 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/customers":
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT id,full_name AS fullName,phone,email,notes,created_at AS createdAt
                     FROM customers WHERE tenant_id=? ORDER BY full_name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/orders":
+                if not module_enabled(db,user["tenant_id"],"cafe"):
+                    return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
                     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
                     WHERE o.tenant_id=? ORDER BY o.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/gamenet/devices":
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT d.id,d.name,d.device_type AS deviceType,d.hourly_rate AS hourlyRate,d.is_free AS isFree,
                     d.active,gs.id AS sessionId,gs.customer_id AS customerId,gs.started_at AS startedAt,gs.players_count AS playersCount
                     FROM game_devices d LEFT JOIN game_sessions gs
@@ -506,6 +526,8 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE d.tenant_id=? ORDER BY d.name""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/gamenet/sessions":
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT s.id,s.device_id AS deviceId,d.name AS deviceName,
                     s.customer_id AS customerId,c.full_name AS customerName,s.started_at AS startedAt,
                     s.ended_at AS endedAt,s.status,s.players_count AS playersCount,
@@ -515,10 +537,14 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE s.tenant_id=? ORDER BY s.started_at DESC LIMIT 500""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/accounting/accounts":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
                 rows = db.execute("SELECT code,name,account_type AS accountType,normal_balance AS normalBalance FROM accounts WHERE tenant_id=? AND active=1 ORDER BY code",
                                   (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/reports/sales-by-product":
+                if not module_enabled(db,user["tenant_id"],"reports"):
+                    return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
                     SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue
                     FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
@@ -527,6 +553,8 @@ class Handler(SimpleHTTPRequestHandler):
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/accounting/journal":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT e.id,e.entry_date AS entryDate,e.memo,e.source_type AS sourceType,
                     e.source_id AS sourceId,COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM journal_entries e LEFT JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
@@ -534,6 +562,8 @@ class Handler(SimpleHTTPRequestHandler):
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/accounting/profit-loss":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT a.account_type AS accountType,
                     COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
@@ -544,6 +574,8 @@ class Handler(SimpleHTTPRequestHandler):
                 expenses = totals.get("expense")["debit"] - totals.get("expense")["credit"] if totals.get("expense") else 0
                 return self.send_json(200, {"revenue": revenue, "expenses": expenses, "netProfit": revenue-expenses})
             if path == "/api/accounting/trial-balance":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT a.code,a.name,a.account_type AS accountType,
                     a.normal_balance AS normalBalance,COALESCE(SUM(l.debit),0) AS debit,
                     COALESCE(SUM(l.credit),0) AS credit
