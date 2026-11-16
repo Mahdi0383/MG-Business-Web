@@ -132,7 +132,7 @@ export class LocalOperationStore {
     return operation;
   }
 
-  async getPending(tenantId, limit = 100, branchId = null) {
+  async getPending(tenantId, limit = 100, branchId = null, allowTenantWide = false) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 100)) : 100;
@@ -167,7 +167,7 @@ export class LocalOperationStore {
           return;
         }
         const operation = cursor.value;
-        if (operation.branchId == null || operation.branchId === branchId)
+        if (operation.branchId === branchId || (allowTenantWide && operation.branchId == null))
           matching.push(operation);
         cursor.continue();
       };
