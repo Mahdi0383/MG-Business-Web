@@ -98,7 +98,7 @@ public static class InventoryEndpoints
         {
             var pageNumber = page ?? 1;
             var take = pageSize ?? 50;
-            if (pageNumber < 1 || take is < 1 or > 200)
+            if (pageNumber is < 1 or > 1_000_000 || take is < 1 or > 200)
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
                     ["pagination"] = ["شماره صفحه باید مثبت و اندازه صفحه بین ۱ تا ۲۰۰ باشد."]
@@ -110,6 +110,9 @@ public static class InventoryEndpoints
                 query = query.Where(x => x.BranchId == branchId);
             if (productId is Guid selectedProductId)
                 query = query.Where(x => x.ProductId == selectedProductId);
+
+            var totalCount = await query.CountAsync(cancellationToken);
+            var totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)take);
 
             List<StockMovement> movements;
             if (db.Database.IsSqlite())
@@ -129,11 +132,18 @@ public static class InventoryEndpoints
                     .ToListAsync(cancellationToken);
             }
 
-            return Results.Ok(movements.Select(x => new
+            return Results.Ok(new
             {
-                x.Id, x.ProductId, x.BranchId, type = x.Type.ToString(),
-                x.Quantity, x.UnitCost, x.SignedQuantity, x.Reference, x.CreatedAtUtc
-            }));
+                page = pageNumber,
+                pageSize = take,
+                totalCount,
+                totalPages,
+                items = movements.Select(x => new
+                {
+                    x.Id, x.ProductId, x.BranchId, type = x.Type.ToString(),
+                    x.Quantity, x.UnitCost, x.SignedQuantity, x.Reference, x.CreatedAtUtc
+                })
+            });
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
         group.MapPost("/movements", async (CreateStockMovementRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
