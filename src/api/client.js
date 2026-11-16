@@ -22,12 +22,14 @@ export class MgApiClient {
   constructor(baseUrl) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.session = null;
+    this.onSessionChanged = null;
     this.tenantId = null;
     this.branchId = null;
   }
 
   setSession(session) {
     this.session = session;
+    this.onSessionChanged?.(session);
   }
 
   setTenantContext(tenantId, branchId = null) {
