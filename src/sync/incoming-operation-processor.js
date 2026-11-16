@@ -58,6 +58,18 @@ export class IncomingOperationProcessor {
       }
       if (!payload || typeof payload !== "object" || Array.isArray(payload))
         throw new TypeError("Incoming inbox payload must be a JSON object.");
+      if (typeof row.payloadSha256 !== "string" || !/^[0-9a-f]{64}$/i.test(row.payloadSha256))
+        throw new TypeError("Incoming inbox payload hash is missing or invalid.");
+      if (!globalThis.crypto?.subtle)
+        throw new Error("Secure cryptography is unavailable; incoming inbox payloads cannot be verified.");
+      const digest = await globalThis.crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(row.payloadJson)
+      );
+      const actualHash = [...new Uint8Array(digest)]
+        .map(byte => byte.toString(16).padStart(2, "0")).join("");
+      if (actualHash !== row.payloadSha256.toLowerCase())
+        throw new Error("Incoming inbox payload hash does not match its persisted content.");
 
       const currentState = await this.adapter.readConflictState(tenantId, row);
       const decision = this.classify({ ...row, payload }, currentState);
