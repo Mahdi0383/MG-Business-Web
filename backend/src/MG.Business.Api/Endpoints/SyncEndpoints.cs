@@ -88,14 +88,14 @@ public static class SyncEndpoints
                 .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
                 .ToDictionaryAsync(x => x.OperationId, cancellationToken);
 
-            var accepted = new List<object>();
+            var accepted = new List<SyncOperationAck>();
             foreach (var item in prepared)
             {
                 if (existing.TryGetValue(item.Request.OperationId, out var prior))
                 {
                     if (!string.Equals(prior.PayloadSha256, item.Hash, StringComparison.Ordinal))
                         return Results.Conflict(new { operationId = item.Request.OperationId, message = "Operation ID was previously used with a different payload." });
-                    accepted.Add(new { operationId = prior.OperationId, sequence = prior.Sequence, duplicate = true });
+                    accepted.Add(new SyncOperationAck(prior.OperationId, prior.Sequence, true));
                     continue;
                 }
 
@@ -104,7 +104,7 @@ public static class SyncEndpoints
                     item.Request.SchemaVersion, item.Request.AuthorityEpoch, item.Request.OccurredAtUtc,
                     item.Request.PayloadJson, item.Hash);
                 db.SyncOperations.Add(operation);
-                accepted.Add(operation);
+                accepted.Add(new SyncOperationAck(operation.OperationId, 0, false));
             }
 
             try
@@ -160,7 +160,7 @@ public static class SyncEndpoints
         return endpoints;
     }
 
-    public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
+    private sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);\n    public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
         Guid OperationId, Guid DeviceId, Guid? BranchId, string OperationType,
         int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
