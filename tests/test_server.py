@@ -418,6 +418,41 @@ class ApiIntegrationTests(unittest.TestCase):
         status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
         self.assertEqual(trial["totalDebit"],trial["totalCredit"])
 
+        # GameNet reservations prevent overlapping bookings and bind check-in to the reserved customer.
+        start_at=__import__("datetime").datetime.fromtimestamp(time.time()-30).strftime("%Y-%m-%dT%H:%M")
+        end_at=__import__("datetime").datetime.fromtimestamp(time.time()+3600).strftime("%Y-%m-%dT%H:%M")
+        status, reservation = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-01","deviceId":"pc-free","customerId":"customer-1",
+            "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
+        }, token)
+        self.assertEqual(status,201)
+        status, conflict = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-02","deviceId":"pc-free","customerId":"customer-1",
+            "startsAt":start_at,"endsAt":end_at,"playersCount":1
+        }, token)
+        self.assertEqual(status,409)
+        status, result = self.request("POST", "/api/gamenet/sessions", {
+            "id":"session-wrong-customer","deviceId":"pc-free","playersCount":1
+        }, token)
+        self.assertEqual(status,409)
+        status, result = self.request("POST", "/api/gamenet/sessions", {
+            "id":"session-reserved","deviceId":"pc-free","customerId":"customer-1","playersCount":2
+        }, token)
+        self.assertEqual(status,201)
+        status, reservations = self.request("GET", "/api/gamenet/reservations", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(next(x for x in reservations["items"] if x["id"]=="reservation-01")["status"],"completed")
+        status, result = self.request("POST", "/api/gamenet/sessions/session-reserved/end", {}, token)
+        self.assertEqual(status,200)
+        self.assertEqual(result["amountDue"],0)
+        future_start=__import__("datetime").datetime.fromtimestamp(time.time()+7200).strftime("%Y-%m-%dT%H:%M")
+        future_end=__import__("datetime").datetime.fromtimestamp(time.time()+10800).strftime("%Y-%m-%dT%H:%M")
+        status, result = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-cancel","deviceId":"pc-01","startsAt":future_start,"endsAt":future_end
+        }, token)
+        self.assertEqual(status,201)
+        status, result = self.request("POST", "/api/gamenet/reservations/reservation-cancel/cancel", {}, token)
+        self.assertEqual(status,200)
         status, snapshot = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         altered = json.loads(json.dumps(snapshot))
