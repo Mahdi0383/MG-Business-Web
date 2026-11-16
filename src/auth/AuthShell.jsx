@@ -42,6 +42,7 @@ function AuthShell({ apiBaseUrl }) {
   const [pendingOperations, setPendingOperations] = useState(0);
   const [incomingOperations, setIncomingOperations] = useState(0);
   const [disconnectedDevices, setDisconnectedDevices] = useState([]);
+  const [deviceStatuses, setDeviceStatuses] = useState([]);
 
   useEffect(() => {
     client.onSessionChanged = value => {
@@ -286,7 +287,7 @@ function AuthShell({ apiBaseUrl }) {
         });
         if (active && ["Owner", "Manager"].includes(selectedTenant.role)) {
           const devices = await client.get("/api/sync/devices");
-          if (active) setDisconnectedDevices((devices || []).filter(device => !device.isOnline));
+          if (active) {\n            setDeviceStatuses(devices || []);\n            setDisconnectedDevices((devices || []).filter(device => !device.isOnline));\n          }
         }
       } catch {
         // A missed heartbeat is detected by the next successful manager poll.
@@ -306,7 +307,7 @@ function AuthShell({ apiBaseUrl }) {
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} disconnectedDevices={disconnectedDevices} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} disconnectedDevices={disconnectedDevices} deviceStatuses={deviceStatuses} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">
