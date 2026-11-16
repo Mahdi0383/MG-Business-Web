@@ -378,27 +378,33 @@ class ApiIntegrationTests(unittest.TestCase):
             "sellPrice":40000,"costPrice":20000
         }, token)
         self.assertEqual(status,201)
+        status, result = self.request("POST", "/api/products", {
+            "id":"product-purchase-test-2","name":"Coffee Beans","sku":"BEANS-01",
+            "sellPrice":80000,"costPrice":35000
+        }, token)
+        self.assertEqual(status,201)
         status, result = self.request("POST", "/api/suppliers", {
             "id":"supplier-1","name":"Test Dairy","phone":"+49123456789"
         }, token)
         self.assertEqual(status,201)
         status, result = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
-            "invoiceDate":"2026-11-16","discount":20000,
-            "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000}]
+            "invoiceDate":"2026-11-16","discount":30000,
+            "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000},{"productId":"product-purchase-test-2","quantity":5,"unitCost":40000}]
         }, token)
         self.assertEqual(status,201)
-        self.assertEqual(result["total"],230000)
+        self.assertEqual(result["total"],420000)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test")["quantity"],10)
+        self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test-2")["quantity"],5)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "amount":100000,"paymentMethod":"card"
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"partial")
-        self.assertEqual(result["remainingBalance"],130000)
+        self.assertEqual(result["remainingBalance"],320000)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
-            "amount":130000,"paymentMethod":"cash"
+            "amount":320000,"paymentMethod":"cash"
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"paid")
