@@ -274,16 +274,22 @@ export class LocalOperationStore {
       .map(row => [row.productId, row]));
     const database = await openDatabase();
     const transaction = database.transaction(
-      [INVENTORY_PRODUCTS_STORE, INVENTORY_BASELINES_STORE], "readwrite"
+      [INVENTORY_PRODUCTS_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE], "readwrite"
     );
     const done = transactionDone(transaction);
     const productStore = transaction.objectStore(INVENTORY_PRODUCTS_STORE);
     const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
+    const localMovements = await requestResult(transaction.objectStore(STOCK_MOVEMENTS_STORE)
+      .index("byTenantBranchProduct")
+      .getAll(IDBKeyRange.bound([tenantId, branchId, ""], [tenantId, branchId, "\\uffff"])));
+    const productsWithPendingMovements = new Set(localMovements
+      .filter(row => row.state === "pending").map(row => row.productId));
     const cachedAtUtc = new Date().toISOString();
     for (const product of products) {
       if (!product || typeof product.id !== "string" || !product.id.trim()) continue;
       productStore.put({ ...product, tenantId, cachedAtUtc });
       if (!product.tracksInventory) continue;
+      if (productsWithPendingMovements.has(product.id)) continue;
       const stock = stockByProduct.get(product.id);
       baselineStore.put({
         tenantId, branchId, productId: product.id,
