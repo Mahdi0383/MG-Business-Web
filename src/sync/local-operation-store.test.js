@@ -25,6 +25,13 @@ test("requires explicit boolean authority when reading tenant-wide outbox entrie
   );
 });
 
+
+test("validates tenant and branch before accepting an incoming page", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(store.storeIncomingPage(" ", [], 0), /tenantId/);
+  await assert.rejects(store.storeIncomingPage("tenant-1", [], 0, " "), /branchId/);
+});
+
 test("rejects non-object payloads before attempting IndexedDB access", async () => {
   const store = new LocalOperationStore();
   for (const payload of [undefined, null, "not-an-object", 42, [], false]) {
