@@ -110,6 +110,13 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(firstAck.Accepted[0].Sequence, acknowledgedCursor!.Sequence);
         Assert.False(acknowledgedCursor.StaleAcknowledgement);
 
+        var futureAcknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId,
+            sequence = firstAck.Accepted[0].Sequence + 100000
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, futureAcknowledgement.StatusCode);
+
         var staleAcknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId,
