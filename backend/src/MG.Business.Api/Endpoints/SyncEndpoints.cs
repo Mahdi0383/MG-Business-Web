@@ -253,7 +253,15 @@ public static class SyncEndpoints
                         ["operations"] = ["An operation has invalid identifiers, version, type or payload size."]
                     });
 
-                try { using var _ = JsonDocument.Parse(item.PayloadJson); }
+                try
+                {
+                    using var payloadDocument = JsonDocument.Parse(item.PayloadJson);
+                    if (payloadDocument.RootElement.ValueKind != JsonValueKind.Object)
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["payloadJson"] = ["Payload must be a JSON object."]
+                        });
+                }
                 catch (JsonException)
                 {
                     return Results.ValidationProblem(new Dictionary<string, string[]>
