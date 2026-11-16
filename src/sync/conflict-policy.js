@@ -27,6 +27,56 @@ export function classifyIncomingOperation(operation, currentState = null) {
   if (!Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1)
     throw new TypeError("A valid operation schema version is required.");
 
+  if (type === "inventory.stock.movement.created") {
+    const payload = operation.payload;
+    const valid = operation.schemaVersion === 1
+      && typeof operation.branchId === "string" && operation.branchId.length > 0
+      && typeof payload?.productId === "string" && payload.productId.length > 0
+      && Number.isInteger(Number(payload.type)) && Number(payload.type) >= 1 && Number(payload.type) <= 7
+      && Number.isFinite(Number(payload.quantity)) && Number(payload.quantity) > 0
+      && Number.isFinite(Number(payload.baseQuantityOnHand)) && Number(payload.baseQuantityOnHand) >= 0
+      && Number.isFinite(Number(payload.baseInventoryValue)) && Number(payload.baseInventoryValue) >= 0;
+    if (!valid) {
+      return {
+        disposition: "manual-review",
+        reason: "invalid-inventory-movement-envelope",
+        operationId: operation.operationId ?? null
+      };
+    }
+    if (!currentState) {
+      return {
+        disposition: "manual-review",
+        reason: "inventory-baseline-not-cached",
+        operationId: operation.operationId ?? null
+      };
+    }
+    if (currentState.lastOperationId === operation.operationId) {
+      return {
+        disposition: "apply",
+        reason: "originating-device-inventory-echo",
+        operationId: operation.operationId ?? null
+      };
+    }
+    const baseValue = Math.round(Number(payload.baseInventoryValue) * 100) / 100;
+    if (Number(currentState.quantityOnHand) === Number(payload.baseQuantityOnHand)
+      && Number(currentState.inventoryValue) === baseValue) {
+      return {
+        disposition: "apply",
+        reason: "inventory-baseline-matches",
+        operationId: operation.operationId ?? null
+      };
+    }
+    return {
+      disposition: "conflict",
+      reason: "stale-inventory-base-balance",
+      expectedQuantityOnHand: Number(payload.baseQuantityOnHand),
+      actualQuantityOnHand: Number(currentState.quantityOnHand),
+      expectedInventoryValue: baseValue,
+      actualInventoryValue: Number(currentState.inventoryValue),
+      operationId: operation.operationId ?? null
+    };
+  }
+
   if (REVIEW_REQUIRED_PREFIXES.some(prefix => type.startsWith(prefix))) {
     return {
       disposition: "manual-review",
