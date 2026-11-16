@@ -36,6 +36,7 @@ export function classifyIncomingOperation(operation, currentState = null) {
       && Number.isFinite(Number(payload.quantity)) && Number(payload.quantity) > 0
       && Math.round(Number(payload.quantity) * 1000) === Number(payload.quantity) * 1000
       && Number.isFinite(Number(payload.baseQuantityOnHand)) && Number(payload.baseQuantityOnHand) >= 0
+      && Math.round(Number(payload.baseQuantityOnHand) * 1000) === Number(payload.baseQuantityOnHand) * 1000
       && Number.isFinite(Number(payload.baseInventoryValue)) && Number(payload.baseInventoryValue) >= 0
       && Math.round(Number(payload.baseInventoryValue) * 100) === Number(payload.baseInventoryValue) * 100
       && (payload.reference == null || (typeof payload.reference === "string" && payload.reference.length <= 250))
