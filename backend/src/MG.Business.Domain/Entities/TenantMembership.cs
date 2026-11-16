@@ -32,4 +32,16 @@ public sealed class TenantMembership
 
     public void Deactivate() => IsActive = false;
     public void Reactivate() => IsActive = true;
+
+    public void ChangeRole(TenantRole role)
+    {
+        if (!Enum.IsDefined(role)) throw new ArgumentOutOfRangeException(nameof(role));
+        Role = role;
+    }
+
+    public void AssignBranch(Guid? branchId)
+    {
+        if (branchId == Guid.Empty) throw new ArgumentException("Branch ID cannot be empty.", nameof(branchId));
+        BranchId = branchId;
+    }
 }
