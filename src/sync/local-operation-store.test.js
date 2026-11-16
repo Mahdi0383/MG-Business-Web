@@ -33,6 +33,15 @@ test("requires explicit boolean authority when reading tenant-wide outbox entrie
 });
 
 
+
+test("requires a device identity before reading the pending outbox", async () => {
+  const store = new LocalOperationStore();
+  await assert.rejects(
+    store.getPending("tenant-1", 100, "branch-a", false),
+    /deviceId/
+  );
+});
+
 test("validates tenant and branch before accepting an incoming page", async () => {
   const store = new LocalOperationStore();
   await assert.rejects(store.storeIncomingPage(" ", [], 0), /tenantId/);
