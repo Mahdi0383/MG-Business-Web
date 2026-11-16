@@ -96,3 +96,20 @@ test("serializes JSON request bodies and surfaces API validation messages", asyn
   assert.equal(request.headers.get("Content-Type"), "application/json");
   assert.deepEqual(JSON.parse(request.body), { name: " " });
 });
+
+test("pins a request to its captured branch even after the shared client context changes", async () => {
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push(options.headers);
+    return response(200, { ok: true });
+  };
+
+  const client = new MgApiClient("https://api.example.test");
+  client.setTenantContext("tenant-1", "branch-b");
+  await client.get("/api/sync/operations", { tenantId: "tenant-1", branchId: "branch-a" });
+  await client.get("/api/sync/operations", { tenantId: "tenant-1", branchId: null });
+
+  assert.equal(requests[0].get("X-MG-Branch"), "branch-a");
+  assert.equal(requests[1].get("X-MG-Branch"), "");
+  assert.equal(requests[1].get("X-MG-Tenant"), "tenant-1");
+});
