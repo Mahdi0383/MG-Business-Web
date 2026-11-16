@@ -25,6 +25,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<SyncOperation> SyncOperations => Set<SyncOperation>();
     public DbSet<DevicePresence> DevicePresences => Set<DevicePresence>();
+    public DbSet<SyncDeviceCursor> SyncDeviceCursors => Set<SyncDeviceCursor>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -277,6 +278,15 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict).IsRequired(false);
+        });
+
+        modelBuilder.Entity<SyncDeviceCursor>(entity =>
+        {
+            entity.ToTable("sync_device_cursors");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId });
+            entity.HasIndex(x => new { x.TenantId, x.LastAcknowledgedSequence });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<DevicePresence>(entity =>
