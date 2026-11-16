@@ -227,8 +227,9 @@ function AuthShell({ apiBaseUrl }) {
       try {
         const branchId = selectedBranch?.id || null;
         const allowTenantWide = ["Owner", "Manager"].includes(selectedTenant?.role);
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
         const [pending, incoming] = await Promise.all([
-          operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide),
+          operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide, deviceId),
           operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide)
         ]);
         if (active) { setPendingOperations(pending); setIncomingOperations(incoming); }
