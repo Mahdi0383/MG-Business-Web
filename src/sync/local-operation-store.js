@@ -262,7 +262,7 @@ export class LocalOperationStore {
       };
     });
     await done;
-    return count;
+    return matching;
   }
 
   async storeIncomingPage(tenantId, operations, nextSequence, branchId = null) {
