@@ -98,6 +98,78 @@ public sealed class AccountingApiIntegrationTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+
+    [Fact]
+    public async Task BranchScopedAccountantSeesOnlyThatBranchesTrialBalance()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"owner-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Branch Accounting",
+            slug = $"branch-accounting-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var branchResponse = await owner.PostAsJsonAsync("/api/branches", new { name = "Second", code = "B02" });
+        Assert.Equal(HttpStatusCode.Created, branchResponse.StatusCode);
+        var branch = await branchResponse.Content.ReadFromJsonAsync<BranchCreated>();
+
+        var cash = await CreateAccountAsync(owner, "1000", "Cash", AccountType.Asset);
+        var sales = await CreateAccountAsync(owner, "4000", "Sales", AccountType.Revenue);
+
+        var mainEntry = await owner.PostAsJsonAsync("/api/accounting/journal-entries", new
+        {
+            entryDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            description = "Main branch receipt",
+            reference = "MAIN-1",
+            lines = new[]
+            {
+                new { accountId = cash.Id, debit = 100m, credit = 0m, description = "Main cash" },
+                new { accountId = sales.Id, debit = 0m, credit = 100m, description = "Main sales" }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Created, mainEntry.StatusCode);
+
+        owner.DefaultRequestHeaders.Remove("X-MG-Branch");
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", branch!.Id.ToString());
+        var secondEntry = await owner.PostAsJsonAsync("/api/accounting/journal-entries", new
+        {
+            entryDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            description = "Second branch receipt",
+            reference = "SECOND-1",
+            lines = new[]
+            {
+                new { accountId = cash.Id, debit = 200m, credit = 0m, description = "Second cash" },
+                new { accountId = sales.Id, debit = 0m, credit = 200m, description = "Second sales" }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Created, secondEntry.StatusCode);
+
+        var staffEmail = $"accountant-{Guid.NewGuid():N}@mg.test";
+        using var accountant = await RegisterAndLoginAsync(factory, staffEmail);
+        var membership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = staffEmail,
+            role = TenantRole.Accountant,
+            branchId = branch.Id
+        });
+        Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
+
+        accountant.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        accountant.DefaultRequestHeaders.Add("X-MG-Branch", branch.Id.ToString());
+        var trial = await accountant.GetFromJsonAsync<TrialBalanceResponse>("/api/accounting/trial-balance");
+
+        Assert.NotNull(trial);
+        Assert.Equal(200m, trial!.TotalDebit);
+        Assert.Equal(200m, trial.TotalCredit);
+        Assert.True(trial.IsBalanced);
+    }
+
     private static async Task<AccountCreated> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
@@ -141,6 +213,7 @@ public sealed class AccountingApiIntegrationTests
 
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
+    private sealed record BranchCreated(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAtUtc);
     private sealed record AccountCreated(Guid Id, string Code, string Name, string Type, bool IsActive);
     private sealed record TrialBalanceResponse(TrialAccount[] Accounts, decimal TotalDebit, decimal TotalCredit, bool IsBalanced);
     private sealed record TrialAccount(Guid Id, string Code, string Name, string Type, decimal Debit, decimal Credit, decimal NetDebit, decimal NetCredit);
