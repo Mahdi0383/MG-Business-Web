@@ -109,10 +109,13 @@ public sealed class SyncApiIntegrationTests
 
         var deviceInventory = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
         Assert.Equal(2, deviceInventory!.Length);
-        Assert.Equal(firstAck.Accepted[0].Sequence,
-            deviceInventory.Single(device => device.DeviceId == deviceId).LastAcknowledgedSequence);
-        Assert.Equal(0,
-            deviceInventory.Single(device => device.DeviceId == secondDeviceId).LastAcknowledgedSequence);
+        var firstDeviceStatus = deviceInventory.Single(device => device.DeviceId == deviceId);
+        var secondDeviceStatus = deviceInventory.Single(device => device.DeviceId == secondDeviceId);
+        Assert.Equal(firstAck.Accepted[0].Sequence, firstDeviceStatus.LastAcknowledgedSequence);
+        Assert.Equal(0, firstDeviceStatus.PendingOperationCount);
+        Assert.Equal(firstAck.Accepted[0].Sequence, firstDeviceStatus.LatestJournalSequence);
+        Assert.Equal(0, secondDeviceStatus.LastAcknowledgedSequence);
+        Assert.Equal(firstAck.Accepted[0].Sequence, secondDeviceStatus.PendingOperationCount);
 
         client.DefaultRequestHeaders.Remove("X-MG-Tenant");
         client.DefaultRequestHeaders.Add("X-MG-Tenant", Guid.NewGuid().ToString());
@@ -214,7 +217,7 @@ public sealed class SyncApiIntegrationTests
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
-    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, long LastAcknowledgedSequence, bool IsOnline, string? AlertCode);
+    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, long LastAcknowledgedSequence, long LatestJournalSequence, long PendingOperationCount, bool IsOnline, string? AlertCode);
     private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
         string OperationType, int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
         DateTimeOffset ReceivedAtUtc, string PayloadJson, string PayloadSha256);
