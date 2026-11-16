@@ -132,7 +132,7 @@ public sealed class GameNetApiIntegrationTests
             revenueAccountId = revenue.Id,
             paymentAccountId = cash.Id,
             receivableAccountId = (Guid?)null,
-            paymentReference = "GAME-CASH-RETRY"
+            paymentReference = "GAME-CASH"
         });
         Assert.Equal(HttpStatusCode.OK, repeatedClose.StatusCode);
         var repeatedResult = await repeatedClose.Content.ReadFromJsonAsync<ClosedSession>();
@@ -141,6 +141,17 @@ public sealed class GameNetApiIntegrationTests
         Assert.Equal(result.SalesOrderId, repeatedResult.SalesOrderId);
         Assert.Equal(result.PaidAmount, repeatedResult.PaidAmount);
         Assert.Equal(result.BalanceDue, repeatedResult.BalanceDue);
+
+        using var changedClose = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = 14m,
+            paymentMethod = PaymentMethod.Cash,
+            revenueAccountId = revenue.Id,
+            paymentAccountId = cash.Id,
+            receivableAccountId = (Guid?)null,
+            paymentReference = "GAME-CASH"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, changedClose.StatusCode);
 
         var orders = await client.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
         Assert.Single(orders!);
