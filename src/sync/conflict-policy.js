@@ -9,10 +9,7 @@ const REVIEW_REQUIRED_PREFIXES = [
   "purchase."
 ];
 
-const FIELD_MERGE_PREFIXES = [
-  "customer.profile.",
-  "customer.contact."
-];
+
 
 /**
  * Classifies an incoming operation before it is applied to local business data.
@@ -71,44 +68,10 @@ export function classifyIncomingOperation(operation, currentState = null) {
     };
   }
 
-  if (FIELD_MERGE_PREFIXES.some(prefix => type.startsWith(prefix))) {
-    const payload = operation.payload && typeof operation.payload === "object"
-      ? operation.payload
-      : null;
-    const baseVersion = payload?.baseVersion;
-    const currentVersion = currentState?.version;
-
-    if (currentState?.lastOperationId === operation.operationId) {
-      return {
-        disposition: "apply",
-        reason: "originating-device-echo",
-        expectedVersion: baseVersion,
-        operationId: operation.operationId ?? null
-      };
-    }
-
-    if (!Number.isSafeInteger(baseVersion) || !Number.isSafeInteger(currentVersion)) {
-      return {
-        disposition: "manual-review",
-        reason: "missing-version-precondition",
-        operationId: operation.operationId ?? null
-      };
-    }
-
-    if (baseVersion !== currentVersion) {
-      return {
-        disposition: "conflict",
-        reason: "concurrent-profile-edit",
-        expectedVersion: baseVersion,
-        actualVersion: currentVersion,
-        operationId: operation.operationId ?? null
-      };
-    }
-
+  if (type.startsWith("customer.profile.") || type.startsWith("customer.contact.")) {
     return {
-      disposition: "apply",
-      reason: "profile-version-matches",
-      expectedVersion: baseVersion,
+      disposition: "manual-review",
+      reason: "customer-update-command-not-enabled",
       operationId: operation.operationId ?? null
     };
   }
