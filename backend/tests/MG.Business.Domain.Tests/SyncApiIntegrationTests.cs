@@ -98,7 +98,7 @@ public sealed class SyncApiIntegrationTests
             deviceId,
             sequence = firstAck.Accepted[0].Sequence
         });
-        Assert.Equal(HttpStatusCode.BadRequest, crossTenantAck.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, crossTenantAck.StatusCode);
     }
 
 
@@ -186,7 +186,8 @@ public sealed class SyncApiIntegrationTests
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record SyncPushResponse(SyncAck[] Accepted);
-    private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);\n    private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
+    private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
+    private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
     private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, bool IsOnline, string? AlertCode);
     private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
