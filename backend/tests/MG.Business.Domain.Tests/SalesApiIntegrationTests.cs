@@ -420,10 +420,29 @@ public sealed class SalesApiIntegrationTests
             unitCost = 2m,
             reference = "INVALID-OUTBOUND-COST"
         });
+        var serviceResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "INV-SERVICE-01",
+            name = "Non-stock service",
+            baseUnit = "service",
+            tracksInventory = false,
+            defaultSalePrice = 10m
+        });
+        Assert.Equal(HttpStatusCode.Created, serviceResponse.StatusCode);
+        var service = await serviceResponse.Content.ReadFromJsonAsync<ProductResponse>();
+        using var serviceMovement = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = service!.Id,
+            type = StockMovementType.Receipt,
+            quantity = 1m,
+            unitCost = 2m,
+            reference = "INVALID-SERVICE-STOCK"
+        });
 
         Assert.Equal(HttpStatusCode.BadRequest, zeroQuantity.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, excessivePrecision.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, outboundWithCost.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, serviceMovement.StatusCode);
         var stock = await client.GetFromJsonAsync<StockResponse[]>("/api/inventory/stock");
         Assert.Empty(stock!);
     }
