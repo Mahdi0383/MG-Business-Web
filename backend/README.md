@@ -19,7 +19,7 @@ The default development configuration uses SQLite. Configure hosted environments
 - `Database__Provider=PostgreSql`
 - `ConnectionStrings__Business`
 - `DataProtection__KeysDirectory` — persistent, private storage for bearer-token protection keys
-- `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, ... — exact trusted frontend origins
+- `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, ... — exact trusted frontend origins (for local Vite development, allow `http://localhost:5173`; for production, allow only the deployed frontend origin)
 - `Database__ApplyMigrations=true` — opt-in startup migration execution for PostgreSQL after reviewing the committed migration set
 
 Never commit production credentials, signing keys, or Data Protection key material.
