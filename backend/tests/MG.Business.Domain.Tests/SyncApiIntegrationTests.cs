@@ -1709,8 +1709,11 @@ public sealed class SyncApiIntegrationTests
             });
             using var heartbeat = await SendSigned("POST", "/api/sync/heartbeat", device, heartbeatBody);
             Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+        }
 
-            var payloadJson = System.Text.Json.JsonSerializer.Serialize(new { testValue = "fenced" });
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new { testValue = "fenced" });
+        async Task<HttpStatusCode> PushAtCurrentEpoch((Guid DeviceId, ECDsa Key, string Credential) device)
+        {
             var operationBody = System.Text.Json.JsonSerializer.Serialize(new
             {
                 operations = new[]
@@ -1730,8 +1733,11 @@ public sealed class SyncApiIntegrationTests
                 }
             });
             using var pushed = await SendSigned("POST", "/api/sync/operations", device, operationBody);
-            Assert.Equal(HttpStatusCode.Accepted, pushed.StatusCode);
+            return pushed.StatusCode;
         }
+
+        Assert.Equal(HttpStatusCode.Accepted, await PushAtCurrentEpoch(first));
+        Assert.Equal(HttpStatusCode.Conflict, await PushAtCurrentEpoch(second));
 
         using var zeroEpoch = await SendSigned("POST", "/api/sync/operations", first,
             System.Text.Json.JsonSerializer.Serialize(new
