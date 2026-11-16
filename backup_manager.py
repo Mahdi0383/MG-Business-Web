@@ -130,8 +130,9 @@ def restore_snapshot(snapshot_path: str | Path, db_path: str | Path, safety_back
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Create or restore MG Business SQLite snapshots.")
-    parser.add_argument("--db", default=os.environ.get("MG_DB_PATH", str(Path.home() / ".mg-business-data" / "mg-business.sqlite3")))
-    parser.add_argument("--backup-dir", default=os.environ.get("MG_BACKUP_DIR", str(Path.home() / ".mg-business-data" / "backups")))
+    data_dir = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).expanduser()
+    parser.add_argument("--db", default=os.environ.get("MG_DB_PATH", str(data_dir / "mg-business.sqlite3")))
+    parser.add_argument("--backup-dir", default=os.environ.get("MG_BACKUP_DIR", str(data_dir / "backups")))
     parser.add_argument("--restore", help="Path to a verified snapshot to restore; stop the MG server first.")
     parser.add_argument("--retention", type=int, default=int(os.environ.get("MG_BACKUP_RETENTION", "14")))
     args = parser.parse_args()
