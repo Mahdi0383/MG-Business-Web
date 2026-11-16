@@ -68,6 +68,8 @@ test("recovers a lost enrollment response with the same persisted private key", 
         return {
           challengeId: `challenge-${challengeCount}`,
           challenge: Buffer.alloc(32, challengeCount).toString("base64"),
+          tenantId,
+          branchId: null,
           deviceId,
           actorId
         };
