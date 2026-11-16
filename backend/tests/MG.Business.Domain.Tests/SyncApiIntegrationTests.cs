@@ -230,8 +230,8 @@ public sealed class SyncApiIntegrationTests
         Assert.True(staleCursor!.StaleAcknowledgement);
         Assert.Equal(firstAck.Accepted[0].Sequence, staleCursor.Sequence);
 
-        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new { deviceId, deviceName = "Sync Test Device", platform = "Test", clientVersion = "0.1.0" });
-        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+        var repeatHeartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new { deviceId, deviceName = "Sync Test Device", platform = "Test", clientVersion = "0.1.0" });
+        Assert.Equal(HttpStatusCode.OK, repeatHeartbeat.StatusCode);
         var secondDeviceId = Guid.NewGuid();
         var secondHeartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
         {
