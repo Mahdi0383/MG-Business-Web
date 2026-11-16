@@ -407,7 +407,7 @@ def audit(db, tenant_id, actor_id, action, entity_type, entity_id=None, details=
                (tenant_id, actor_id, action, entity_type, entity_id, json.dumps(details or {}, ensure_ascii=False), int(time.time())))
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = "MGBusiness/0.1"
+    server_version = "MGBusiness/1.0"
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
