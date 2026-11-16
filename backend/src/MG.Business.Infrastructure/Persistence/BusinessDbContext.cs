@@ -12,6 +12,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<SalesOrder> SalesOrders => Set<SalesOrder>();
+    public DbSet<SalesOrderLine> SalesOrderLines => Set<SalesOrderLine>();
+    public DbSet<SalesPayment> SalesPayments => Set<SalesPayment>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
     public DbSet<JournalEntryLine> JournalEntryLines => Set<JournalEntryLine>();
@@ -116,6 +119,67 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasIndex(x => new { x.TenantId, x.Sku }).IsUnique();
             entity.HasAlternateKey(x => new { x.TenantId, x.Id });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SalesOrder>(entity =>
+        {
+            entity.ToTable("sales_orders");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Number).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(24).IsRequired();
+            entity.Property(x => x.Subtotal).HasPrecision(18, 2);
+            entity.Property(x => x.LineDiscountTotal).HasPrecision(18, 2);
+            entity.Property(x => x.Discount).HasPrecision(18, 2);
+            entity.Property(x => x.Total).HasPrecision(18, 2);
+            entity.Property(x => x.PaidAmount).HasPrecision(18, 2);
+            entity.Ignore(x => x.BalanceDue);
+            entity.HasIndex(x => new { x.TenantId, x.Number }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+            entity.HasAlternateKey(x => new { x.TenantId, x.Id });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Customer>().WithMany().HasForeignKey(x => new { x.TenantId, x.CustomerId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict).IsRequired(false);
+            entity.HasMany(x => x.Lines).WithOne().HasForeignKey(x => new { x.TenantId, x.SalesOrderId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(x => x.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        modelBuilder.Entity<SalesOrderLine>(entity =>
+        {
+            entity.ToTable("sales_order_lines", table =>
+            {
+                table.HasCheckConstraint("ck_sales_line_quantity_positive", "CAST(quantity AS NUMERIC) > 0");
+                table.HasCheckConstraint("ck_sales_line_price_non_negative", "CAST(unit_price AS NUMERIC) >= 0");
+                table.HasCheckConstraint("ck_sales_line_discount_non_negative", "CAST(discount AS NUMERIC) >= 0");
+            });
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProductName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Sku).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Quantity).HasPrecision(18, 3);
+            entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            entity.Property(x => x.Discount).HasPrecision(18, 2);
+            entity.Property(x => x.UnitCost).HasPrecision(18, 2);
+            entity.Ignore(x => x.LineTotal);
+            entity.Ignore(x => x.CostTotal);
+            entity.HasOne<Product>().WithMany().HasForeignKey(x => new { x.TenantId, x.ProductId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SalesPayment>(entity =>
+        {
+            entity.ToTable("sales_payments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.Property(x => x.Method).HasConversion<string>().HasMaxLength(24).IsRequired();
+            entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.HasIndex(x => new { x.TenantId, x.SalesOrderId });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<SalesOrder>().WithMany().HasForeignKey(x => new { x.TenantId, x.SalesOrderId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<StockMovement>(entity =>
