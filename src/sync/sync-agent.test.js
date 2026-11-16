@@ -8,7 +8,7 @@ test("pushes the durable pending batch and acknowledges only matching operation 
   const operations = [
     { operationId: "op-1", deviceId: "device-1", tenantId: "tenant-1", branchId: null,
       operationType: "test.created", schemaVersion: 1, authorityEpoch: 0,
-      occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson: "{\"value\":1}", payloadSha256: "A".repeat(64) }
+      occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson: "{\"value\":1}", payloadSha256: "48208f9428d64634bd8e28ff345bf0eab60d53c18fa2fbdb0b9bc1e84df2b5f6" }
   ];
   const api = {
     async post(path, body) {
@@ -66,8 +66,8 @@ test("pulls remote operations and persists the page with its cursor", async () =
       requests.push(path);
       return {
         operations: [
-          { sequence: 4, operationId: "remote-4", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) },
-          { sequence: 5, operationId: "remote-5", operationType: "test.updated", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) }
+          { sequence: 4, operationId: "remote-4", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" },
+          { sequence: 5, operationId: "remote-5", operationType: "test.updated", schemaVersion: 1, payloadJson: "{}", payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" }
         ],
         nextSequence: 5,
         hasMore: false
@@ -99,8 +99,8 @@ test("does not persist a non-monotonic pull page", async () => {
     async get() {
       return {
         operations: [
-          { sequence: 7, operationId: "seven", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) },
-          { sequence: 6, operationId: "six", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "A".repeat(64) }
+          { sequence: 7, operationId: "seven", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" },
+          { sequence: 6, operationId: "six", operationType: "test.created", schemaVersion: 1, payloadJson: "{}", payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" }
         ],
         nextSequence: 6,
         hasMore: false
@@ -163,7 +163,7 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
     authorityEpoch: 0,
     occurredAtUtc: "2026-11-16T10:00:00.000Z",
     payloadJson: "{}",
-    payloadSha256: "A".repeat(64)
+    payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
   };
   const api = {
     async post(path, body, options) {
@@ -204,7 +204,7 @@ test("rejects a pull response containing another branch's operation", async () =
           operationType: "customer.updated",
           schemaVersion: 1,
           payloadJson: "{}",
-          payloadSha256: "A".repeat(64)
+          payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
         }],
         nextSequence: 4,
         hasMore: false
@@ -283,7 +283,7 @@ test("rejects malformed branch identities and hashes before inbox persistence", 
           operationType: "customer.updated",
           schemaVersion: 1,
           payloadJson: "{}",
-          payloadSha256: "A".repeat(64)
+          payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
         }],
         nextSequence: 4,
         hasMore: false
@@ -311,4 +311,34 @@ test("requires an authenticated actor before starting sync pull", async () => {
     new SyncAgent(api, store).pullIncoming("tenant-1"),
     /actorId is required/
   );
+});
+
+test("rejects an incoming payload whose SHA-256 does not match before persistence", async () => {
+  let persisted = false;
+  const api = {
+    async get() {
+      return {
+        operations: [{
+          sequence: 1,
+          operationId: "tampered-op",
+          operationType: "customer.updated",
+          schemaVersion: 1,
+          payloadJson: JSON.stringify({ name: "tampered" }),
+          payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        }],
+        nextSequence: 1,
+        hasMore: false
+      };
+    }
+  };
+  const store = {
+    async getCursor() { return 0; },
+    async storeIncomingPage() { persisted = true; }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pullIncoming("tenant-1", { actorId: "actor-1" }),
+    /payload hash does not match/
+  );
+  assert.equal(persisted, false);
 });
