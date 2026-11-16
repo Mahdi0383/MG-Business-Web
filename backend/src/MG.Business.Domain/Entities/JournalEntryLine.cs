@@ -4,8 +4,9 @@ public sealed class JournalEntryLine
 {
     private JournalEntryLine() { }
 
-    public JournalEntryLine(Guid accountId, decimal debit, decimal credit, string? description = null)
+    public JournalEntryLine(Guid tenantId, Guid accountId, decimal debit, decimal credit, string? description = null)
     {
+        if (tenantId == Guid.Empty) throw new ArgumentException("Tenant is required.", nameof(tenantId));
         if (accountId == Guid.Empty) throw new ArgumentException("Account is required.", nameof(accountId));
         if (debit < 0m || credit < 0m) throw new ArgumentOutOfRangeException(nameof(debit), "Amounts cannot be negative.");
         if ((debit > 0m) == (credit > 0m))
@@ -13,6 +14,7 @@ public sealed class JournalEntryLine
         if (decimal.Round(debit, 2) != debit || decimal.Round(credit, 2) != credit)
             throw new ArgumentException("Journal amounts support at most two decimal places.");
 
+        TenantId = tenantId;
         AccountId = accountId;
         Debit = debit;
         Credit = credit;
@@ -20,6 +22,7 @@ public sealed class JournalEntryLine
     }
 
     public Guid Id { get; private set; }
+    public Guid TenantId { get; private set; }
     public Guid JournalEntryId { get; private set; }
     public Guid AccountId { get; private set; }
     public decimal Debit { get; private set; }
