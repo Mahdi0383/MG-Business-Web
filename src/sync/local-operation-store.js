@@ -204,18 +204,42 @@ export class LocalOperationStore {
     await writeDone;
   }
 
-  async getPendingCount(tenantId) {
+  async getPendingCount(tenantId, branchId = null, allowTenantWide = false) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required.");
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
     const done = transactionDone(transaction);
-    const count = await requestResult(
-      transaction.objectStore(OPERATIONS_STORE).index("byTenantState")
-        .count(IDBKeyRange.only([tenantId, "pending"]))
-    );
+    const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantState");
+
+    if (branchId === null && allowTenantWide) {
+      const count = await requestResult(index.count(IDBKeyRange.only([tenantId, "pending"])));
+      await done;
+      return count;
+    }
+
+    const count = await new Promise((resolve, reject) => {
+      let matching = 0;
+      const request = index.openCursor(IDBKeyRange.only([tenantId, "pending"]));
+      request.onerror = () => reject(request.error || new Error("Could not count pending sync operations."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(matching);
+          return;
+        }
+        const operation = cursor.value;
+        const matchesBranch = branchId === null
+          ? operation.branchId != null
+          : operation.branchId === branchId;
+        if (matchesBranch || (allowTenantWide && operation.branchId == null))
+          matching += 1;
+        cursor.continue();
+      };
+    });
     await done;
     return count;
   }
-
 
   async storeIncomingPage(tenantId, operations, nextSequence, branchId = null) {
     if (!tenantId) throw new TypeError("tenantId is required.");
