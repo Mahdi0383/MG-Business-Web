@@ -207,6 +207,18 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        status, duplicate_order = self.request("POST", "/api/orders", {
+            "id":"order-test-1","customerId":"customer-1","discount":5000,
+            "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]
+        }, token)
+        self.assertEqual(status,200)
+        self.assertTrue(duplicate_order["duplicate"])
+        self.assertEqual(duplicate_order["orderNumber"],result["orderNumber"])
+        status, conflicting_order = self.request("POST", "/api/orders", {
+            "id":"order-test-1","customerId":"customer-1","discount":0,
+            "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]
+        }, token)
+        self.assertEqual(status,409)
         db = server.connect()
         try:
             card_receivable = db.execute("""SELECT SUM(l.debit) FROM journal_lines l
