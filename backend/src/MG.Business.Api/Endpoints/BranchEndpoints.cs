@@ -1,5 +1,6 @@
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
+using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -73,6 +74,21 @@ public static class BranchEndpoints
             var branch = await db.Branches.SingleOrDefaultAsync(x =>
                 x.TenantId == tenant.TenantId && x.Id == branchId, cancellationToken);
             if (branch is null) return Results.NotFound();
+
+            if (!request.IsActive)
+            {
+                var hasActiveGameSessions = await db.GameSessions.AnyAsync(x =>
+                    x.TenantId == tenant.TenantId && x.BranchId == branchId && x.Status == GameSessionStatus.Active,
+                    cancellationToken);
+                var hasOpenKitchenTickets = await db.CafeKitchenTickets.AnyAsync(x =>
+                    x.TenantId == tenant.TenantId && x.BranchId == branchId
+                    && x.Status != KitchenTicketStatus.Completed && x.Status != KitchenTicketStatus.Cancelled,
+                    cancellationToken);
+
+                if (hasActiveGameSessions || hasOpenKitchenTickets)
+                    return Results.Conflict(new { message = "تا زمان بستن سانس‌های فعال و تکمیل یا لغو سفارش‌های آشپزخانه، غیرفعال‌سازی شعبه مجاز نیست." });
+            }
+
             branch.SetActive(request.IsActive);
             await db.SaveChangesAsync(cancellationToken);
             return Results.Ok(ToResponse(branch));
