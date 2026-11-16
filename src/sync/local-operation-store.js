@@ -217,7 +217,8 @@ export class LocalOperationStore {
     const done = transactionDone(transaction);
     const inbox = transaction.objectStore(INBOX_STORE);
     const metadata = transaction.objectStore(META_STORE);
-    const cursorKey = `cursor:${tenantId}:${branchId || "all"}`;\n    const cursorRequest = metadata.get(cursorKey);
+    const cursorKey = `cursor:${tenantId}:${branchId || "all"}`;
+    const cursorRequest = metadata.get(cursorKey);
     cursorRequest.onsuccess = () => {
       const storedCursor = Number.isSafeInteger(cursorRequest.result?.value) ? cursorRequest.result.value : 0;
       if (nextSequence < storedCursor) {
