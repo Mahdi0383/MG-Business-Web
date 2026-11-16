@@ -174,3 +174,13 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Game-session start now handles provider exceptions at both persistence and transaction-commit boundaries, returning a controlled conflict and attempting rollback rather than leaking a provider failure as HTTP 500.
 - Kitchen ticket status persistence maps EF concurrency/update failures to HTTP 409 so a concurrent state change is visible to the operator.
 
+
+
+### Sync ordering and aggregate integrity hardening — 2026-11-16
+
+- Push and pull now use independent in-flight guards so a slow outbound upload cannot starve inbound journal delivery. Duplicate push/pull requests of the same direction are coalesced.
+- Pull rejects a server page that claims more data exists without advancing the cursor; the invalid page is not persisted and its cursor is not acknowledged.
+- Outbound acknowledgements must match the submitted operation order and contain strictly increasing journal sequences. Duplicate, reordered or malformed acknowledgements are rejected before the local outbox is marked acknowledged.
+- The API rejects multiple new mutations of the same customer aggregate in one batch. This prevents two updates carrying the same baseVersion from being accepted against one tracked entity and skipping a version.
+- Added frontend regression tests and a SQLite-backed API integration test. Latest frontend and backend SQLite CI passed; PostgreSQL API integration CI passed on the preceding backend code commit.
+- These checks improve transport and customer aggregate correctness but do not implement cryptographic device enrollment, signed authority leases, cross-domain local commands, conflict resolution, or HA failover.
