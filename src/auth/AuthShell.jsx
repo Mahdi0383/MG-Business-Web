@@ -264,7 +264,7 @@ function AuthShell({ apiBaseUrl }) {
         }
 
         if (!syncDeviceRegistered) {
-          const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, branchId);
+          const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, selectedBranch?.id || null);
           await client.post("/api/sync/heartbeat", {
             deviceId,
             deviceName: "MG Business Web",
