@@ -26,6 +26,11 @@ export class SyncAgent {
       if (response.operations.length === 0 && response.nextSequence !== afterSequence)
         throw new Error("MG Sync API advanced the cursor without returning operations.");
       await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence);
+      const deviceId = await this.operationStore.getDeviceId();
+      await this.apiClient.post("/api/sync/acknowledgements", {
+        deviceId,
+        sequence: response.nextSequence
+      });
       return { status: response.hasMore ? "more-available" : "pulled", received: response.operations.length, nextSequence: response.nextSequence, hasMore: Boolean(response.hasMore) };
     } catch (error) {
       if (error instanceof TypeError || error?.name === "NetworkError") return { status: "offline", received: 0, error };
