@@ -548,9 +548,14 @@ test("coalesces duplicate push requests while one push is in flight", async () =
 
 
 test("rejects a non-advancing cursor when the server claims more journal pages exist", async () => {
-  const { agent, calls } = createSyncAgent({
-    cursor: 5,
-    page: { operations: [], nextSequence: 5, hasMore: true }
+  const calls = { stored: null, acknowledged: null };
+  const agent = new SyncAgent({
+    async get() { return { operations: [], nextSequence: 5, hasMore: true }; },
+    async post(_path, body) { calls.acknowledged = body; return {}; }
+  }, {
+    async getCursor() { return 5; },
+    async getDeviceId() { return "device-1"; },
+    async storeIncomingPage(...args) { calls.stored = args; }
   });
   await assert.rejects(
     agent.pullIncoming("tenant-1", { actorId: "actor-1" }),
