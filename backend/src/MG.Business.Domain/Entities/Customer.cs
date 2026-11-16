@@ -51,7 +51,12 @@ public sealed class Customer
         checked { Version++; }
     }
 
-    public void Deactivate() => IsActive = false;
+    public void Deactivate()
+    {
+        if (!IsActive) return;
+        IsActive = false;
+        checked { Version++; }
+    }
 
     private static string? NormalizeOptional(string? value, int maxLength)
     {
