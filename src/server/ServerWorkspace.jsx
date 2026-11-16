@@ -574,7 +574,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         {page === "customers" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>مشتریان</h2><p>{count(customers.length)} رکورد از پایگاه داده</p></div>{canCreateCustomer && <button className="mg-primary-btn" onClick={() => openCreate("customer")}>＋ مشتری جدید</button>}</div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th><th>عملیات</th></tr></thead>
-            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.syncStatus === "pending" ? "در انتظار همگام‌سازی" : customer.isActive ? "فعال" : "غیرفعال"}</td><td>{canEditCustomer && <button className="mg-mini-btn" disabled={saving || customer.syncStatus === "pending"} onClick={() => openEditCustomer(customer)}>ویرایش</button>}</td></tr>)}</tbody>
+            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.syncStatus === "pending" ? "در انتظار همگام‌سازی" : customer.isActive ? "فعال" : "غیرفعال"}</td><td>{canEditCustomer && <button className="mg-mini-btn" disabled={saving || customer.syncStatus === "pending" || !Number.isSafeInteger(customer.version) || customer.version < 1} onClick={() => openEditCustomer(customer)}>ویرایش</button>}</td></tr>)}</tbody>
           </table>{!customers.length && <div className="mg-server-empty">هنوز مشتری ثبت نشده است.</div>}</div>
         </section>}
 
