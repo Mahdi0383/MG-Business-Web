@@ -348,6 +348,7 @@ public static class SyncEndpoints
 
                     if (lease is null || lease.RevokedAtUtc is not null
                         || lease.Epoch != item.AuthorityEpoch
+                        || item.OccurredAtUtc < lease.IssuedAtUtc.AddMinutes(-2)
                         || item.OccurredAtUtc > lease.ExpiresAtUtc
                         || string.IsNullOrWhiteSpace(lease.SignatureBase64))
                         return Results.Conflict(new
