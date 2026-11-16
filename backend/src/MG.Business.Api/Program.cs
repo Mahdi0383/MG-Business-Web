@@ -14,6 +14,8 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
+var authorityLeaseSigner = new AuthorityLeaseSigner(builder.Configuration);
+builder.Services.AddSingleton(authorityLeaseSigner);
  builder.Services.AddHealthChecks();
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
@@ -82,6 +84,9 @@ if (builder.Environment.IsProduction())
 
     if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures"))
         throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireDeviceSignatures.");
+
+    if (!authorityLeaseSigner.IsConfigured)
+        throw new InvalidOperationException("Production deployments must configure SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64 for signed authority leases.");
 }
 
 builder.Services.AddDbContext<BusinessDbContext>(options =>
