@@ -31,6 +31,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [x] Atomic IndexedDB customer creation: local customer projection and branch-originated outbox command commit in one transaction; server-side customer creation replay is implemented; inbound projection on other devices remains pending.
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
 - [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
+- [x] Customer workspace falls back to the durable local customer projection on fetch/network failure, including online-but-unreachable API conditions; HTTP/API errors remain visible rather than being masked.
 - [x] Revalidate persisted inbox payload SHA-256 immediately before replay; missing, malformed or tampered hashes fail closed.
 - [x] Enforce branch/tenant/manager visibility in local inbox reads and processing, including unassigned tenant-wide context.
 - [x] Scope device backlog telemetry to the active membership's authorized branch and tenant-wide visibility.
@@ -87,3 +88,10 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 ## Planning estimate
 
 The current repository is a foundation, not a finished commercial product. A focused solo development effort with AI-assisted implementation may need roughly 20–30 months for the full scope, depending on test environments, hardware, deployment infrastructure and user acceptance cycles. A narrower paid pilot may be possible earlier, but only after its release gate passes. Recalibrate estimates from measured delivery throughput and test results.
+
+
+### Offline customer availability correction — 2026-11-16
+
+- The customer workspace previously fell back to IndexedDB only when the browser reported `navigator.onLine === false`. Browsers can report an active network connection while the tenant API is unreachable, which caused a valid local customer projection to be hidden during real outages.
+- Added a shared network-unavailable classifier and use it in the customer loader. Fetch-level network failures now display locally stored customers; HTTP responses such as authorization, validation and server errors are not silently converted into offline success.
+- Added unit coverage for fetch failures versus HTTP/application errors. This improves offline read availability for customers only; it does not claim that other business modules are offline-ready.
