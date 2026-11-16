@@ -474,6 +474,12 @@ public static class SyncEndpoints
             // A member without an active branch cannot publish into arbitrary
             // branches. Only owners/managers may operate across branches from the
             // tenant-wide context.
+            if (prepared.Select(item => item.Request.OperationId).Distinct().Count() != prepared.Count)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["operations"] = ["A sync batch cannot contain duplicate operation IDs."]
+                });
+
             if (tenant.BranchId is null && tenant.Role is not ("Owner" or "Manager")
                 && prepared.Any(item => item.Request.BranchId.HasValue))
                 return Results.Forbid();
