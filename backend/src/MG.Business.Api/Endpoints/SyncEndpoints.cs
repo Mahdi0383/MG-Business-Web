@@ -35,6 +35,13 @@ public static class SyncEndpoints
                 .AnyAsync(x => x.TenantId == tenantId && x.Sequence == request.Sequence, cancellationToken))
                 return Results.BadRequest(new { message = "Acknowledgement sequence does not belong to this tenant journal." });
 
+            var latestTenantSequence = await db.SyncOperations.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .Select(x => (long?)x.Sequence)
+                .MaxAsync(cancellationToken) ?? 0;
+            if (request.Sequence > latestTenantSequence)
+                return Results.BadRequest(new { message = "Acknowledgement cannot advance beyond the tenant journal head." });
+
             var now = DateTimeOffset.UtcNow;
             var cursor = await db.SyncDeviceCursors.SingleOrDefaultAsync(
                 x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
@@ -161,16 +168,26 @@ public static class SyncEndpoints
                 .Where(x => x.TenantId == tenantId)
                 .Select(x => (long?)x.Sequence)
                 .MaxAsync(cancellationToken) ?? 0;
+            var pendingCounts = await db.SyncDeviceCursors.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .Select(cursor => new
+                {
+                    cursor.DeviceId,
+                    Count = db.SyncOperations.AsNoTracking().LongCount(operation =>
+                        operation.TenantId == tenantId
+                        && operation.Sequence > cursor.LastAcknowledgedSequence)
+                })
+                .ToDictionaryAsync(x => x.DeviceId, x => x.Count, cancellationToken);
+            var totalTenantOperations = await db.SyncOperations.AsNoTracking()
+                .LongCountAsync(x => x.TenantId == tenantId, cancellationToken);
 
             var inventory = new List<object>(devices.Count);
             foreach (var device in devices.OrderByDescending(device => device.LastSeenAtUtc))
             {
                 var lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0);
-                // Sequence values are database-generated and may contain gaps from other tenants.
-                // Count this tenant's actual journal rows instead of subtracting global sequence values.
-                var pendingOperationCount = await db.SyncOperations.AsNoTracking()
-                    .LongCountAsync(x => x.TenantId == tenantId
-                        && x.Sequence > lastAcknowledgedSequence, cancellationToken);
+                // Database-generated sequence values can contain gaps belonging to other tenants.
+                // Pending counts therefore use actual tenant journal rows, not sequence subtraction.
+                var pendingOperationCount = pendingCounts.GetValueOrDefault(device.DeviceId, totalTenantOperations);
 
                 inventory.Add(new
                 {
