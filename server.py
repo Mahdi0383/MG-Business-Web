@@ -1515,9 +1515,6 @@ class Handler(SimpleHTTPRequestHandler):
                 invoice_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
                 if not 1<=len(invoice_id)<=100: return self.send_json(400,{"error":"شناسه فاکتور معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
-                if db.execute("SELECT 1 FROM purchase_invoices WHERE tenant_id=? AND invoice_number=?",
-                              (user["tenant_id"],number.strip())).fetchone():
-                    db.rollback(); return self.send_json(409,{"error":"این شماره فاکتور خرید قبلاً ثبت شده است."})
                 if not db.execute("SELECT 1 FROM suppliers WHERE id=? AND tenant_id=? AND active=1",(sid,user["tenant_id"])).fetchone():
                     db.rollback(); return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
                 prepared=[]; subtotal=0
@@ -1539,6 +1536,23 @@ class Handler(SimpleHTTPRequestHandler):
                     db.rollback(); return self.send_json(400,{"error":"تخفیف واحد نمی‌تواند از بهای خرید هیچ کالا بیشتر باشد."})
                 prepared=[(product,qty,cost-discount_per_unit,qty*(cost-discount_per_unit)) for product,qty,cost,line in prepared]
                 total=subtotal-discount
+                existing=db.execute("""SELECT * FROM purchase_invoices WHERE tenant_id=?
+                    AND (id=? OR invoice_number=?)""",(user["tenant_id"],invoice_id,number.strip())).fetchone()
+                if existing:
+                    existing_items=db.execute("""SELECT product_id,quantity,unit_cost FROM purchase_invoice_items
+                        WHERE tenant_id=? AND invoice_id=? ORDER BY product_id,quantity,unit_cost""",
+                        (user["tenant_id"],existing["id"])).fetchall()
+                    requested_items=sorted((product["id"],qty,cost) for product,qty,cost,line in prepared)
+                    stored_items=[(row["product_id"],row["quantity"],row["unit_cost"]) for row in existing_items]
+                    if (existing["id"]==invoice_id and existing["supplier_id"]==sid and
+                        existing["invoice_number"]==number.strip() and existing["invoice_date"]==inv_date and
+                        existing["subtotal"]==subtotal and existing["discount"]==discount and
+                        existing["total"]==total and stored_items==requested_items):
+                        db.commit()
+                        return self.send_json(200,{"id":invoice_id,"total":total,
+                            "paidAmount":existing["paid_amount"],"status":existing["status"],"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شماره یا شناسه فاکتور قبلاً برای اطلاعات متفاوت استفاده شده است."})
                 db.execute("""INSERT INTO purchase_invoices(id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,subtotal,discount,total,paid_amount,status,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?,0,'unpaid',?)""",(invoice_id,user["tenant_id"],sid,user["id"],number.strip(),inv_date,subtotal,discount,total,now))
                 for product,qty,cost,line in prepared:
