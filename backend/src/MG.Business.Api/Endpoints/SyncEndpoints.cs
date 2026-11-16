@@ -291,6 +291,23 @@ public static class SyncEndpoints
                     return Results.BadRequest(new { message = "One or more branches do not belong to this tenant." });
             }
 
+            // A client cannot invent or impersonate a device ID. Every writer must
+            // first enroll through the authenticated heartbeat endpoint.
+            var deviceIds = prepared.Select(x => x.Request.DeviceId).Distinct().ToArray();
+            var enrolledDevices = await db.DevicePresences.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && deviceIds.Contains(x.DeviceId))
+                .ToDictionaryAsync(x => x.DeviceId, cancellationToken);
+            if (enrolledDevices.Count != deviceIds.Length
+                || enrolledDevices.Values.Any(device => device.ActorId != actorId))
+                return Results.Forbid();
+
+            // Branch-scoped members may only publish operations for their selected
+            // branch (or tenant-wide operations with no branch). Never trust a
+            // client-supplied branch belonging to another active context.
+            if (prepared.Any(item => item.Request.BranchId.HasValue
+                && item.Request.BranchId != tenant.BranchId))
+                return Results.Forbid();
+
             var operationIds = prepared.Select(x => x.Request.OperationId).ToArray();
             var existing = await db.SyncOperations.AsNoTracking()
                 .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
