@@ -93,6 +93,14 @@ if (builder.Configuration.GetValue<bool>("Database:ApplyMigrations"))
     var migrationDb = migrationScope.ServiceProvider.GetRequiredService<BusinessDbContext>();
     await migrationDb.Database.MigrateAsync();
 }
+else if (app.Environment.IsDevelopment()
+    && string.Equals(provider, "Sqlite", StringComparison.OrdinalIgnoreCase)
+    && builder.Configuration.GetValue<bool>("Database:EnsureDevelopmentSchema"))
+{
+    await using var developmentScope = app.Services.CreateAsyncScope();
+    var developmentDb = developmentScope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+    await developmentDb.Database.EnsureCreatedAsync();
+}
 
 app.UseExceptionHandler();
 if (app.Environment.IsProduction())
