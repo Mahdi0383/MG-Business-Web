@@ -1,0 +1,60 @@
+name: Generate PostgreSQL EF migrations
+
+on:
+  push:
+    branches:
+      - feature/platform-core-foundation
+
+permissions:
+  contents: write
+
+concurrency:
+  group: migration-scaffold-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scaffold:
+    if: contains(github.event.head_commit.message, '[scaffold-migrations]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore tools
+        run: dotnet tool restore
+      - name: Restore backend projects
+        run: dotnet restore backend/src/MG.Business.Api/MG.Business.Api.csproj
+      - name: Generate initial migration
+        env:
+          MG_DESIGN_CONNECTION: Host=localhost;Database=mg_business_design;Username=mg_design;Password=design-only
+        run: >
+          dotnet ef migrations add "PlatformUpdate_${GITHUB_RUN_NUMBER}"
+          --project backend/src/MG.Business.Infrastructure/MG.Business.Infrastructure.csproj
+          --startup-project backend/src/MG.Business.Api/MG.Business.Api.csproj
+          --context BusinessDbContext
+          --output-dir Persistence/Migrations
+          --configuration Release
+      - name: Upload generated migration and model snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-postgres-migrations
+          path: backend/src/MG.Business.Infrastructure/Persistence/Migrations/
+          if-no-files-found: error
+      - name: Commit generated migration sources to this feature branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/MG.Business.Infrastructure/Persistence/Migrations/*.cs
+          if git diff --cached --quiet; then
+            echo "No generated migration changes to commit."
+          else
+            git commit -m "chore(db): commit generated EF migration"
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
