@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import AuthShell from './auth/AuthShell.jsx';
 
 const initialProducts = [
   {id:1,name:'قهوه اسپرسو',category:'نوشیدنی گرم',price:85000,stock:42,sold:28},
@@ -23,7 +24,7 @@ const money=n=>new Intl.NumberFormat('fa-IR').format(n)+' تومان';
 const number=n=>new Intl.NumberFormat('fa-IR').format(n);
 function Icon({children}){return <span className="icon">{children}</span>}
 function Modal({title,onClose,children}){return <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="modal"><header><h3>{title}</h3><button className="icon-btn" onClick={onClose}>×</button></header>{children}</section></div>}
-function App(){
+function DemoApp(){
  const [page,setPage]=useState('dashboard');
  const [products,setProducts]=useState(()=>JSON.parse(localStorage.getItem('mg-products')||'null')||initialProducts);
  const [customers,setCustomers]=useState(()=>JSON.parse(localStorage.getItem('mg-customers')||'null')||initialCustomers);
@@ -64,4 +65,9 @@ function Dashboard({products,customers,orders,total,setPage}){const bars=[35,52,
 function Table({headers,rows}){return <div className="table-scroll"><table><thead><tr>{headers.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length?rows.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j}>{j===4&&['تکمیل‌شده','در حال آماده‌سازی'].includes(c)?<span className={'badge '+(c==='تکمیل‌شده'?'success':'warning')}>{c}</span>:c}</td>)}</tr>):<tr><td colSpan={headers.length} className="empty-cell">موردی برای نمایش وجود ندارد.</td></tr>}</tbody></table></div>}
 function DataTable({title,action,onAction,headers,rows,search,setSearch}){return <section className="panel"><div className="panel-head"><div><h3>{title}</h3><p>{number(rows.length)} رکورد</p></div><div className="table-actions">{search!==undefined&&<input className="search" placeholder="جستجو..." value={search} onChange={e=>setSearch(e.target.value)}/ >}{action&&<button className="primary" onClick={onAction}>＋ {action}</button>}</div></div><Table headers={headers} rows={rows}/></section>}
 function ModulePage({page,notify}){const cafe=page==='cafe';return <><div className="stats"><Stat label={cafe?'سفارش‌های باز':'دستگاه‌های فعال'} value={cafe?'۴':'۶'} change="وضعیت نمونه" icon={cafe?'☕':'⌘'}/><Stat label={cafe?'میزهای اشغال':'دستگاه‌های آزاد'} value={cafe?'۷':'۴'} change="در حال استفاده" icon="◷"/><Stat label="درآمد امروز" value={money(cafe?1780000:920000)} change="محاسبه آزمایشی" icon="↗"/><Stat label="میانگین زمان" value={cafe?'۱۸ دقیقه':'۴۲ دقیقه'} change="هر سرویس" icon="◴"/></div><div className="panel"><div className="panel-head"><div><h3>{cafe?'سفارش‌ها و میزها':'وضعیت دستگاه‌ها و سانس‌ها'}</h3><p>مدیریت عملیات {cafe?'کافه':'گیم‌نت'} در یک صفحه</p></div><button className="primary" onClick={()=>notify(cafe?'ثبت سفارش جدید در فاز بعدی فعال می‌شود':'شروع سانس جدید در فاز بعدی فعال می‌شود')}>＋ {cafe?'سفارش جدید':'شروع سانس'}</button></div><div className="notice">ماژول {cafe?'کافه و رستوران':'گیم‌نت'} در حال پیاده‌سازی است. اتصال سفارش‌ها، مشتریان، حسابداری و زمان‌سنجی به هسته مشترک MG در معماری نهایی انجام می‌شود.</div></div></>}
+function App(){
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+  return apiBaseUrl ? <AuthShell apiBaseUrl={apiBaseUrl} /> : <DemoApp />;
+}
+
 export default App;
