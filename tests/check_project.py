@@ -36,6 +36,8 @@ if "confirmOverlay" not in parser.ids or "toastRegion" not in parser.ids:
 if "window.alert=showToast" not in js or "confirm(" in js:
     raise SystemExit("native dialogs must be replaced by branded feedback UI")
 server = (root / "server.py").read_text(encoding="utf-8")
+if "def log_error(self, message, *args):" not in server:
+    raise SystemExit("HTTP handler must safely format standard-library error log arguments")
 if "def translate_path(self, path):" not in server or "def list_directory(self, path):" not in server:
     raise SystemExit("static server must block private files and directory listing")
 if "def verify_license_code(code):" not in server or 'if path == "/api/backup/restore":' not in server:
