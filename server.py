@@ -1372,6 +1372,26 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"order.created","order",order_id,{"total":total,"items":len(products)})
                 db.commit()
                 return self.send_json(201, {"id":order_id,"orderNumber":order_number,"subtotal":subtotal,"discount":discount,"total":total})
+            if path.startswith("/api/users/") and path.endswith("/password"):
+                if user["role"] != "owner":
+                    return self.send_json(403,{"error":"فقط مالک می‌تواند رمز کاربران را بازنشانی کند."})
+                target_id=path.split("/")[-2]
+                new_password=data.get("password")
+                if not isinstance(new_password,str) or len(new_password)<12 or len(new_password)>256:
+                    return self.send_json(400,{"error":"رمز جدید باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
+                db.execute("BEGIN IMMEDIATE")
+                target=db.execute("SELECT id,active FROM users WHERE id=? AND tenant_id=?",
+                                  (target_id,user["tenant_id"])).fetchone()
+                if not target:
+                    db.rollback(); return self.send_json(404,{"error":"کاربر پیدا نشد."})
+                if not target["active"]:
+                    db.rollback(); return self.send_json(409,{"error":"رمز کاربر غیرفعال قابل تغییر نیست."})
+                db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
+                           (password_hash(new_password),target_id,user["tenant_id"]))
+                db.execute("DELETE FROM sessions WHERE user_id=?",(target_id,))
+                audit(db,user["tenant_id"],user["id"],"user.password.reset","user",target_id)
+                db.commit()
+                return self.send_json(200,{"ok":True,"sessionsRevoked":True})
             if path == "/api/users":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند کاربر جدید بسازد."})
