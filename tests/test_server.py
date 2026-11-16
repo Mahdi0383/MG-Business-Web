@@ -510,6 +510,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(statement["totalPayments"],420000)
         self.assertEqual(statement["balance"],0)
         self.assertEqual(len(statement["items"]),3)
+        self.assertEqual([row["balanceAfter"] for row in statement["items"]],[0,320000,420000])
         self.assertEqual(statement["items"][0]["sourceType"],"payment")
         self.assertEqual(statement["items"][0]["balanceAfter"],0)
         self.assertEqual(statement["items"][-1]["sourceType"],"invoice")
