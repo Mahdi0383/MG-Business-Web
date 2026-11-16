@@ -36,6 +36,12 @@ public sealed class DeviceCredential
         LastRotatedAtUtc = nowUtc.ToUniversalTime();
     }
 
+    public void RecordUse(DateTimeOffset nowUtc)
+    {
+        if (RevokedAtUtc is null)
+            LastUsedAtUtc = nowUtc.ToUniversalTime();
+    }
+
     public void Revoke(DateTimeOffset nowUtc)
     {
         if (RevokedAtUtc is null)
