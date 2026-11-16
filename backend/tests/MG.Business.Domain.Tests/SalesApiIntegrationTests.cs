@@ -616,9 +616,12 @@ public sealed class SalesApiIntegrationTests
                 paymentReference = "PAY-CONCURRENT"
             })).ToArray();
         var concurrentResponses = await Task.WhenAll(concurrentRequests);
-        Assert.All(concurrentResponses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
-        var concurrentResults = await Task.WhenAll(concurrentResponses.Select(response =>
-            response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()));
+        var concurrentDiagnostics = await Task.WhenAll(concurrentResponses.Select(async response =>
+            new { response.StatusCode, Body = await response.Content.ReadAsStringAsync() }));
+        Assert.All(concurrentDiagnostics, response =>
+            Assert.True(response.StatusCode == HttpStatusCode.OK, $"HTTP {(int)response.StatusCode}: {response.Body}"));
+        var concurrentResults = concurrentDiagnostics.Select(response =>
+            System.Text.Json.JsonDocument.Parse(response.Body).RootElement.Clone()).ToArray();
         Assert.Equal(concurrentResults[0].GetProperty("paymentId").GetGuid(),
             concurrentResults[1].GetProperty("paymentId").GetGuid());
         Assert.Single(concurrentResults.Select(result => result.GetProperty("paymentId").GetGuid()).Distinct());
