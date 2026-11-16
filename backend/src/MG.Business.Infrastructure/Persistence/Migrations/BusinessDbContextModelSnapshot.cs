@@ -1228,6 +1228,35 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                 {
                     b.Navigation("Lines");
                 });
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
+                {
+                    b.Property<Guid>("TenantId").HasColumnType("uuid");
+                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
+                    b.Property<Guid>("ActorId").HasColumnType("uuid");
+                    b.Property<long>("LastAcknowledgedSequence").HasColumnType("bigint");
+                    b.Property<DateTimeOffset>("UpdatedAtUtc").HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TenantId", "DeviceId");
+                    b.HasIndex("ActorId");
+                    b.HasIndex("TenantId", "LastAcknowledgedSequence");
+                    b.ToTable("sync_device_cursors", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
                 {
                     b.Property<Guid>("TenantId").HasColumnType("uuid");
