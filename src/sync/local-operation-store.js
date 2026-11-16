@@ -161,6 +161,99 @@ export class LocalOperationStore {
     return count;
   }
 
+
+  async storeIncomingPage(tenantId, operations, nextSequence) {
+    if (!tenantId) throw new TypeError("tenantId is required.");
+    if (!Array.isArray(operations)) throw new TypeError("operations must be an array.");
+    if (!Number.isSafeInteger(nextSequence) || nextSequence < 0)
+      throw new TypeError("nextSequence must be a non-negative safe integer.");
+
+    let previousSequence = await this.getCursor(tenantId);
+    if (nextSequence < previousSequence)
+      throw new Error("Incoming sync cursor cannot move backwards.");
+
+    for (const operation of operations) {
+      if (!Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence
+        || typeof operation.operationId !== "string" || !operation.operationId
+        || typeof operation.payloadJson !== "string" || typeof operation.payloadSha256 !== "string"
+        || !Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1)
+        throw new TypeError("Incoming operation envelope is invalid.");
+      JSON.parse(operation.payloadJson);
+      const actualHash = await sha256(operation.payloadJson);
+      if (actualHash !== operation.payloadSha256.toUpperCase())
+        throw new Error("Incoming operation payload integrity check failed.");
+      previousSequence = operation.sequence;
+    }
+
+    if (operations.length > 0 && nextSequence !== previousSequence)
+      throw new Error("Incoming sync cursor must equal the last received sequence.");
+    if (operations.length === 0 && nextSequence !== previousSequence)
+      throw new Error("An empty incoming page cannot advance the sync cursor.");
+
+    const database = await openDatabase();
+    const transaction = database.transaction([INBOX_STORE, META_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    const inbox = transaction.objectStore(INBOX_STORE);
+    for (const operation of operations) {
+      inbox.put({
+        ...operation,
+        tenantId,
+        applied: false,
+        appliedAtUtc: null,
+        receivedLocallyAtUtc: new Date().toISOString()
+      });
+    }
+    transaction.objectStore(META_STORE).put({ key: `cursor:${tenantId}`, value: nextSequence });
+    await done;
+    return operations.length;
+  }
+
+  async getInboxCount(tenantId) {
+    const database = await openDatabase();
+    const transaction = database.transaction(INBOX_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const count = await requestResult(
+      transaction.objectStore(INBOX_STORE).index("byTenantApplied")
+        .count(IDBKeyRange.only([tenantId, false]))
+    );
+    await done;
+    return count;
+  }
+
+  async getUnappliedIncoming(tenantId, limit = 100) {
+    const database = await openDatabase();
+    const transaction = database.transaction(INBOX_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const rows = await requestResult(
+      transaction.objectStore(INBOX_STORE).index("byTenantApplied")
+        .getAll(IDBKeyRange.only([tenantId, false]), Math.max(1, Math.min(limit, 200)))
+    );
+    await done;
+    return rows.sort((a, b) => a.sequence - b.sequence);
+  }
+
+  async markIncomingApplied(tenantId, sequences) {
+    if (!Array.isArray(sequences) || sequences.length === 0) return;
+    const database = await openDatabase();
+    const readTransaction = database.transaction(INBOX_STORE, "readonly");
+    const readDone = transactionDone(readTransaction);
+    const readStore = readTransaction.objectStore(INBOX_STORE);
+    const existing = await Promise.all(sequences.map(sequence =>
+      requestResult(readStore.get([tenantId, sequence]))));
+    await readDone;
+
+    const writeTransaction = database.transaction(INBOX_STORE, "readwrite");
+    const writeDone = transactionDone(writeTransaction);
+    const writeStore = writeTransaction.objectStore(INBOX_STORE);
+    existing.forEach(row => {
+      if (!row) return;
+      row.applied = true;
+      row.appliedAtUtc = new Date().toISOString();
+      writeStore.put(row);
+    });
+    await writeDone;
+  }
+
   async getCursor(tenantId) {
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readonly");
