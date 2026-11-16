@@ -371,74 +371,67 @@ export class LocalOperationStore {
     if (reference && reference.length > 250)
       throw new TypeError("Stock movement reference cannot exceed 250 characters.");
 
+    const idempotencyKey = movement.idempotencyKey;
+    if (idempotencyKey !== undefined && (typeof idempotencyKey !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)))
+      throw new TypeError("Offline stock movement idempotency key must be a UUID.");
+    const operationId = idempotencyKey || crypto.randomUUID();
     const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
     if (REQUIRE_AUTHORITY_LEASES && authorityEpoch < 1)
       throw new Error("A verified authority lease is required before queuing offline inventory movements.");
-    const idempotencyKey = movement.idempotencyKey;
-    if (idempotencyKey !== undefined && (typeof idempotencyKey !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)))
-      throw new TypeError("Offline stock movement idempotency key must be a UUID.");
-    const operationId = idempotencyKey || crypto.randomUUID();
     const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
-    const now = new Date().toISOString();
     const database = await openDatabase();
-    const transaction = database.transaction(
-      [OPERATIONS_STORE, INVENTORY_PRODUCTS_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE],
-      "readwrite"
-    );
-    const done = transactionDone(transaction);
-    const productStore = transaction.objectStore(INVENTORY_PRODUCTS_STORE);
-    const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
-    const movementStore = transaction.objectStore(STOCK_MOVEMENTS_STORE);
-    const operationsStore = transaction.objectStore(OPERATIONS_STORE);
-    if (idempotencyKey) {
-      const priorOperation = await requestResult(operationsStore.get(operationId));
-      if (priorOperation) {
-        const priorMovement = await requestResult(movementStore.get([tenantId, branchId, operationId]));
-        transaction.abort();
-        await done.catch(() => {});
-        const sameRequest = priorMovement
-          && priorMovement.productId === productId
-          && Number(priorMovement.type) === type
-          && Number(priorMovement.quantity) === quantity
-          && (inbound ? Number(priorMovement.unitCost) === unitCost : true)
-          && (priorMovement.reference || null) === reference;
-        if (!sameRequest)
-          throw new Error("این کلید یکتا قبلاً برای گردش انبار دیگری استفاده شده است.");
-        return priorMovement;
-      }
+    const stores = [OPERATIONS_STORE, INVENTORY_PRODUCTS_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE];
+
+    const readTransaction = database.transaction(stores, "readonly");
+    const readDone = transactionDone(readTransaction);
+    const readOperations = readTransaction.objectStore(OPERATIONS_STORE);
+    const readProducts = readTransaction.objectStore(INVENTORY_PRODUCTS_STORE);
+    const readBaselines = readTransaction.objectStore(INVENTORY_BASELINES_STORE);
+    const readMovements = readTransaction.objectStore(STOCK_MOVEMENTS_STORE);
+    const [product, baseline, priorOperation, localMovements] = await Promise.all([
+      requestResult(readProducts.get([tenantId, productId])),
+      requestResult(readBaselines.get([tenantId, branchId, productId])),
+      requestResult(readOperations.get(operationId)),
+      requestResult(readMovements.index("byTenantBranchProduct")
+        .getAll(IDBKeyRange.only([tenantId, branchId, productId])))
+    ]);
+    await readDone;
+
+    if (priorOperation) {
+      const priorMovement = localMovements.find(row => row.operationId === operationId);
+      const sameRequest = priorMovement
+        && priorMovement.productId === productId
+        && Number(priorMovement.type) === type
+        && Number(priorMovement.quantity) === quantity
+        && (inbound ? Number(priorMovement.unitCost) === unitCost : true)
+        && (priorMovement.reference || null) === reference;
+      if (!sameRequest)
+        throw new Error("این کلید یکتا قبلاً برای گردش انبار دیگری استفاده شده است.");
+      return priorMovement;
     }
-    const product = await requestResult(productStore.get([tenantId, productId]));
-    if (!product || !product.isActive || !product.tracksInventory) {
-      transaction.abort();
-      await done.catch(() => {});
+    if (!product || !product.isActive || !product.tracksInventory)
       throw new Error("کالای فعال و انبارگردانی‌شونده در حافظه محلی موجود نیست.");
-    }
-    const baseline = await requestResult(baselineStore.get([tenantId, branchId, productId]));
-    if (!baseline) {
-      transaction.abort();
-      await done.catch(() => {});
+    if (!baseline)
       throw new Error("ابتدا باید موجودی کالا هنگام اتصال به سرور دریافت و ذخیره شود.");
-    }
-    const localMovements = await requestResult(movementStore.index("byTenantBranchProduct")
-      .getAll(IDBKeyRange.only([tenantId, branchId, productId])));
+
+    const pendingMovements = localMovements
+      .filter(row => row.state === "pending")
+      .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc));
     const balance = {
       quantity: Number(baseline.quantityOnHand || 0),
       value: Number(baseline.inventoryValue || 0)
     };
-    for (const localMovement of localMovements
-      .filter(row => row.state === "pending")
-      .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc)))
+    for (const localMovement of pendingMovements)
       applyLocalStockMovement(balance, localMovement);
 
     const baseQuantityOnHand = balance.quantity;
     const baseInventoryValue = roundInventoryValue(balance.value);
     const averageUnitCost = balance.quantity === 0
       ? 0 : roundInventoryAverage(baseInventoryValue / balance.quantity);
-    if (!inbound && quantity > baseQuantityOnHand) {
-      transaction.abort();
-      await done.catch(() => {});
+    if (!inbound && quantity > baseQuantityOnHand)
       throw new Error("موجودی محلی برای خروج کالا کافی نیست.");
-    }
+
     const effectiveUnitCost = inbound ? unitCost : averageUnitCost;
     const nextBalance = { quantity: balance.quantity, value: balance.value };
     applyLocalStockMovement(nextBalance, { type, quantity, unitCost: effectiveUnitCost });
@@ -446,12 +439,13 @@ export class LocalOperationStore {
       productId, type, quantity, unitCost: inbound ? unitCost : null,
       baseQuantityOnHand, baseInventoryValue, reference
     });
+    const payloadSha256 = await sha256(payloadJson);
+    const now = new Date().toISOString();
     const operation = {
       operationId, deviceId, tenantId, branchId,
       operationType: "inventory.stock.movement.created",
       schemaVersion: 1, authorityEpoch,
-      occurredAtUtc: now, payloadJson,
-      payloadSha256: await sha256(payloadJson),
+      occurredAtUtc: now, payloadJson, payloadSha256,
       state: "pending", attempts: 0, createdAtUtc: now,
       acknowledgedAtUtc: null, serverSequence: null
     };
@@ -463,9 +457,64 @@ export class LocalOperationStore {
       resultInventoryValue: roundInventoryValue(nextBalance.value),
       state: "pending", createdAtUtc: now, serverSequence: null
     };
-    movementStore.add(localMovement);
-    operationsStore.add(operation);
-    await done;
+
+    // Recheck the baseline and pending movement set inside the write transaction.
+    // Hashing happens before this transaction so WebCrypto cannot let IndexedDB auto-commit.
+    const writeTransaction = database.transaction(stores, "readwrite");
+    const writeDone = transactionDone(writeTransaction);
+    const writeOperations = writeTransaction.objectStore(OPERATIONS_STORE);
+    const writeProducts = writeTransaction.objectStore(INVENTORY_PRODUCTS_STORE);
+    const writeBaselines = writeTransaction.objectStore(INVENTORY_BASELINES_STORE);
+    const writeMovements = writeTransaction.objectStore(STOCK_MOVEMENTS_STORE);
+    const [currentProduct, currentBaseline, currentOperation, currentMovements] = await Promise.all([
+      requestResult(writeProducts.get([tenantId, productId])),
+      requestResult(writeBaselines.get([tenantId, branchId, productId])),
+      requestResult(writeOperations.get(operationId)),
+      requestResult(writeMovements.index("byTenantBranchProduct")
+        .getAll(IDBKeyRange.only([tenantId, branchId, productId])))
+    ]);
+    if (currentOperation) {
+      writeTransaction.abort();
+      await writeDone.catch(() => {});
+      const priorMovement = currentMovements.find(row => row.operationId === operationId);
+      const sameRequest = priorMovement
+        && priorMovement.productId === productId
+        && Number(priorMovement.type) === type
+        && Number(priorMovement.quantity) === quantity
+        && (inbound ? Number(priorMovement.unitCost) === unitCost : true)
+        && (priorMovement.reference || null) === reference;
+      if (!sameRequest)
+        throw new Error("این کلید یکتا قبلاً برای گردش انبار دیگری استفاده شده است.");
+      return priorMovement;
+    }
+    const beforeFingerprint = JSON.stringify({
+      cachedAtUtc: baseline.cachedAtUtc,
+      quantityOnHand: baseline.quantityOnHand,
+      inventoryValue: baseline.inventoryValue,
+      pending: pendingMovements.map(row => [
+        row.operationId, row.type, row.quantity, row.unitCost, row.createdAtUtc, row.state
+      ])
+    });
+    const currentPending = (currentMovements || [])
+      .filter(row => row.state === "pending")
+      .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc));
+    const currentFingerprint = JSON.stringify({
+      cachedAtUtc: currentBaseline?.cachedAtUtc,
+      quantityOnHand: currentBaseline?.quantityOnHand,
+      inventoryValue: currentBaseline?.inventoryValue,
+      pending: currentPending.map(row => [
+        row.operationId, row.type, row.quantity, row.unitCost, row.createdAtUtc, row.state
+      ])
+    });
+    if (!currentProduct?.isActive || !currentProduct?.tracksInventory
+      || beforeFingerprint !== currentFingerprint) {
+      writeTransaction.abort();
+      await writeDone.catch(() => {});
+      throw new Error("موجودی محلی هم‌زمان تغییر کرده است؛ گردش را دوباره بررسی و ثبت کنید.");
+    }
+    writeMovements.add(localMovement);
+    writeOperations.add(operation);
+    await writeDone;
     return localMovement;
   }
 
