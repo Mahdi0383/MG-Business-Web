@@ -329,6 +329,13 @@ public sealed class SyncApiIntegrationTests
         staff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
         staff.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
 
+        var spoofedAcknowledgement = await staff.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId,
+            sequence = 0
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, spoofedAcknowledgement.StatusCode);
+
         var push = await staff.PostAsJsonAsync("/api/sync/operations", new
         {
             operations = new[]
