@@ -1340,11 +1340,19 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] not in ("owner","manager","cashier"):
                     return self.send_json(403, {"error": "دسترسی پایان نشست بازی ندارید."})
                 db.execute("BEGIN IMMEDIATE")
-                session = db.execute("SELECT * FROM game_sessions WHERE id=? AND tenant_id=? AND status='running'",
+                session = db.execute("SELECT * FROM game_sessions WHERE id=? AND tenant_id=?",
                                      (session_id,user["tenant_id"])).fetchone()
                 if not session:
                     db.rollback()
-                    return self.send_json(404, {"error": "نشست فعال پیدا نشد."})
+                    return self.send_json(404, {"error": "نشست پیدا نشد."})
+                if session["status"]=="ended":
+                    elapsed=max(0,int(session["ended_at"] or session["started_at"])-session["started_at"])
+                    db.commit()
+                    return self.send_json(200,{"ok":True,"amountDue":session["amount_due"],
+                        "elapsedSeconds":elapsed,"duplicate":True})
+                if session["status"]!="running":
+                    db.rollback()
+                    return self.send_json(409,{"error":"این نشست قابل پایان‌دادن نیست."})
                 now = int(time.time())
                 elapsed = max(0,now-session["started_at"])
                 billed_minutes = (elapsed+59)//60
