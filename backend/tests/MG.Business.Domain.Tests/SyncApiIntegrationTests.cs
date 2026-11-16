@@ -59,6 +59,7 @@ public sealed class SyncApiIntegrationTests
         Assert.NotNull(tenant);
         client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
 
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
         var operationId = Guid.NewGuid();
         var deviceId = Guid.NewGuid();
         var request = new
@@ -79,6 +80,18 @@ public sealed class SyncApiIntegrationTests
                 }
             }
         };
+
+        var unregisteredPush = await client.PostAsJsonAsync("/api/sync/operations", request);
+        Assert.Equal(HttpStatusCode.Forbidden, unregisteredPush.StatusCode);
+
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId,
+            deviceName = "Registered Sync Test Device",
+            platform = "Test",
+            clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
 
         var firstPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Accepted, firstPush.StatusCode);
