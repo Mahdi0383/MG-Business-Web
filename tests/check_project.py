@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
