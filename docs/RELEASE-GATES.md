@@ -23,7 +23,7 @@ A release is blocked until every mandatory gate below has objective evidence att
 ## Mandatory blockers before live financial use
 
 ### Identity and device trust
-- [ ] Replace browser-profile device IDs with cryptographic device enrollment.
+- [ ] Replace browser-profile device IDs with cryptographic device enrollment. A detailed WebCrypto P-256 challenge/signature contract and mandatory negative-test matrix is documented in `docs/architecture/offline-first-ha-protocol.md`; implementation and verification are still outstanding.
 - [ ] Bind enrolled device keys to tenant, branch, actor and revocation state.
 - [ ] Add rotation, revocation, recovery and lost-device procedures.
 - [ ] Verify every device command against its enrolled identity and authorization.
