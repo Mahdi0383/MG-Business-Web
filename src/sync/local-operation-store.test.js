@@ -718,3 +718,43 @@ test("applies a remote customer deactivation atomically and keeps stale versions
   assert.equal(customer.isActive, false);
   assert.equal(customer.version, 2);
 });
+
+
+test("originating device deactivation echo advances inbox without deactivating twice", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-deactivate-echo-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId, customer: { code: "C-DEACT-ECHO", name: "Echo target" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+  await store.deactivateCustomer({ tenantId, branchId, actorId, customerId: created.id });
+  const deviceId = await store.getDeviceId(actorId);
+  const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
+  const operation = pending[0];
+  await store.acknowledge([{ operationId: operation.operationId, sequence: 2 }]);
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(operation.payloadJson));
+  const payloadSha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+  await store.storeIncomingPage(tenantId, [{
+    tenantId, sequence: 2, operationId: operation.operationId,
+    actorId, deviceId, branchId,
+    operationType: operation.operationType, schemaVersion: 1, authorityEpoch: 0,
+    occurredAtUtc: operation.occurredAtUtc, receivedAtUtc: new Date().toISOString(),
+    payloadJson: operation.payloadJson, payloadSha256
+  }], 2, branchId);
+
+  const processor = new IncomingOperationProcessor({
+    store, adapter: store, classify: classifyIncomingOperation
+  });
+  const result = await processor.processBatch(tenantId, 10, branchId, false);
+  assert.equal(result.applied, 1);
+  assert.equal(result.blockedByConflict, false);
+  const rows = await store.getCustomers(tenantId);
+  const customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.isActive, false);
+  assert.equal(customer.version, 2);
+  assert.equal(customer.lastOperationId, operation.operationId);
+  assert.equal((await store.getOpenConflicts(tenantId, branchId, false)).length, 0);
+});
