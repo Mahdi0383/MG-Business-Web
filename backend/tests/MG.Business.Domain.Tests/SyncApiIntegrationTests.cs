@@ -1360,6 +1360,64 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
     }
 
+    [Fact]
+    public async Task SyncPushRejectsOversizedCombinedPayloadsAndFutureOperationTimestamps()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-batch-limits-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Sync Batch Limits Store",
+            slug = $"sync-batch-limits-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Batch Limits Device", platform = "Test", clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var largePayload = "{\"data\":\"" + new string('x', 65_500) + "\"}";
+        var oversizedBatch = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = Enumerable.Range(0, 17).Select(_ => new
+            {
+                operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                operationType = "test.payload", schemaVersion = 1, authorityEpoch = 0,
+                occurredAtUtc = DateTimeOffset.UtcNow,
+                payloadJson = largePayload, payloadSha256 = (string?)null
+            }).ToArray()
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedBatch.StatusCode);
+        Assert.Contains("1 MiB", await oversizedBatch.Content.ReadAsStringAsync());
+
+        var futureOperation = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "test.future", schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow.AddMinutes(6),
+                    payloadJson = "{\"value\":1}", payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, futureOperation.StatusCode);
+        Assert.Contains("five minutes", await futureOperation.Content.ReadAsStringAsync());
+
+        var journal = await client.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.Empty(journal!.Operations);
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
