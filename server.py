@@ -43,9 +43,46 @@ CREATE TABLE IF NOT EXISTS transactions(
  amount INTEGER NOT NULL CHECK(amount > 0),
  kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
  category TEXT NOT NULL DEFAULT 'عمومی' CHECK(length(category) <= 80),
- occurred_at TEXT NOT NULL, created_at INTEGER NOT NULL
+ occurred_at TEXT NOT NULL, created_at INTEGER NOT NULL,
+ status TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('posted','voided')),
+ voided_at INTEGER, voided_by TEXT REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS accounts(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ code TEXT NOT NULL, name TEXT NOT NULL, account_type TEXT NOT NULL
+ CHECK(account_type IN ('asset','liability','equity','revenue','expense')),
+ normal_balance TEXT NOT NULL CHECK(normal_balance IN ('debit','credit')),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ UNIQUE(tenant_id,code), UNIQUE(id,tenant_id)
+);
+CREATE TABLE IF NOT EXISTS journal_entries(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ entry_date TEXT NOT NULL, memo TEXT NOT NULL,
+ source_type TEXT NOT NULL, source_id TEXT NOT NULL,
+ reversal_of TEXT, created_by TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL,
+ UNIQUE(tenant_id,source_type,source_id), UNIQUE(id,tenant_id),
+ FOREIGN KEY(reversal_of,tenant_id) REFERENCES journal_entries(id,tenant_id)
+);
+CREATE TABLE IF NOT EXISTS journal_lines(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+ entry_id TEXT NOT NULL, account_id TEXT NOT NULL,
+ debit INTEGER NOT NULL DEFAULT 0 CHECK(debit>=0),
+ credit INTEGER NOT NULL DEFAULT 0 CHECK(credit>=0),
+ CHECK((debit>0 AND credit=0) OR (credit>0 AND debit=0)),
+ FOREIGN KEY(entry_id,tenant_id) REFERENCES journal_entries(id,tenant_id),
+ FOREIGN KEY(account_id,tenant_id) REFERENCES accounts(id,tenant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_tenant_date ON journal_entries(tenant_id,entry_date DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id);
+CREATE TRIGGER IF NOT EXISTS journal_entries_no_update BEFORE UPDATE ON journal_entries
+BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_entries_no_delete BEFORE DELETE ON journal_entries
+BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_lines_no_update BEFORE UPDATE ON journal_lines
+BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END;
 CREATE TABLE IF NOT EXISTS products(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 160),
@@ -92,7 +129,15 @@ def connect():
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(transactions)").fetchall()}
+    if "status" not in columns:
+        db.execute("ALTER TABLE transactions ADD COLUMN status TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('posted','voided'))")
+    if "voided_at" not in columns:
+        db.execute("ALTER TABLE transactions ADD COLUMN voided_at INTEGER")
+    if "voided_by" not in columns:
+        db.execute("ALTER TABLE transactions ADD COLUMN voided_by TEXT REFERENCES users(id)")
     db.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,?)", (int(time.time()),))
+    db.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,?)", (int(time.time()),))
     return db
 
 def password_hash(password: str, salt: bytes | None = None) -> str:
@@ -108,6 +153,45 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False
+
+def seed_accounts(db, tenant_id):
+    defaults = [
+        ("1000", "صندوق و بانک", "asset", "debit"),
+        ("1200", "موجودی کالا", "asset", "debit"),
+        ("2000", "حساب‌های پرداختنی", "liability", "credit"),
+        ("3000", "سرمایه", "equity", "credit"),
+        ("4000", "درآمد فروش", "revenue", "credit"),
+        ("5000", "هزینه‌های عملیاتی", "expense", "debit"),
+    ]
+    for code, name, account_type, normal in defaults:
+        db.execute("INSERT OR IGNORE INTO accounts(id,tenant_id,code,name,account_type,normal_balance) VALUES(?,?,?,?,?,?)",
+                   (secrets.token_urlsafe(16),tenant_id,code,name,account_type,normal))
+
+def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at):
+    accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    cash, counterpart = accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,occurred_at[:10],title,"transaction",tx_id,user_id,now))
+    lines = ((cash,amount,0),(counterpart,0,amount)) if kind == "income" else ((counterpart,amount,0),(cash,0,amount))
+    for account_id, debit, credit in lines:
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+
+def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
+    original = db.execute("SELECT * FROM journal_entries WHERE tenant_id=? AND source_type='transaction' AND source_id=?",
+                          (tenant_id,tx_id)).fetchone()
+    if not original:
+        return
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,reversal_of,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"برگشت تراکنش "+tx_id,
+                                       "transaction_reversal",tx_id,original["id"],user_id,now))
+    lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
+                       (tenant_id,original["id"])).fetchall()
+    for line in lines:
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
 
 def public_user(row):
     return {"id": row["id"], "username": row["username"], "role": row["role"], "tenantId": row["tenant_id"]}
@@ -266,6 +350,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", (tenant_id, tenant_name, now))
                 db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
                            (user_id, tenant_id, username, password_hash(password), "owner", now))
+                seed_accounts(db, tenant_id)
                 audit(db, tenant_id, user_id, "tenant.created", "tenant", tenant_id)
                 db.commit()
                 return self.create_session(db, user_id)
@@ -390,6 +475,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("BEGIN IMMEDIATE")
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (tx_id,user["tenant_id"],user["id"],title.strip(),amount,kind,category.strip() or "عمومی",occurred_at,now))
+                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title.strip(),amount,kind,occurred_at)
                 audit(db,user["tenant_id"],user["id"],"transaction.created","transaction",tx_id,{"kind":kind,"amount":amount})
                 db.commit()
                 return self.send_json(201, {"id": tx_id, "ok": True})
