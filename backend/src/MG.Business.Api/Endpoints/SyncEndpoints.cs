@@ -35,7 +35,8 @@ public static class SyncEndpoints
             var now = DateTimeOffset.UtcNow;
             var presence = await db.DevicePresences
                 .SingleOrDefaultAsync(x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
-            if (presence is null)
+            var isNew = presence is null;
+            if (isNew)
             {
                 presence = new DevicePresence(tenantId, request.DeviceId, actorId, branchId,
                     request.DeviceName ?? "Browser device", request.Platform ?? "Web",
@@ -44,11 +45,24 @@ public static class SyncEndpoints
             }
             else
             {
-                presence.Heartbeat(actorId, branchId, request.DeviceName ?? "Browser device",
+                presence!.Heartbeat(actorId, branchId, request.DeviceName ?? "Browser device",
                     request.Platform ?? "Web", request.ClientVersion ?? "unknown", now);
             }
 
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException) when (isNew)
+            {
+                db.Entry(presence!).State = EntityState.Detached;
+                var concurrent = await db.DevicePresences.SingleOrDefaultAsync(
+                    x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+                if (concurrent is null) throw;
+                concurrent.Heartbeat(actorId, branchId, request.DeviceName ?? "Browser device",
+                    request.Platform ?? "Web", request.ClientVersion ?? "unknown", now);
+                await db.SaveChangesAsync(cancellationToken);
+            }
             return Results.Ok(new { deviceId = request.DeviceId, lastSeenAtUtc = now, status = "online" });
         });
 
