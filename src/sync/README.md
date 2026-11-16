@@ -15,6 +15,8 @@ The server scans the tenant journal in sequence order but returns only tenant-wi
 
 Push batches are selected from the active branch queue in global FIFO order; commands from other branches are skipped rather than blocking the selected branch. Tenant-wide queued commands are drained only for Owner/Manager roles. Sync HTTP requests carry an explicit tenant/branch context captured by the sync cycle, preventing a branch switch during an in-flight request from storing another branch's response under the wrong cursor.
 
+Before any incoming page is committed, the sync agent validates each operation envelope, parses its payload as a JSON object, enforces the payload size bound, and recomputes SHA-256 over the exact UTF-8 payload bytes. A malformed or tampered operation rejects the entire page; the local inbox cursor and device acknowledgement are left unchanged.
+
 Incoming inbox reads and replay batches are branch-scoped: a branch receives its own operations plus tenant-wide operations, while the tenant-wide view can inspect all branches. Repeated delivery of a shared tenant-wide sequence preserves its applied/conflict state only when the immutable operation envelope matches; a reused sequence with different content aborts the local transaction rather than silently discarding data.
 
 ## Integration boundary
