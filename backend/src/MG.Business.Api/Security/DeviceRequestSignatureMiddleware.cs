@@ -9,6 +9,7 @@ namespace MG.Business.Api.Security;
 
 public sealed class DeviceRequestSignatureMiddleware
 {
+    public const string DeviceIdItemKey = "MG.DeviceId";
     private const int MaxSignedBodyBytes = 1_100_000;
     private static readonly TimeSpan AllowedClockSkew = TimeSpan.FromMinutes(2);
     private readonly RequestDelegate _next;
@@ -176,6 +177,7 @@ public sealed class DeviceRequestSignatureMiddleware
             return;
         }
 
+        context.Items[DeviceIdItemKey] = deviceId;
         await _next(context);
     }
 
