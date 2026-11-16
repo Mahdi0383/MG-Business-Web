@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, MgApiClient } from "./client.js";
+import { ApiError, isNetworkUnavailable, MgApiClient } from "./client.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -112,4 +112,11 @@ test("pins a request to its captured branch even after the shared client context
   assert.equal(requests[0].get("X-MG-Branch"), "branch-a");
   assert.equal(requests[1].get("X-MG-Branch"), "");
   assert.equal(requests[1].get("X-MG-Tenant"), "tenant-1");
+});
+
+
+test("classifies fetch failures as offline without hiding HTTP errors", () => {
+  assert.equal(isNetworkUnavailable(new TypeError("Failed to fetch")), true);
+  assert.equal(isNetworkUnavailable(new ApiError(503, "Service unavailable")), false);
+  assert.equal(isNetworkUnavailable(new Error("Unexpected application error")), false);
 });
