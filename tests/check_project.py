@@ -46,6 +46,8 @@ if re.search(r"\\bdata(?:\\.get|\\[)", get_handler):
     raise SystemExit("GET handler must not read mutation request data")
 if 'if path.startswith("/api/gamenet/devices/")' not in post_handler:
     raise SystemExit("game device updates must be routed through POST")
+if 'if path == "/api/suppliers":' not in server or 'if path == "/api/purchase-invoices":' not in server or 'path.endswith("/payments")' not in server:
+    raise SystemExit("supplier and purchase invoice workflows are missing")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
