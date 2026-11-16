@@ -42,6 +42,20 @@ public sealed class CustomerApiIntegrationTests
         Assert.NotNull(customer);
 
         Assert.Equal(1, customer!.Version);
+        var missingVersion = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
+        {
+            name = "Missing precondition", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, missingVersion.StatusCode);
+
+        var zeroVersion = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
+        {
+            baseVersion = 0, name = "Invalid precondition", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, zeroVersion.StatusCode);
+
         var update = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
         {
             baseVersion = customer.Version,
