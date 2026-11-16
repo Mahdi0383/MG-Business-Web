@@ -44,12 +44,15 @@ export function isIncomingRowVisible(row, branchId, allowTenantWide) {
 }
 
 const DATABASE_NAME = "mg-business-local";
-const DATABASE_VERSION = 7;
+const DATABASE_VERSION = 8;
 const OPERATIONS_STORE = "operations";
 const META_STORE = "metadata";
 const INBOX_STORE = "inbox";
 const CUSTOMERS_STORE = "customers";
 const CONFLICTS_STORE = "conflicts";
+const INVENTORY_PRODUCTS_STORE = "inventoryProducts";
+const INVENTORY_BASELINES_STORE = "inventoryBaselines";
+const STOCK_MOVEMENTS_STORE = "stockMovements";
 const REQUIRE_AUTHORITY_LEASES = import.meta.env?.VITE_REQUIRE_AUTHORITY_LEASES === "true";
 const AUTHORITY_PUBLIC_KEY = import.meta.env?.VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64 || "";
 
@@ -120,6 +123,29 @@ function openDatabase() {
           conflicts = event.target.transaction.objectStore(CONFLICTS_STORE);
         if (!conflicts.indexNames.contains("byTenantStatusCreatedAt"))
           conflicts.createIndex("byTenantStatusCreatedAt", ["tenantId", "status", "createdAtUtc"]);
+        let inventoryProducts;
+        if (!database.objectStoreNames.contains(INVENTORY_PRODUCTS_STORE))
+          inventoryProducts = database.createObjectStore(INVENTORY_PRODUCTS_STORE, { keyPath: ["tenantId", "id"] });
+        else
+          inventoryProducts = event.target.transaction.objectStore(INVENTORY_PRODUCTS_STORE);
+        if (!inventoryProducts.indexNames.contains("byTenant"))
+          inventoryProducts.createIndex("byTenant", "tenantId");
+        let inventoryBaselines;
+        if (!database.objectStoreNames.contains(INVENTORY_BASELINES_STORE))
+          inventoryBaselines = database.createObjectStore(INVENTORY_BASELINES_STORE, { keyPath: ["tenantId", "branchId", "productId"] });
+        else
+          inventoryBaselines = event.target.transaction.objectStore(INVENTORY_BASELINES_STORE);
+        if (!inventoryBaselines.indexNames.contains("byTenantBranch"))
+          inventoryBaselines.createIndex("byTenantBranch", ["tenantId", "branchId"]);
+        let stockMovements;
+        if (!database.objectStoreNames.contains(STOCK_MOVEMENTS_STORE))
+          stockMovements = database.createObjectStore(STOCK_MOVEMENTS_STORE, { keyPath: ["tenantId", "branchId", "operationId"] });
+        else
+          stockMovements = event.target.transaction.objectStore(STOCK_MOVEMENTS_STORE);
+        if (!stockMovements.indexNames.contains("byTenantBranchProduct"))
+          stockMovements.createIndex("byTenantBranchProduct", ["tenantId", "branchId", "productId"]);
+        if (!stockMovements.indexNames.contains("byTenantState"))
+          stockMovements.createIndex("byTenantState", ["tenantId", "state"]);
       };
       request.onsuccess = () => {
         const database = request.result;
