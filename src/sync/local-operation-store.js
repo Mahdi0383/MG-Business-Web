@@ -385,11 +385,14 @@ export class LocalOperationStore {
     return count;
   }
 
-  async getUnappliedIncoming(tenantId, limit = 100, branchId = null) {
+  async getUnappliedIncoming(tenantId, limit = 100, branchId = null, allowTenantWide = false) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof allowTenantWide !== "boolean")
+      throw new TypeError("allowTenantWide must be a boolean.");
+    if (branchId === null && !allowTenantWide) return [];
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 200)) : 100;
     const database = await openDatabase();
     const transaction = database.transaction(INBOX_STORE, "readonly");
