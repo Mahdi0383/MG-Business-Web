@@ -189,12 +189,25 @@ async function sha256(value) {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
 }
 
+function roundInventoryToEven(value, scale) {
+  const factor = 10 ** scale;
+  const scaled = value * factor;
+  const lower = Math.floor(scaled);
+  const fraction = scaled - lower;
+  let rounded;
+  if (Math.abs(fraction - 0.5) < 1e-8)
+    rounded = lower % 2 === 0 ? lower : lower + 1;
+  else
+    rounded = fraction < 0.5 ? lower : lower + 1;
+  return rounded / factor;
+}
+
 function roundInventoryValue(value) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+  return roundInventoryToEven(value, 2);
 }
 
 function roundInventoryAverage(value) {
-  return Math.round((value + Number.EPSILON) * 10_000) / 10_000;
+  return roundInventoryToEven(value, 4);
 }
 
 function applyLocalStockMovement(balance, movement) {
