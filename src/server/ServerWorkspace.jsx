@@ -209,7 +209,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     setSaving(true);
     setError("");
     try {
-      const result = await client.post("/api/accounting/accounts/initialize-default-chart", {});
+      const result = await client.request("/api/accounting/accounts/initialize-default-chart", { method: "POST" });
       setAccounts(result || []);
     } catch (initError) {
       setError(formatApiError(initError));
