@@ -287,6 +287,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasKey(x => new { x.TenantId, x.DeviceId, x.BranchId });
             entity.Property(x => x.LastAcknowledgedSequence).IsConcurrencyToken();
             entity.HasIndex(x => new { x.TenantId, x.BranchId, x.LastAcknowledgedSequence }).HasDatabaseName("IX_sync_device_branch_cursor_scope_seq");
+            entity.HasIndex(x => new { x.TenantId, x.BranchId }).HasDatabaseName("IX_sync_device_branch_cursor_branch");
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
