@@ -42,7 +42,7 @@ This classifier is an isolated policy primitive with unit tests. It is not yet w
 
 The IndexedDB schema now includes a tenant-scoped customer projection. Creating a customer validates and normalizes its fields, then writes the local projection and a branch-originated `customer.profile.created` outbox command in one read-write transaction. The UI reads the local projection alongside the server list and shows pending synchronization state. The sync API validates this command and saves the authoritative customer row with the append-only journal operation in one EF Core save; the client-generated customer ID is preserved, so retries remain idempotent. Acknowledging the outbox command marks the local projection synchronized in a single IndexedDB transaction.
 
-This is the first completed offline-first business workflow, not full offline readiness. Inbound customer commands are still retained in the inbox and are not yet projected on other devices; updates, conflict resolution, sales and inventory commands remain future work.
+This is the first completed offline-first business workflow, not full offline readiness. Inbound customer creation and versioned profile/contact updates are now applied through a local transaction that commits the projection and inbox acknowledgement together. Duplicate customer identities and version mismatches are recorded as durable conflicts and block later journal application. A conflict-review UI, outbound customer edit commands, sales and inventory handlers remain future work.
 
 ## Incoming operation processor
 
