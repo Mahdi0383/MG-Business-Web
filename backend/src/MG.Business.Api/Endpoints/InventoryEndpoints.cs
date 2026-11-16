@@ -215,6 +215,8 @@ public static class InventoryEndpoints
                     || idempotencyKey.Any(ch => ch < 0x21 || ch > 0x7e))
                     return Results.ValidationProblem(new Dictionary<string, string[]> { ["Idempotency-Key"] = ["کلید باید بین ۱ تا ۱۲۸ نویسه قابل‌نمایش ASCII باشد."] });
             }
+            if (idempotencyKey is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["Idempotency-Key"] = ["برای ثبت گردش انبار، کلید یکتای درخواست الزامی است."] });
 
             var normalizedReference = string.IsNullOrWhiteSpace(request.Reference) ? null : request.Reference.Trim();
             var fingerprintInput = JsonSerializer.Serialize(new
@@ -277,7 +279,7 @@ public static class InventoryEndpoints
                 }
 
                 var movement = new StockMovement(tenantId, branchId, request.ProductId, request.Type,
-                    request.Quantity, unitCost, normalizedReference, idempotencyKey, idempotencyKey is null ? null : requestFingerprint);
+                    request.Quantity, unitCost, normalizedReference, idempotencyKey, requestFingerprint);
                 db.StockMovements.Add(movement);
                 await db.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
