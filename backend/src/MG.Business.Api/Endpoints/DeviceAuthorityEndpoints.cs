@@ -13,6 +13,39 @@ public static class DeviceAuthorityEndpoints
 
     public static IEndpointRouteBuilder MapDeviceAuthorityEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/sync/authority-lease", async (
+            ITenantContext tenant,
+            BusinessDbContext db,
+            AuthorityLeaseSigner signer,
+            CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId)
+                return Results.Forbid();
+            if (!signer.IsConfigured || string.IsNullOrWhiteSpace(signer.PublicKeySpkiBase64))
+                return Results.Problem(
+                    title: "Authority signing is not configured",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            var scopeKey = tenant.BranchId?.ToString("N") ?? "tenant-wide";
+            var lease = await db.DeviceAuthorityLeases.AsNoTracking().SingleOrDefaultAsync(
+                x => x.TenantId == tenantId && x.ScopeKey == scopeKey,
+                cancellationToken);
+            if (lease is null || lease.RevokedAtUtc is not null || string.IsNullOrWhiteSpace(lease.SignatureBase64))
+                return Results.NotFound(new { code = "AUTHORITY_LEASE_NOT_FOUND" });
+            return Results.Ok(new
+            {
+                leaseId = lease.LeaseId,
+                tenantId = lease.TenantId,
+                branchId = lease.BranchId,
+                scopeKey = lease.ScopeKey,
+                deviceId = lease.DeviceId,
+                epoch = lease.Epoch,
+                issuedAtUtc = lease.IssuedAtUtc,
+                expiresAtUtc = lease.ExpiresAtUtc,
+                signatureBase64 = lease.SignatureBase64,
+                publicKeySpkiBase64 = signer.PublicKeySpkiBase64
+            });
+        }).RequireAuthorization("TenantMember");
+
         endpoints.MapPost("/api/sync/authority-lease", async (
             HttpContext httpContext,
             ITenantContext tenant,
