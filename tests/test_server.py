@@ -58,6 +58,28 @@ class ApiIntegrationTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
+        db = server.connect()
+        try:
+            now = int(time.time())
+            db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", ("tenant-public-a","Public A",now))
+            db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", ("tenant-public-b","Public B",now+1))
+            db.commit()
+        finally:
+            db.close()
+
+        status, result = self.request("GET", "/api/public/menu")
+        self.assertEqual(status, 409)
+        self.assertIn("دامنه اختصاصی", result["error"])
+
+        status, result = self.request("POST", "/api/public/orders", {
+            "customerName": "Test Customer",
+            "phone": "+49123456789",
+            "items": [{"productId": "unknown-product", "quantity": 1}]
+        })
+        self.assertEqual(status, 409)
+        self.assertIn("دامنه اختصاصی", result["error"])
+
     def test_setup_auth_transaction_audit_and_isolation(self):
         status, result = self.request("GET", "/api/setup-status")
         self.assertEqual((status, result["configured"]), (200, False))
