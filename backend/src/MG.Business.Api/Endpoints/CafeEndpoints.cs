@@ -25,7 +25,7 @@ public static class CafeEndpoints
             if (status.HasValue)
                 query = query.Where(x => x.Status == status.Value);
 
-            var tickets = await query.Take(100)
+            var tickets = await query.OrderByDescending(x => x.CreatedAtUtc).Take(100)
                 .Select(x => new TicketResponse(x.Id, x.SalesOrderId, x.ServiceType.ToString(),
                     x.TableLabel, x.Notes, x.Status.ToString(), x.CreatedAtUtc, x.PreparingAtUtc, x.ReadyAtUtc))
                 .ToListAsync(cancellationToken);
