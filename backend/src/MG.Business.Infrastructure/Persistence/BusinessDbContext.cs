@@ -80,6 +80,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Email).HasMaxLength(254);
             entity.Property(x => x.Address).HasMaxLength(500);
             entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.Property(x => x.Version).IsConcurrencyToken().IsRequired().HasDefaultValue(1);
             entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
             entity.HasAlternateKey(x => new { x.TenantId, x.Id });
             entity.HasIndex(x => new { x.TenantId, x.Phone });
