@@ -147,7 +147,7 @@ export class LocalOperationStore {
     return operation;
   }
 
-  async getPending(tenantId, limit = 100, branchId = null, allowTenantWide = false) {
+  async getPending(tenantId, limit = 100, branchId = null, allowTenantWide = false, deviceId) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required.");
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 100)) : 100;
@@ -155,6 +155,8 @@ export class LocalOperationStore {
       throw new TypeError("branchId must be a non-empty string or null.");
     if (typeof allowTenantWide !== "boolean")
       throw new TypeError("allowTenantWide must be a boolean.");
+    if (typeof deviceId !== "string" || !deviceId.trim())
+      throw new TypeError("deviceId is required to isolate the authenticated device outbox.");
 
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
@@ -165,14 +167,9 @@ export class LocalOperationStore {
       [tenantId, "pending", "\uffff"]
     );
 
-    if (branchId === null && allowTenantWide) {
-      const rows = await requestResult(index.getAll(range, boundedLimit));
-      await done;
-      return rows;
-    }
-
-    // Keep global FIFO order while skipping other branches' queued work,
-    // so one branch's offline backlog cannot starve another branch's sync.
+    // Keep FIFO ordering while isolating both the selected branch and the
+    // authenticated browser device. Another account's unsynced work must not
+    // block this actor's batch or be submitted under a different identity.
     const rows = await new Promise((resolve, reject) => {
       const matching = [];
       const request = index.openCursor(range);
@@ -184,10 +181,11 @@ export class LocalOperationStore {
           return;
         }
         const operation = cursor.value;
+        const matchesDevice = operation.deviceId === deviceId;
         const matchesBranch = branchId === null
-          ? operation.branchId != null
+          ? allowTenantWide || operation.branchId != null
           : operation.branchId === branchId;
-        if (matchesBranch || (allowTenantWide && operation.branchId == null))
+        if (matchesDevice && (matchesBranch || (allowTenantWide && operation.branchId == null)))
           matching.push(operation);
         cursor.continue();
       };
