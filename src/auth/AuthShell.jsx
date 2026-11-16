@@ -3,6 +3,8 @@ import { formatApiError, MgApiClient } from "../api/client.js";
 import ServerWorkspace from "../server/ServerWorkspace.jsx";
 import { LocalOperationStore } from "../sync/local-operation-store.js";
 import { SyncAgent } from "../sync/sync-agent.js";
+import { IncomingOperationProcessor } from "../sync/incoming-operation-processor.js";
+import { classifyIncomingOperation } from "../sync/conflict-policy.js";
 import "../server/server.css";
 
 const SESSION_KEY = "mg-business-session";
@@ -23,6 +25,12 @@ function AuthShell({ apiBaseUrl }) {
   const operationStoreRef = useRef(new LocalOperationStore());
   const syncAgentRef = useRef(null);
   if (!syncAgentRef.current) syncAgentRef.current = new SyncAgent(client, operationStoreRef.current);
+  const incomingProcessorRef = useRef(null);
+  if (!incomingProcessorRef.current) incomingProcessorRef.current = new IncomingOperationProcessor({
+    store: operationStoreRef.current,
+    adapter: operationStoreRef.current,
+    classify: classifyIncomingOperation
+  });
 
   const [session, setSessionState] = useState(readSavedSession);
   const [stage, setStage] = useState("restoring");
@@ -266,17 +274,25 @@ function AuthShell({ apiBaseUrl }) {
           pullResult = await syncAgentRef.current.pullIncoming(tenantId, { branchId: selectedBranch?.id || null, actorId: activeActorId });
           if (pullResult.status !== "more-available") break;
         }
+        const replayResult = await incomingProcessorRef.current.processBatch(
+          tenantId,
+          100,
+          selectedBranch?.id || null,
+          ["Owner", "Manager"].includes(selectedTenant?.role)
+        );
         const result = await syncAgentRef.current.pushPending(tenantId, {
           branchId: selectedBranch?.id || null,
           allowTenantWide: ["Owner", "Manager"].includes(selectedTenant?.role),
           actorId: activeActorId
         });
         if (active) {
-          setSyncStatus(pullResult?.status === "offline" && result.status === "idle"
-            ? "offline"
-            : pullResult?.status === "more-available"
-              ? "syncing"
-              : result.status);
+          setSyncStatus(replayResult.blockedByConflict
+            ? "conflict"
+            : pullResult?.status === "offline" && result.status === "idle"
+              ? "offline"
+              : pullResult?.status === "more-available"
+                ? "syncing"
+                : result.status);
         }
       } catch {
         if (active) setSyncStatus("error");
