@@ -13,6 +13,7 @@ public static class SyncEndpoints
 {
     private const int MaxBatchSize = 100;
     private const int MaxPayloadBytes = 64 * 1024;
+    private const int MaxBatchPayloadBytes = 1024 * 1024;
 
     public static IEndpointRouteBuilder MapSyncEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -326,16 +327,37 @@ public static class SyncEndpoints
                 });
 
             var prepared = new List<(PushOperationRequest Request, string Hash)>();
+            var batchPayloadBytes = 0;
             foreach (var item in request.Operations)
             {
                 if (item.DeviceId == Guid.Empty || item.OperationId == Guid.Empty
                     || item.SchemaVersion < 1 || item.AuthorityEpoch < 0
                     || string.IsNullOrWhiteSpace(item.OperationType) || item.OperationType.Length > 100
-                    || string.IsNullOrWhiteSpace(item.PayloadJson)
-                    || Encoding.UTF8.GetByteCount(item.PayloadJson) > MaxPayloadBytes)
+                    || item.OperationType != item.OperationType.Trim()
+                    || item.OperationType.Any(char.IsControl)
+                    || string.IsNullOrWhiteSpace(item.PayloadJson))
                     return Results.ValidationProblem(new Dictionary<string, string[]>
                     {
                         ["operations"] = ["An operation has invalid identifiers, version, type or payload size."]
+                    });
+
+                var payloadBytes = Encoding.UTF8.GetByteCount(item.PayloadJson);
+                if (payloadBytes > MaxPayloadBytes)
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["payloadJson"] = ["An operation payload cannot exceed 64 KiB."]
+                    });
+                batchPayloadBytes += payloadBytes;
+                if (batchPayloadBytes > MaxBatchPayloadBytes)
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["operations"] = ["Combined operation payloads cannot exceed 1 MiB per batch."]
+                    });
+
+                if (item.OccurredAtUtc > DateTimeOffset.UtcNow.AddMinutes(5))
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["occurredAtUtc"] = ["Operation timestamps cannot be more than five minutes in the future."]
                     });
 
                 try
