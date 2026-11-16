@@ -1,0 +1,205 @@
+const DATABASE_NAME = "mg-device-enrollment";
+const DATABASE_VERSION = 1;
+const STORE_NAME = "credentials";
+
+function openCredentialDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME))
+        request.result.createObjectStore(STORE_NAME, { keyPath: "scope" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Unable to open device credential storage."));
+  });
+}
+
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Device credential storage request failed."));
+  });
+}
+
+function transactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error("Device credential transaction failed."));
+    transaction.onabort = () => reject(transaction.error || new Error("Device credential transaction was aborted."));
+  });
+}
+
+function toBase64(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function fromBase64(value) {
+  return Uint8Array.from(atob(value), character => character.charCodeAt(0));
+}
+
+function hex(bytes) {
+  return [...bytes].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return hex(new Uint8Array(digest));
+}
+
+export class DeviceEnrollmentClient {
+  constructor(apiClient, operationStore) {
+    this.apiClient = apiClient;
+    this.operationStore = operationStore;
+    this.enrollmentInFlight = new Map();
+  }
+
+  scope(tenantId, actorId) {
+    return `${tenantId}:${actorId}`;
+  }
+
+  async readCredential(scope) {
+    const database = await openCredentialDatabase();
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const done = transactionDone(transaction);
+    const record = await requestResult(transaction.objectStore(STORE_NAME).get(scope));
+    await done;
+    database.close();
+    return record || null;
+  }
+
+  async writeCredential(record) {
+    const database = await openCredentialDatabase();
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    const done = transactionDone(transaction);
+    transaction.objectStore(STORE_NAME).put(record);
+    await done;
+    database.close();
+  }
+
+  async ensureEnrolled({ tenantId, branchId = null, actorId }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()
+      || typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("Tenant and actor identity are required for device enrollment.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("Branch identity must be a non-empty string or null.");
+    if (!globalThis.crypto?.subtle || !globalThis.indexedDB)
+      throw new Error("Secure browser cryptography and IndexedDB are required for device enrollment.");
+
+    const scope = this.scope(tenantId, actorId);
+    const existing = await this.readCredential(scope);
+    if (existing?.privateKey && existing?.credential && existing?.deviceId)
+      return existing;
+    if (this.enrollmentInFlight.has(scope))
+      return this.enrollmentInFlight.get(scope);
+
+    const enrollment = this.enroll({ tenantId, branchId, actorId, scope });
+    this.enrollmentInFlight.set(scope, enrollment);
+    try {
+      return await enrollment;
+    } finally {
+      this.enrollmentInFlight.delete(scope);
+    }
+  }
+
+  async enroll({ tenantId, branchId, actorId, scope }) {
+    const deviceId = await this.operationStore.getDeviceId(actorId);
+    const pair = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign", "verify"]
+    );
+    const publicKeyBytes = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+    const publicKeySpkiBase64 = toBase64(publicKeyBytes);
+    const challengeResponse = await this.apiClient.post(
+      "/api/sync/enrollment/challenges",
+      { deviceId },
+      { tenantId, branchId }
+    );
+    if (!challengeResponse?.challengeId || typeof challengeResponse.challenge !== "string"
+      || challengeResponse.deviceId !== deviceId || challengeResponse.actorId !== actorId)
+      throw new Error("MG server returned an invalid device enrollment challenge.");
+
+    const branchText = branchId || "";
+    const canonical = [
+      "MG-DEVICE-ENROLLMENT-V1",
+      tenantId,
+      branchText,
+      actorId,
+      deviceId,
+      challengeResponse.challengeId,
+      challengeResponse.challenge
+    ].join("\n");
+    const signature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      pair.privateKey,
+      new TextEncoder().encode(canonical)
+    );
+
+    const completed = await this.apiClient.post(
+      "/api/sync/enrollment/complete",
+      {
+        challengeId: challengeResponse.challengeId,
+        deviceId,
+        challenge: challengeResponse.challenge,
+        publicKeySpkiBase64,
+        signatureBase64: toBase64(new Uint8Array(signature))
+      },
+      { tenantId, branchId }
+    );
+    if (completed?.deviceId !== deviceId || completed?.keyVersion !== 1
+      || typeof completed?.credential !== "string")
+      throw new Error("MG server returned an invalid device enrollment credential.");
+
+    const record = {
+      scope,
+      tenantId,
+      actorId,
+      deviceId,
+      privateKey: pair.privateKey,
+      publicKeySpkiBase64,
+      credential: completed.credential,
+      keyVersion: completed.keyVersion,
+      enrolledAtUtc: completed.enrolledAtUtc
+    };
+    await this.writeCredential(record);
+    return record;
+  }
+
+  async createRequestHeaders({ method, path, tenantId, branchId = null, actorId, bodyJson = "" }) {
+    if (typeof path !== "string" || !path.startsWith("/api/sync/"))
+      throw new TypeError("A sync API path is required for device request signing.");
+    const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
+    const timestamp = String(Date.now());
+    const nonce = crypto.randomUUID().toLowerCase();
+    const bodyHash = await sha256(bodyJson);
+    const canonical = [
+      "MG-DEVICE-REQUEST-V1",
+      String(method || "GET").toUpperCase(),
+      path,
+      tenantId,
+      branchId || "",
+      actorId,
+      record.deviceId,
+      String(record.keyVersion),
+      timestamp,
+      nonce,
+      bodyHash
+    ].join("\n");
+    const signature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      record.privateKey,
+      new TextEncoder().encode(canonical)
+    );
+
+    return {
+      "X-MG-Device-Id": record.deviceId,
+      "X-MG-Device-Key-Version": String(record.keyVersion),
+      "X-MG-Device-Credential": record.credential,
+      "X-MG-Device-Timestamp": timestamp,
+      "X-MG-Device-Nonce": nonce,
+      "X-MG-Device-Signature": toBase64(new Uint8Array(signature))
+    };
+  }
+}
