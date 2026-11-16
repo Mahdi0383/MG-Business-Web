@@ -386,6 +386,137 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
     }
 
+    [Fact]
+    public async Task BranchScopedPullHidesOtherBranchesAndAdvancesAcrossHiddenRows()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"branch-sync-owner-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Branch Sync Store",
+            slug = $"branch-sync-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var secondBranchResponse = await owner.PostAsJsonAsync("/api/branches/", new
+        {
+            name = "Secondary",
+            code = "S" + Guid.NewGuid().ToString("N")[..8]
+        });
+        Assert.Equal(HttpStatusCode.Created, secondBranchResponse.StatusCode);
+        var secondary = await secondBranchResponse.Content.ReadFromJsonAsync<BranchCreated>();
+        Assert.NotNull(secondary);
+
+        var ownerDeviceId = Guid.NewGuid();
+        var ownerHeartbeat = await owner.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = ownerDeviceId,
+            deviceName = "Owner Sync Device",
+            platform = "Test",
+            clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, ownerHeartbeat.StatusCode);
+
+        var mainOperationId = Guid.NewGuid();
+        var mainPush = await owner.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = mainOperationId,
+                    deviceId = ownerDeviceId,
+                    branchId = tenant.BranchId,
+                    operationType = "test.main-branch",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"scope\\":\\"main\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Accepted, mainPush.StatusCode);
+
+        owner.DefaultRequestHeaders.Remove("X-MG-Branch");
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", secondary!.Id.ToString());
+        var secondaryOperationId = Guid.NewGuid();
+        var secondaryPush = await owner.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = secondaryOperationId,
+                    deviceId = ownerDeviceId,
+                    branchId = secondary.Id,
+                    operationType = "test.secondary-branch",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"scope\\":\\"secondary\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Accepted, secondaryPush.StatusCode);
+
+        var globalOperationId = Guid.NewGuid();
+        var globalPush = await owner.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = globalOperationId,
+                    deviceId = ownerDeviceId,
+                    branchId = (Guid?)null,
+                    operationType = "test.tenant-wide",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"scope\\":\\"tenant\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Accepted, globalPush.StatusCode);
+
+        var staffEmail = $"branch-sync-staff-{Guid.NewGuid():N}@mg.test";
+        var membership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = staffEmail,
+            role = 3,
+            branchId = secondary.Id
+        });
+        Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
+
+        using var staff = await RegisterAndLoginAsync(factory, staffEmail);
+        staff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        staff.DefaultRequestHeaders.Add("X-MG-Branch", secondary.Id.ToString());
+        var staffHeartbeat = await staff.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId = Guid.NewGuid(),
+            deviceName = "Secondary Branch Device",
+            platform = "Test",
+            clientVersion = "1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, staffHeartbeat.StatusCode);
+
+        var pull = await staff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.NotNull(pull);
+        Assert.Equal(2, pull!.Operations.Length);
+        Assert.Contains(pull.Operations, operation => operation.OperationId == secondaryOperationId);
+        Assert.Contains(pull.Operations, operation => operation.OperationId == globalOperationId);
+        Assert.DoesNotContain(pull.Operations, operation => operation.OperationId == mainOperationId);
+        Assert.True(pull.NextSequence >= pull.Operations.Max(operation => operation.Sequence));
+    }
+
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
         using (var scope = factory.Services.CreateScope())
