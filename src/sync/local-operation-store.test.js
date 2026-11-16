@@ -391,7 +391,7 @@ test("commits customer edits with their outbox command and advances version only
   });
 
   await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const updated = await store.updateCustomer({
     tenantId, branchId, actorId, customerId: created.id,
     customer: { code: "C-EDIT-CHANGED", name: "After", phone: "09121111111", email: "after@example.com", address: "New", notes: "Updated" }
@@ -438,7 +438,7 @@ test("serializes competing local customer edits and keeps only one pending comma
   ]);
   assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
   assert.equal(results.filter(result => result.status === "rejected").length, 1);
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const pending = await store.getPending(tenantId, 100, branchId, false, deviceId);
   assert.equal(pending.length, 1);
 });
@@ -510,7 +510,7 @@ test("acknowledged customer update journal echo does not reapply the originating
     tenantId, branchId, actorId, customerId: created.id,
     customer: { name: "Local edit" }
   });
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
   const operation = pending[0];
   await store.acknowledge([{ operationId: operation.operationId, sequence: 2 }]);
@@ -552,7 +552,7 @@ test("does not acknowledge an outbound customer update if its local version prec
     tenantId, branchId, actorId, customerId: created.id,
     customer: { name: "Pending edit" }
   });
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
   assert.equal(pending.length, 1);
 
@@ -631,7 +631,7 @@ test("caches authoritative server customers for offline access without overwriti
   assert.equal(customer.version, 5);
   assert.equal(customer.syncStatus, "pending");
   assert.equal(customer.name, "Local Offline Edit");
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   assert.equal((await store.getPending(tenantId, 10, branchId, false, deviceId)).length, 1);
 });
 
@@ -652,7 +652,7 @@ test("queues and acknowledges offline customer deactivation with a versioned loc
   assert.equal(deactivated.isActive, false);
   assert.equal(deactivated.syncStatus, "pending");
 
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
   assert.equal(pending.length, 1);
   assert.equal(pending[0].operationType, "customer.profile.deactivated");
@@ -731,7 +731,7 @@ test("originating device deactivation echo advances inbox without deactivating t
   });
   await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
   await store.deactivateCustomer({ tenantId, branchId, actorId, customerId: created.id });
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
   const operation = pending[0];
   await store.acknowledge([{ operationId: operation.operationId, sequence: 2 }]);
@@ -766,7 +766,7 @@ test("does not trust a caller-controlled verified flag for authority lease epoch
   const tenantId = `lease-tenant-${crypto.randomUUID()}`;
   const branchId = crypto.randomUUID();
   const actorId = `lease-actor-${crypto.randomUUID()}`;
-  const deviceId = await store.getDeviceId(actorId);
+  const deviceId = await store.getDeviceId(actorId, tenantId, branchId);
   const lease = {
     tenantId,
     branchId,
