@@ -267,7 +267,8 @@ function AuthShell({ apiBaseUrl }) {
         }
         const result = await syncAgentRef.current.pushPending(tenantId, {
           branchId: selectedBranch?.id || null,
-          allowTenantWide: ["Owner", "Manager"].includes(selectedTenant?.role)
+          allowTenantWide: ["Owner", "Manager"].includes(selectedTenant?.role),
+          actorId: activeActorId
         });
         if (active) {
           setSyncStatus(pullResult?.status === "offline" && result.status === "idle"
