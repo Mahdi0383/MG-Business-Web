@@ -822,6 +822,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(200, {"ok": True})
             if path == "/api/gamenet/devices":
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403, {"error": "دسترسی مدیریت دستگاه‌ها ندارید."})
                 name, device_type = data.get("name"), data.get("deviceType","pc")
@@ -837,6 +839,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(201, {"id":device_id,"ok":True})
             if path == "/api/gamenet/sessions":
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 if user["role"] not in ("owner","manager","cashier"):
                     return self.send_json(403, {"error": "دسترسی شروع نشست بازی ندارید."})
                 device_id, customer_id = data.get("deviceId"), data.get("customerId")
@@ -862,6 +866,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(201, {"id":session_id,"startedAt":now,"ok":True})
             if path.startswith("/api/gamenet/sessions/") and path.endswith("/end"):
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 session_id = path.split("/")[-2]
                 if user["role"] not in ("owner","manager","cashier"):
                     return self.send_json(403, {"error": "دسترسی پایان نشست بازی ندارید."})
@@ -889,6 +895,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(200, {"ok":True,"amountDue":amount,"elapsedSeconds":elapsed})
             if path == "/api/orders":
+                if not module_enabled(db,user["tenant_id"],"cafe"):
+                    return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
                 if user["role"] not in ("owner","manager","cashier"):
                     return self.send_json(403, {"error": "دسترسی ثبت سفارش ندارید."})
                 items = data.get("items"); discount = data.get("discount",0)
@@ -982,6 +990,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(201, {"id": target_id, "ok": True})
             if path == "/api/products":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 if user["role"] not in ("owner", "manager"):
                     return self.send_json(403, {"error": "دسترسی مدیریت کالا ندارید."})
                 name = data.get("name"); sku = data.get("sku"); category = data.get("category", "عمومی")
@@ -1003,6 +1013,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(201, {"id": product_id, "ok": True})
             if path == "/api/inventory/movements":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 if user["role"] not in ("owner", "manager"):
                     return self.send_json(403, {"error": "دسترسی ثبت گردش انبار ندارید."})
                 product_id = data.get("productId"); delta = data.get("quantityDelta")
@@ -1040,6 +1052,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(201, {"id": movement_id, "ok": True})
             if path == "/api/customers":
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
                 if user["role"] not in ("owner", "manager", "cashier"):
                     return self.send_json(403, {"error": "دسترسی مدیریت مشتریان ندارید."})
                 name, phone = data.get("fullName"), data.get("phone")
@@ -1061,6 +1075,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(201, {"id": customer_id, "ok": True})
             if path == "/api/transactions":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
                 if user["role"] not in ("owner", "manager", "cashier"):
                     return self.send_json(403, {"error": "دسترسی ثبت تراکنش ندارید."})
                 title = data.get("title"); amount = data.get("amount"); kind = data.get("kind")
