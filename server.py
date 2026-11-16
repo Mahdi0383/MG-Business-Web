@@ -138,6 +138,17 @@ def connect():
         db.execute("ALTER TABLE transactions ADD COLUMN voided_by TEXT REFERENCES users(id)")
     db.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,?)", (int(time.time()),))
     db.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=3").fetchone():
+        for tenant in db.execute("SELECT id FROM tenants").fetchall():
+            seed_accounts(db, tenant["id"])
+        legacy = db.execute("""SELECT t.id,t.tenant_id,t.created_by,t.title,t.amount,t.kind,t.occurred_at
+            FROM transactions t LEFT JOIN journal_entries e
+            ON e.tenant_id=t.tenant_id AND e.source_type='transaction' AND e.source_id=t.id
+            WHERE t.status='posted' AND e.id IS NULL""").fetchall()
+        for tx in legacy:
+            post_transaction_journal(db,tx["tenant_id"],tx["created_by"],tx["id"],tx["title"],
+                                     tx["amount"],tx["kind"],tx["occurred_at"])
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)", (int(time.time()),))
     return db
 
 def password_hash(password: str, salt: bytes | None = None) -> str:
