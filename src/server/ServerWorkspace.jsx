@@ -50,6 +50,9 @@ const kitchenActions = {
 function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, openSyncConflicts = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
+  const [productSearch, setProductSearch] = useState("");
+  const [productPage, setProductPage] = useState(1);
+  const [productCatalog, setProductCatalog] = useState({ page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
   const [stockRows, setStockRows] = useState([]);
   const [trialBalance, setTrialBalance] = useState(null);
   const [customers, setCustomers] = useState([]);
@@ -132,11 +135,12 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         setSyncConflicts(conflicts || []);
       }
       else if (page === "products") {
-        const [productRows, currentStock] = await Promise.all([
-          client.get("/api/inventory/products"),
+        const [catalog, currentStock] = await Promise.all([
+          client.get("/api/inventory/products/catalog?page=" + productPage + "&pageSize=25&search=" + encodeURIComponent(productSearch.trim()) + "&activeOnly=false"),
           client.get("/api/inventory/stock")
         ]);
-        setProducts(productRows || []);
+        setProducts(catalog?.items || []);
+        setProductCatalog({ page: catalog?.page || productPage, pageSize: catalog?.pageSize || 25, totalCount: catalog?.totalCount || 0, totalPages: catalog?.totalPages || 0 });
         setStockRows(currentStock || []);
       }
       else if (page === "customers") setCustomers(await loadCustomers());
@@ -181,7 +185,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     } finally {
       setLoading(false);
     }
-  }, [client, operationStore, tenant.id, tenant.role, branch.id, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
+  }, [client, operationStore, tenant.id, tenant.role, branch.id, page, productPage, productSearch, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -676,9 +680,21 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
         {page === "products" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button>}</div>
+          <div className="mg-server-panel-actions" style={{ marginBottom: 16 }}>
+            <form onSubmit={event => { event.preventDefault(); setProductPage(1); loadData(); }} className="mg-server-search">
+              <input aria-label="جست‌وجوی کالا" placeholder="جست‌وجو بر اساس نام یا کد کالا" maxLength={100} value={productSearch} onChange={event => setProductSearch(event.target.value)} />
+              <button className="mg-secondary-btn" type="submit">جست‌وجو</button>
+              {productSearch && <button className="mg-secondary-btn" type="button" onClick={() => { setProductSearch(""); setProductPage(1); }}>پاک‌کردن</button>}
+            </form>
+            <span>{count(productCatalog.totalCount)} کالا · صفحه {count(productCatalog.page)} از {count(productCatalog.totalPages)}</span>
+          </div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد کالا</th><th>نام</th><th>واحد</th><th>قیمت پیش‌فرض</th><th>موجودی شعبه</th><th>میانگین بهای واحد</th><th>ارزش موجودی</th><th>نوع موجودی</th><th>وضعیت</th></tr></thead>
             <tbody>{products.map(product => <tr key={product.id}><td>{product.sku}</td><td>{product.name}</td><td>{product.baseUnit}</td><td>{money(product.defaultSalePrice)}</td><td>{product.tracksInventory ? count(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.quantityOnHand || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.averageUnitCost || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.inventoryValue || 0) : "—"}</td><td>{product.tracksInventory ? "انبارگردانی‌شونده" : "خدماتی"}</td><td>{product.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
-          </table>{!products.length && <div className="mg-server-empty">هنوز کالایی ثبت نشده است.</div>}</div>
+          </table>{!products.length && <div className="mg-server-empty">{productSearch ? "کالایی با این جست‌وجو پیدا نشد." : "هنوز کالایی ثبت نشده است."}</div>}</div>
+          <div className="mg-server-panel-actions" style={{ justifyContent: "space-between", marginTop: 16 }}>
+            <button className="mg-secondary-btn" disabled={loading || productPage <= 1} onClick={() => setProductPage(value => Math.max(1, value - 1))}>صفحه قبل</button>
+            <button className="mg-secondary-btn" disabled={loading || productPage >= productCatalog.totalPages} onClick={() => setProductPage(value => Math.min(productCatalog.totalPages, value + 1))}>صفحه بعد</button>
+          </div>
         </section>}
 
         {page === "customers" && <section className="mg-server-panel">
