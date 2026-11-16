@@ -186,13 +186,14 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
-                    b.Property<int>("Version")
-                        .IsConcurrencyToken()
-                        .HasDefaultValue(1)
-                        .HasColumnType("integer");
-
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -202,6 +203,52 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "Phone");
 
                     b.ToTable("customers", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClientVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("DeviceName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset>("FirstSeenAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("TenantId", "DeviceId");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("TenantId", "BranchId");
+
+                    b.HasIndex("TenantId", "LastSeenAtUtc");
+
+                    b.ToTable("device_presences", (string)null);
                 });
 
             modelBuilder.Entity("MG.Business.Domain.Entities.GameDevice", b =>
@@ -573,6 +620,10 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<string>("Method")
                         .IsRequired()
                         .HasMaxLength(24)
@@ -581,10 +632,6 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<string>("Reference")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
-
-                    b.Property<string>("IdempotencyKey")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
 
                     b.Property<string>("RequestFingerprint")
                         .HasMaxLength(64)
@@ -597,8 +644,6 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "BranchId");
 
                     b.HasIndex("TenantId", "SalesOrderId");
 
@@ -657,6 +702,135 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_stock_movement_unit_cost_non_negative", "CAST(unit_cost AS NUMERIC) >= 0");
                         });
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceBranchCursor", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("LastAcknowledgedSequence")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TenantId", "DeviceId", "BranchId");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("TenantId", "BranchId")
+                        .HasDatabaseName("IX_sync_device_branch_cursor_branch");
+
+                    b.HasIndex("TenantId", "BranchId", "LastAcknowledgedSequence")
+                        .HasDatabaseName("IX_sync_device_branch_cursor_scope_seq");
+
+                    b.ToTable("sync_device_branch_cursors", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("LastAcknowledgedSequence")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TenantId", "DeviceId");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("TenantId", "LastAcknowledgedSequence");
+
+                    b.ToTable("sync_device_cursors", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
+                {
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Sequence"));
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AuthorityEpoch")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayloadSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("ReceivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Sequence");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("TenantId", "BranchId");
+
+                    b.HasIndex("TenantId", "OperationId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "Sequence");
+
+                    b.HasIndex("TenantId", "DeviceId", "Sequence");
+
+                    b.ToTable("sync_operations", (string)null);
                 });
 
             modelBuilder.Entity("MG.Business.Domain.Entities.Tenant", b =>
@@ -984,6 +1158,27 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BranchId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.GameDevice", b =>
                 {
                     b.HasOne("MG.Business.Domain.Entities.Tenant", null)
@@ -1163,6 +1358,64 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceBranchCursor", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BranchId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BranchId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.TenantMembership", b =>
                 {
                     b.HasOne("MG.Business.Domain.Entities.Tenant", null)
@@ -1244,166 +1497,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                 {
                     b.Navigation("Lines");
                 });
-            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceBranchCursor", b =>
-                {
-                    b.Property<Guid>("TenantId").HasColumnType("uuid");
-                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
-                    b.Property<Guid>("BranchId").HasColumnType("uuid");
-                    b.Property<Guid>("ActorId").HasColumnType("uuid");
-                    b.Property<long>("LastAcknowledgedSequence").IsConcurrencyToken().HasColumnType("bigint");
-                    b.Property<DateTimeOffset>("UpdatedAtUtc").HasColumnType("timestamp with time zone");
-
-                    b.HasKey("TenantId", "DeviceId", "BranchId");
-                    b.HasIndex("ActorId");
-                    b.HasIndex("TenantId", "BranchId", "LastAcknowledgedSequence").HasDatabaseName("IX_sync_device_branch_cursor_scope_seq");
-                    b.HasIndex("TenantId", "BranchId").HasDatabaseName("IX_sync_device_branch_cursor_branch");
-                    b.ToTable("sync_device_branch_cursors", (string)null);
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceBranchCursor", b =>
-                {
-                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "BranchId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("ActorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
-                {
-                    b.Property<Guid>("TenantId").HasColumnType("uuid");
-                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
-                    b.Property<Guid>("ActorId").HasColumnType("uuid");
-                    b.Property<long>("LastAcknowledgedSequence").IsConcurrencyToken().HasColumnType("bigint");
-                    b.Property<DateTimeOffset>("UpdatedAtUtc").HasColumnType("timestamp with time zone");
-
-                    b.HasKey("TenantId", "DeviceId");
-                    b.HasIndex("ActorId");
-                    b.HasIndex("TenantId", "LastAcknowledgedSequence");
-                    b.ToTable("sync_device_cursors", (string)null);
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
-                {
-                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("ActorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
-                {
-                    b.Property<Guid>("TenantId").HasColumnType("uuid");
-                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
-                    b.Property<Guid>("ActorId").HasColumnType("uuid");
-                    b.Property<Guid?>("BranchId").HasColumnType("uuid");
-                    b.Property<string>("DeviceName").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
-                    b.Property<string>("Platform").IsRequired().HasMaxLength(40).HasColumnType("character varying(40)");
-                    b.Property<string>("ClientVersion").IsRequired().HasMaxLength(40).HasColumnType("character varying(40)");
-                    b.Property<DateTimeOffset>("FirstSeenAtUtc").HasColumnType("timestamp with time zone");
-                    b.Property<DateTimeOffset>("LastSeenAtUtc").HasColumnType("timestamp with time zone");
-
-                    b.HasKey("TenantId", "DeviceId");
-                    b.HasIndex("ActorId");
-                    b.HasIndex("TenantId", "BranchId");
-                    b.HasIndex("TenantId", "LastSeenAtUtc");
-                    b.ToTable("device_presences", (string)null);
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
-                {
-                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("ActorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "BranchId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
-                {
-                    b.Property<long>("Sequence")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Sequence"));
-
-                    b.Property<long>("AuthorityEpoch").HasColumnType("bigint");
-                    b.Property<Guid?>("BranchId").HasColumnType("uuid");
-                    b.Property<Guid>("ActorId").HasColumnType("uuid");
-                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
-                    b.Property<Guid>("Id").HasColumnType("uuid");
-                    b.Property<Guid>("OperationId").HasColumnType("uuid");
-                    b.Property<string>("OperationType").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
-                    b.Property<string>("PayloadJson").IsRequired().HasColumnType("text");
-                    b.Property<string>("PayloadSha256").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
-                    b.Property<DateTimeOffset>("OccurredAtUtc").HasColumnType("timestamp with time zone");
-                    b.Property<DateTimeOffset>("ReceivedAtUtc").HasColumnType("timestamp with time zone");
-                    b.Property<int>("SchemaVersion").HasColumnType("integer");
-                    b.Property<Guid>("TenantId").HasColumnType("uuid");
-
-                    b.HasKey("Sequence");
-                    b.HasIndex("ActorId");
-                    b.HasIndex("TenantId", "BranchId");
-                    b.HasIndex("TenantId", "DeviceId", "Sequence");
-                    b.HasIndex("TenantId", "Sequence");
-                    b.HasIndex("TenantId", "OperationId").IsUnique();
-                    b.ToTable("sync_operations", (string)null);
-                });
-
-            modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
-                {
-                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("ActorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "BranchId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            #pragma warning restore 612, 618
+#pragma warning restore 612, 618
         }
     }
 }
