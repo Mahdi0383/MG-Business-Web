@@ -1081,7 +1081,13 @@ class Handler(SimpleHTTPRequestHandler):
                     occurred_at = time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now))
                     db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                         VALUES(?,?,?,?,?,'income','گیم‌نت',?,?)""", (tx_id,user["tenant_id"],user["id"],title,amount,occurred_at,now))
-                    post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at)
+                    if session["customer_id"]:
+                        db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                            VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],session["customer_id"],user["id"],
+                            "game_session",session_id,amount,"هزینه بازی "+session_id,now))
+                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,"1100")
+                    else:
+                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at)
                 audit(db,user["tenant_id"],user["id"],"gamenet.session.ended","game_session",session_id,
                       {"amount":amount,"elapsedSeconds":elapsed})
                 db.commit()
