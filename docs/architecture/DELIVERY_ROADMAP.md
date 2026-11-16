@@ -143,3 +143,10 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Added API/SQLite tests for accepted update, duplicate retry and stale update rejection; added classifier tests for matching versions, stale versions and origin echoes.
 - Remaining verification before treating the browser slice as production-ready: IndexedDB crash/restart integration tests, two-browser end-to-end tests, and PostgreSQL migration/concurrency parity.
 
+### Browser inbox schema hardening — 2026-11-16
+
+- Added IndexedDB schema version 7 migration for the incoming inbox status index. IndexedDB does not accept boolean values as index keys; the previous compound index could throw DataError when processing an inbox page.
+- Existing inbox rows are backfilled to a numeric `appliedIndex` (0/1), while the public `applied` boolean remains unchanged. New rows and all apply/acknowledge paths maintain both values.
+- Added fake IndexedDB-backed tests for local customer edit/outbox atomicity, single-pending-edit protection, remote update projection, stale-version conflict persistence and origin-device echo suppression.
+- Frontend CI on commit 4552b80a passed after the schema correction.
+
