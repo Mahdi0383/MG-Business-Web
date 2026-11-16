@@ -91,7 +91,15 @@ public static class AccountingEndpoints
         {
             var entries = await db.JournalEntryLines.AsNoTracking()
                 .Where(line => line.TenantId == tenant.TenantId)
-                .Join(db.Accounts.AsNoTracking(), line => line.AccountId, account => account.Id,
+                .Join(db.JournalEntries.AsNoTracking().Where(entry =>
+                        entry.TenantId == tenant.TenantId
+                        && (tenant.BranchId == null || entry.BranchId == tenant.BranchId)),
+                    line => new { line.TenantId, line.JournalEntryId },
+                    entry => new { entry.TenantId, JournalEntryId = entry.Id },
+                    (line, entry) => line)
+                .Join(db.Accounts.AsNoTracking().Where(account => account.TenantId == tenant.TenantId),
+                    line => new { line.TenantId, line.AccountId },
+                    account => new { account.TenantId, AccountId = account.Id },
                     (line, account) => new { line, account })
                 .ToListAsync(cancellationToken);
 
