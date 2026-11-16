@@ -222,7 +222,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
   useEffect(() => {
     const refreshCustomerProjection = () => {
-      if (page === "customers" || page === "dashboard") loadData();
+      if (page === "customers" || page === "dashboard" || page === "products") loadData();
     };
     window.addEventListener("mg-customer-sync-updated", refreshCustomerProjection);
     window.addEventListener("mg-inventory-sync-updated", refreshCustomerProjection);
@@ -421,14 +421,30 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         const unitCost = isInbound ? Number(form.unitCost) : null;
         if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("مقدار باید بیشتر از صفر باشد.");
         if (isInbound && (!Number.isFinite(unitCost) || unitCost < 0)) throw new Error("بهای واحد معتبر برای ورود موجودی الزامی است.");
-        await client.post("/api/inventory/movements", {
+        const movement = {
           productId: form.productId,
           type,
           quantity,
           unitCost,
-          reference: form.reference.trim() || null
-        }, { headers: { "Idempotency-Key": form.idempotencyKey } });
-        successNotice = "گردش انبار با موفقیت ثبت شد.";
+          reference: form.reference.trim() || null,
+          idempotencyKey: form.idempotencyKey
+        };
+        try {
+          await client.post("/api/inventory/movements", {
+            productId: movement.productId,
+            type: movement.type,
+            quantity: movement.quantity,
+            unitCost: movement.unitCost,
+            reference: movement.reference
+          }, { headers: { "Idempotency-Key": form.idempotencyKey } });
+          successNotice = "گردش انبار با موفقیت ثبت شد.";
+        } catch (movementError) {
+          if (!isNetworkUnavailable(movementError)) throw movementError;
+          await operationStore.createStockMovement({
+            tenantId: tenant.id, branchId: branch.id, actorId, movement
+          });
+          successNotice = "ارتباط با سرور برقرار نیست؛ گردش انبار به‌صورت محلی ذخیره و در صف همگام‌سازی قرار گرفت.";
+        }
       } else if (modal === "product") {
         await client.post("/api/inventory/products", {
           sku: form.sku.trim(),
