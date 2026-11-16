@@ -70,10 +70,35 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(operationId, pull.Operations[0].OperationId);
         Assert.Equal(firstAck.Accepted[0].Sequence, pull.NextSequence);
 
+        var acknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId,
+            sequence = firstAck.Accepted[0].Sequence
+        });
+        Assert.Equal(HttpStatusCode.OK, acknowledgement.StatusCode);
+        var acknowledgedCursor = await acknowledgement.Content.ReadFromJsonAsync<SyncCursorResponse>();
+        Assert.Equal(firstAck.Accepted[0].Sequence, acknowledgedCursor!.Sequence);
+        Assert.False(acknowledgedCursor.StaleAcknowledgement);
+
+        var staleAcknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId,
+            sequence = 0
+        });
+        var staleCursor = await staleAcknowledgement.Content.ReadFromJsonAsync<SyncCursorResponse>();
+        Assert.True(staleCursor!.StaleAcknowledgement);
+        Assert.Equal(firstAck.Accepted[0].Sequence, staleCursor.Sequence);
+
         client.DefaultRequestHeaders.Remove("X-MG-Tenant");
         client.DefaultRequestHeaders.Add("X-MG-Tenant", Guid.NewGuid().ToString());
         var crossTenantPull = await client.GetAsync("/api/sync/operations?afterSequence=0");
         Assert.Equal(HttpStatusCode.Forbidden, crossTenantPull.StatusCode);
+        var crossTenantAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId,
+            sequence = firstAck.Accepted[0].Sequence
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, crossTenantAck.StatusCode);
     }
 
 
@@ -161,7 +186,7 @@ public sealed class SyncApiIntegrationTests
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record SyncPushResponse(SyncAck[] Accepted);
-    private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
+    private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);\n    private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
     private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, bool IsOnline, string? AlertCode);
     private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
