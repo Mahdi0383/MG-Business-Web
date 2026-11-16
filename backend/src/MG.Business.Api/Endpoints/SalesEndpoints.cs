@@ -43,6 +43,16 @@ public static class SalesEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت با مبلغ پرداختی سازگار نیست."] });
             if (request.AmountPaid < 0m || decimal.Round(request.AmountPaid, 2) != request.AmountPaid)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداخت معتبر نیست."] });
+            if (request.Discount < 0m || decimal.Round(request.Discount, 2) != request.Discount)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["discount"] = ["تخفیف فاکتور باید غیرمنفی و حداکثر تا دو رقم اعشار باشد."] });
+            if (request.Lines.Any(line => line.Quantity <= 0m || decimal.Round(line.Quantity, 3) != line.Quantity))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["تعداد هر قلم باید مثبت و حداکثر تا سه رقم اعشار باشد."] });
+            if (request.Lines.Any(line => line.UnitPrice is decimal price && (price < 0m || decimal.Round(price, 2) != price)))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["قیمت واحد باید غیرمنفی و حداکثر تا دو رقم اعشار باشد."] });
+            if (request.Lines.Any(line => line.Discount < 0m || decimal.Round(line.Discount, 2) != line.Discount))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["تخفیف هر قلم باید غیرمنفی و حداکثر تا دو رقم اعشار باشد."] });
+            if (request.PaymentReference?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
 
             if (request.CustomerId is Guid customerId &&
                 !await db.Customers.AnyAsync(x => x.TenantId == tenantId && x.Id == customerId && x.IsActive, cancellationToken))
