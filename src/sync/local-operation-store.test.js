@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope } from "./local-operation-store.js";
+import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload } from "./local-operation-store.js";
 
 
 
@@ -297,4 +297,14 @@ test("incoming sequence reuse requires the complete immutable journal envelope t
     assert.equal(isSameIncomingEnvelope(envelope, { ...envelope, [field]: value }), false, field);
   }
   assert.equal(isSameIncomingEnvelope(envelope, { ...envelope, actorId: undefined }), false);
+});
+
+
+test("incoming payload validation accepts only JSON objects", () => {
+  for (const payload of ['{}', '{"name":"MG"}', '{"nested":{"value":1}}']) {
+    assert.equal(isJsonObjectPayload(payload), true, payload);
+  }
+  for (const payload of ['null', '[]', '42', '"text"', 'true', '', '{invalid']) {
+    assert.equal(isJsonObjectPayload(payload), false, payload);
+  }
 });
