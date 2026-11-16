@@ -227,6 +227,7 @@ function AuthShell({ apiBaseUrl }) {
     };
 
     let synchronizing = false;
+    let syncDeviceRegistered = false;
     const synchronize = async () => {
       if (!active || synchronizing) return;
       synchronizing = true;
@@ -234,6 +235,17 @@ function AuthShell({ apiBaseUrl }) {
         if (typeof navigator !== "undefined" && !navigator.onLine) {
           if (active) setSyncStatus("offline");
           return;
+        }
+
+        if (!syncDeviceRegistered) {
+          const deviceId = await operationStoreRef.current.getDeviceId();
+          await client.post("/api/sync/heartbeat", {
+            deviceId,
+            deviceName: "MG Business Web",
+            platform: navigator.platform || "Web",
+            clientVersion: "0.1.0"
+          });
+          syncDeviceRegistered = true;
         }
 
         if (active) setSyncStatus("syncing");
