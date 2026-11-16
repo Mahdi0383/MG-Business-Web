@@ -1571,10 +1571,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(notes,str) or len(notes) > 2000:
                     return self.send_json(400, {"error": "یادداشت بیش از حد طولانی است."})
                 customer_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
-                if len(customer_id) > 100: return self.send_json(400, {"error": "شناسه مشتری معتبر نیست."})
+                if not 1<=len(customer_id)<=100: return self.send_json(400, {"error": "شناسه مشتری معتبر نیست."})
+                normalized_phone=phone.strip() if phone and phone.strip() else None
                 db.execute("BEGIN IMMEDIATE")
+                if normalized_phone and db.execute("SELECT 1 FROM customers WHERE tenant_id=? AND phone=?",
+                                                   (user["tenant_id"],normalized_phone)).fetchone():
+                    db.rollback()
+                    return self.send_json(409, {"error": "این شماره تماس قبلاً برای مشتری دیگری ثبت شده است."})
                 db.execute("""INSERT INTO customers(id,tenant_id,full_name,phone,email,notes,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?)""", (customer_id,user["tenant_id"],name.strip(),phone.strip() if phone else None,email.strip() if email else None,notes,now,now))
+                    VALUES(?,?,?,?,?,?,?,?)""", (customer_id,user["tenant_id"],name.strip(),normalized_phone,email.strip() if email else None,notes,now,now))
                 audit(db,user["tenant_id"],user["id"],"customer.created","customer",customer_id)
                 db.commit()
                 return self.send_json(201, {"id": customer_id, "ok": True})
