@@ -374,7 +374,7 @@ class Handler(SimpleHTTPRequestHandler):
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
-                allowed = ("accounts","products","customers","game_devices","transactions","journal_entries",
+                allowed = ("users","accounts","products","customers","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
                 if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
                     return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
