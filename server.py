@@ -366,63 +366,6 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/me":
                 tenant = db.execute("SELECT id,name FROM tenants WHERE id=?", (user["tenant_id"],)).fetchone()
                 return self.send_json(200, {"user": public_user(user), "tenant": dict(tenant)})
-            if path == "/api/backup/restore":
-                if user["role"] != "owner":
-                    return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
-                if data.get("schema") != "mg-business-server-backup" or data.get("version") != 1:
-                    return self.send_json(400, {"error": "نسخه یا ساختار فایل پشتیبان معتبر نیست."})
-                tenant = data.get("tenant"); tables = data.get("tables")
-                if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
-                    return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
-                allowed = ("users","accounts","products","customers","game_devices","transactions","journal_entries",
-                           "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
-                if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
-                    return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
-                total_rows = sum(len(tables.get(name,[])) for name in allowed)
-                if total_rows > 500000:
-                    return self.send_json(413, {"error": "تعداد رکوردهای نسخه پشتیبان بیش از حد مجاز است."})
-                tenant_id = user["tenant_id"]
-                try:
-                    db.execute("BEGIN IMMEDIATE")
-                    db.execute("DROP TRIGGER IF EXISTS journal_entries_no_delete")
-                    db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
-                    column_map = {}
-                    for name in allowed:
-                        column_map[name] = {row["name"] for row in db.execute("PRAGMA table_info("+name+")").fetchall()}
-                        for record in tables.get(name,[]):
-                            if not isinstance(record,dict) or record.get("tenant_id") != tenant_id:
-                                db.rollback()
-                                return self.send_json(400, {"error": "رکورد نامعتبر یا متعلق به فضای کاری دیگر در پشتیبان وجود دارد."})
-                            if not set(record).issubset(column_map[name]):
-                                db.rollback()
-                                return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
-                    delete_order = ("game_sessions","order_items","orders","inventory_movements","journal_lines",
-                                    "journal_entries","transactions","products","customers","game_devices","accounts","audit_log")
-                    for name in delete_order:
-                        db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
-                    insert_order = ("accounts","products","customers","game_devices","transactions","journal_entries",
-                                    "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
-                    for name in insert_order:
-                        records = tables.get(name,[])
-                        if name == "journal_entries":
-                            records = sorted(records,key=lambda row: row.get("created_at",0))
-                        for record in records:
-                            columns = list(record.keys())
-                            if not columns:
-                                continue
-                            placeholders = ",".join("?" for _ in columns)
-                            sql = "INSERT INTO "+name+"("+",".join(columns)+") VALUES("+placeholders+")"
-                            db.execute(sql,tuple(record[column] for column in columns))
-                    db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
-                        BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
-                    db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
-                        BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
-                    audit(db,tenant_id,user["id"],"backup.restored","tenant",tenant_id,{"rows":total_rows})
-                    db.commit()
-                    return self.send_json(200, {"ok":True,"restoredRows":total_rows})
-                except sqlite3.IntegrityError:
-                    db.rollback()
-                    return self.send_json(409, {"error": "بازیابی به‌دلیل ناسازگاری ارتباط رکوردها انجام نشد؛ اطلاعات قبلی حفظ شد."})
             if path == "/api/backup":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان کامل دریافت کند."})
@@ -680,6 +623,63 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.create_session(db, user["id"])
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path == "/api/backup/restore":
+                if user["role"] != "owner":
+                    return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
+                if data.get("schema") != "mg-business-server-backup" or data.get("version") != 1:
+                    return self.send_json(400, {"error": "نسخه یا ساختار فایل پشتیبان معتبر نیست."})
+                tenant = data.get("tenant"); tables = data.get("tables")
+                if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
+                    return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
+                allowed = ("users","accounts","products","customers","game_devices","transactions","journal_entries",
+                           "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
+                if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
+                    return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
+                total_rows = sum(len(tables.get(name,[])) for name in allowed)
+                if total_rows > 500000:
+                    return self.send_json(413, {"error": "تعداد رکوردهای نسخه پشتیبان بیش از حد مجاز است."})
+                tenant_id = user["tenant_id"]
+                try:
+                    db.execute("BEGIN IMMEDIATE")
+                    db.execute("DROP TRIGGER IF EXISTS journal_entries_no_delete")
+                    db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                    column_map = {}
+                    for name in allowed:
+                        column_map[name] = {row["name"] for row in db.execute("PRAGMA table_info("+name+")").fetchall()}
+                        for record in tables.get(name,[]):
+                            if not isinstance(record,dict) or record.get("tenant_id") != tenant_id:
+                                db.rollback()
+                                return self.send_json(400, {"error": "رکورد نامعتبر یا متعلق به فضای کاری دیگر در پشتیبان وجود دارد."})
+                            if not set(record).issubset(column_map[name]):
+                                db.rollback()
+                                return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
+                    delete_order = ("game_sessions","order_items","orders","inventory_movements","journal_lines",
+                                    "journal_entries","transactions","products","customers","game_devices","accounts","audit_log")
+                    for name in delete_order:
+                        db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
+                    insert_order = ("accounts","products","customers","game_devices","transactions","journal_entries",
+                                    "journal_lines","inventory_movements","orders","order_items","game_sessions","audit_log")
+                    for name in insert_order:
+                        records = tables.get(name,[])
+                        if name == "journal_entries":
+                            records = sorted(records,key=lambda row: row.get("created_at",0))
+                        for record in records:
+                            columns = list(record.keys())
+                            if not columns:
+                                continue
+                            placeholders = ",".join("?" for _ in columns)
+                            sql = "INSERT INTO "+name+"("+",".join(columns)+") VALUES("+placeholders+")"
+                            db.execute(sql,tuple(record[column] for column in columns))
+                    db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
+                        BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
+                    db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
+                        BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+                    audit(db,tenant_id,user["id"],"backup.restored","tenant",tenant_id,{"rows":total_rows})
+                    db.commit()
+                    return self.send_json(200, {"ok":True,"restoredRows":total_rows})
+                except sqlite3.IntegrityError:
+                    db.rollback()
+                    return self.send_json(409, {"error": "بازیابی به‌دلیل ناسازگاری ارتباط رکوردها انجام نشد؛ اطلاعات قبلی حفظ شد."})
             if path == "/api/logout":
                 token = self.headers.get("Authorization", "")[7:].strip()
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
