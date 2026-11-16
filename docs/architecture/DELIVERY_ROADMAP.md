@@ -29,6 +29,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation; customer creation is the first applied business vertical slice below).
 - [x] Per-device, per-branch server acknowledgement watermarks; tenant-wide manager acknowledgement remains separately scoped.
 - [x] Atomic IndexedDB customer creation: local customer projection and branch-originated outbox command commit in one transaction; server-side customer creation replay and transactional inbound projection on other devices are implemented.
+- [x] Versioned customer deactivation is now included in the same local-first vertical slice: local inactive projection/outbox is atomic, server replay uses optimistic concurrency, and inbound deactivation/acknowledgement is transactional with origin-echo and stale-version handling.
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
 - [x] Transactional inbound customer create/update projection with atomic inbox acknowledgement, origin-operation echo suppression and durable stale-version conflict records; browser IndexedDB command handling has separate verification requirements.
 - [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
