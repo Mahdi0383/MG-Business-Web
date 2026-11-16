@@ -19,7 +19,8 @@ The default development configuration uses SQLite. Configure hosted environments
 - `Database__Provider=PostgreSql`
 - `ConnectionStrings__Business`
 - `DataProtection__KeysDirectory` — persistent, private storage for bearer-token protection keys
-- `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, ... — exact trusted frontend origins (for local Vite development, allow `http://localhost:5173`; for production, allow only the deployed frontend origin)
+- `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, ... — exact trusted frontend origins (for local Vite development, allow `http://localhost:5173`; for production, allow only the deployed frontend HTTPS origin)
+- `ForwardedHeaders__KnownProxies__0`, `ForwardedHeaders__KnownProxies__1`, ... — exact reverse-proxy IP addresses as observed by the API container; production startup rejects missing or invalid proxy addresses and trusts forwarded client IP/protocol headers only from these proxies
 - `Database__ApplyMigrations=true` — opt-in startup migration execution for PostgreSQL after reviewing the committed migration set
 
 Never commit production credentials, signing keys, or Data Protection key material.
@@ -32,7 +33,7 @@ From the repository root:
 cp .env.docker.example .env.docker
 ```
 
-Edit `.env.docker` and replace the database password with a long random alphanumeric value. Set `MG_FRONTEND_ORIGIN` to the exact origin serving the frontend (for local Vite this is normally `http://localhost:5173`). Keep `MG_API_BIND_ADDRESS=127.0.0.1` unless a properly secured HTTPS reverse proxy and firewall are configured.
+Edit `.env.docker` and replace every placeholder. Use a long random database password, set `MG_FRONTEND_ORIGIN` to the exact deployed HTTPS frontend origin, and set `MG_TRUSTED_PROXY_IP` to the exact reverse-proxy IP as seen from inside the API container (often the Docker network gateway; verify it on the deployment host). Keep `MG_API_BIND_ADDRESS=127.0.0.1`. The API trusts forwarded client IP and HTTPS protocol headers only from this configured proxy.
 
 ```bash
 docker compose --env-file .env.docker up -d --build
