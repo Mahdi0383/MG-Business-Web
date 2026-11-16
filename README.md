@@ -6,7 +6,7 @@
 - رابط React + Vite فارسی و RTL فقط در صورت پیکربندی API واقعی اجرا می‌شود؛ fallback نمایشی و داده mock از ورودی اصلی برنامه حذف شده است.
 - Backend با ASP.NET Core 10 و تفکیک Domain / Infrastructure / API.
 - احراز هویت Identity API، توکن bearer، محدودیت تلاش ورود و rate limit.
-- زیرساخت اولیه صف خروجی و صندوق ورودی پایدار در IndexedDB، Sync Agent، cursor امن و API ثبت/دریافت عملیات idempotent.
+- زیرساخت اولیه صف خروجی و صندوق ورودی پایدار در IndexedDB، Sync Agent، cursor امن، تأیید دریافت به‌ازای هر دستگاه و API ثبت/دریافت عملیات idempotent.
 - PWA قابل نصب با cache آفلاین پوسته و منابع استاتیک؛ مسیرهای API، احراز هویت و sync cache نمی‌شوند.
 - heartbeat دستگاه‌ها هر ۳۰ ثانیه و صفحه پایش اتصال برای Owner/Manager؛ قطع heartbeat بیش از ۹۰ ثانیه هشدار می‌شود.
 - ساخت کسب‌وکار، شعبه و عضویت کاربران با نقش‌های مختلف.
