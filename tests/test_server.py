@@ -217,6 +217,12 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             db.close()
 
+        status, result = self.request("GET", "/api/backup", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["schema"], "mg-business-server-backup")
+        self.assertIn("transactions", result["tables"])
+        self.assertNotIn("password_hash", result["tables"]["users"][0])
+
         status, result = self.request("POST", "/api/gamenet/devices", {
             "id": "pc-01", "name": "PC-01", "deviceType": "pc",
             "hourlyRate": 120000, "isFree": False
