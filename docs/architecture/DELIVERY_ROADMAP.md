@@ -171,4 +171,6 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Game-session start now maps provider-level database concurrency failures (including provider exceptions outside EF's DbUpdateException) to a controlled conflict response and rolls back the transaction rather than surfacing an unhandled server error.
 - Café kitchen ticket creation now maps unique-constraint races to HTTP 409; duplicate-ticket regression coverage verifies that a second request cannot create a second ticket for the same sales order.
 - These guards improve error handling under concurrent requests; they do not replace the remaining cross-provider stress and idempotency work for sales and other financial commands.
+- Game-session start now handles provider exceptions at both persistence and transaction-commit boundaries, returning a controlled conflict and attempting rollback rather than leaking a provider failure as HTTP 500.
+- Kitchen ticket status persistence maps EF concurrency/update failures to HTTP 409 so a concurrent state change is visible to the operator.
 
