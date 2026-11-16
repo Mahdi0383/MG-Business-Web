@@ -34,8 +34,8 @@ public static class SalesEndpoints
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
                 return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
-            if (request.Lines is null || request.Lines.Count == 0)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["فاکتور باید حداقل یک قلم داشته باشد."] });
+            if (request.Lines is null || request.Lines.Count == 0 || request.Lines.Any(line => line is null))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["فاکتور باید حداقل یک قلم معتبر داشته باشد و ردیف خالی مجاز نیست."] });
             if (!Enum.IsDefined(request.PaymentMethod))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت معتبر نیست."] });
             if ((request.AmountPaid > 0m && request.PaymentMethod == PaymentMethod.OnAccount)
