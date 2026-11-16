@@ -494,6 +494,64 @@ public sealed class SyncApiIntegrationTests
     }
 
     [Fact]
+    public async Task CustomerDeactivationRejectsStaleBaseVersionWithoutChangingCustomerOrJournal()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-customer-deactivate-stale-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Customer Deactivation Conflict Store",
+            slug = $"customer-deactivate-conflict-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var create = await client.PostAsJsonAsync("/api/customers", new
+        {
+            code = "C-DEL-STALE", name = "Keep Active", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var customer = await create.Content.ReadFromJsonAsync<CustomerEndpoints.CustomerResponse>();
+        Assert.NotNull(customer);
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Stale Deactivation Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId = customer!.Id, baseVersion = customer.Version + 1
+        });
+        var push = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.deactivated", schemaVersion = 1,
+                    authorityEpoch = 0, occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = payload, payloadSha256 = (string?)null
+                }
+            }
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, push.StatusCode);
+        var unchanged = await client.GetFromJsonAsync<CustomerEndpoints.CustomerResponse>($"/api/customers/{customer.Id}");
+        Assert.True(unchanged!.IsActive);
+        Assert.Equal(customer.Version, unchanged.Version);
+        var journal = await client.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.Empty(journal!.Operations);
+    }
+
+    [Fact]
     public async Task CustomerSyncCommandsRequireCustomerWriteRole()
     {
         using var factory = CreateFactory();
