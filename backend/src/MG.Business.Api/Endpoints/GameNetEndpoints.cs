@@ -135,6 +135,11 @@ public static class GameNetEndpoints
                 await transaction.RollbackAsync(cancellationToken);
                 return Results.Conflict(new { message = "شروع جلسه به دلیل هم‌زمانی یا تعارض داده‌ها انجام نشد." });
             }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "تغییر هم‌زمان پایگاه داده رخ داد؛ وضعیت دستگاه را بررسی و دوباره تلاش کنید." });
+            }
 
             await transaction.CommitAsync(cancellationToken);
             return Results.Created($"/api/gamenet/sessions/{session.Id}",
