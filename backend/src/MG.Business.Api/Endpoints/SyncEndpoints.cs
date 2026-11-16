@@ -312,13 +312,14 @@ public static class SyncEndpoints
             // Branch-scoped members may only publish operations for their selected
             // branch (or tenant-wide operations with no branch). Never trust a
             // client-supplied branch belonging to another active context.
-            if (prepared.Any(item => item.Request.BranchId.HasValue
-                && item.Request.BranchId != tenant.BranchId))
+            if (tenant.BranchId is Guid activeBranchId
+                && prepared.Any(item => item.Request.BranchId.HasValue
+                    && item.Request.BranchId != activeBranchId))
                 return Results.Forbid();
 
-            // Tenant-wide journal entries affect every branch. Branch-scoped staff
-            // cannot create them by omitting BranchId from an otherwise valid command.
-            if (tenant.BranchId is not null && tenant.Role is not ("Owner" or "Manager")
+            // Tenant-wide journal entries affect every branch and are reserved for
+            // owners/managers even when they have selected the tenant-wide context.
+            if (tenant.Role is not ("Owner" or "Manager")
                 && prepared.Any(item => item.Request.BranchId is null))
                 return Results.Forbid();
 
