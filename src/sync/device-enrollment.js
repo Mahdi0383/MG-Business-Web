@@ -273,7 +273,7 @@ export class DeviceEnrollmentClient {
     const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
     const now = Date.now();
     const cached = record.authorityLease;
-    if (cached?.verified === true && cached.tenantId === tenantId && cached.deviceId === record.deviceId
+    if (cached?.verified === true && cached.tenantId === tenantId && typeof cached.deviceId === "string"
       && (cached.branchId || null) === (branchId || null)
       && Date.parse(cached.expiresAtUtc) > now + 30_000) {
       await this.operationStore.setAuthorityLease({ tenantId, branchId, actorId, lease: cached });
