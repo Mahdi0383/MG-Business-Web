@@ -26,9 +26,9 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 
 ### C. Offline-first and high availability
 - [ ] Local durable database and operation journal on every supported client.
-- [ ] Transactional outbox/inbox and idempotent push/pull APIs.
+- [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation only; not yet applied to business domain projections).\n- [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
 - [ ] Per-domain conflict policy and operator reconciliation UI.
-- [ ] CCS heartbeat, peer health monitoring and alert queue.
+- [x] Initial tenant device heartbeat, Owner/Manager connectivity inventory and stale-heartbeat alerts in the open workspace.\n- [ ] Independent CCS heartbeat service, peer health monitoring, durable alert queue and MG Master relay.
 - [ ] Optional tenant-isolated MG Master failover data plane.
 - [ ] Fencing epochs, failover lease, split-brain prevention and tested failback.
 - [ ] LAN-only, WAN-only, total partition and recovery test suites.
