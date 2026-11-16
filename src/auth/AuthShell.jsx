@@ -273,6 +273,15 @@ function AuthShell({ apiBaseUrl }) {
           }, { tenantId, branchId: selectedBranch?.id || null, actorId: activeActorId });
           syncDeviceRegistered = true;
         }
+        
+        if (import.meta.env?.VITE_REQUIRE_AUTHORITY_LEASES === "true") {
+          await deviceEnrollmentRef.current.ensureAuthorityLease({
+            tenantId,
+            branchId: selectedBranch?.id || null,
+            actorId: activeActorId,
+            canAcquire: ["Owner", "Manager"].includes(selectedTenant?.role)
+          });
+        }
 
         if (active) setSyncStatus("syncing");
         let pullResult = null;
