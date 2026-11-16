@@ -193,7 +193,7 @@ test("branch-filtered pull acknowledges the scanned journal cursor", async () =>
   assert.equal(result.status, "pulled");
   assert.equal(result.received, 1);
   assert.deepEqual(calls.stored, ["tenant-1", [operation], 5, null]);
-  assert.deepEqual(calls.acknowledged, { deviceId: "device-1", sequence: 5 });
+  assert.deepEqual(calls.acknowledged, { deviceId: "device-1", sequence: 5, branchId: null });
 });
 
 test("branch-filtered pull advances across pages containing only hidden rows", async () => {
@@ -205,7 +205,7 @@ test("branch-filtered pull advances across pages containing only hidden rows", a
   assert.equal(result.status, "pulled");
   assert.equal(result.received, 0);
   assert.deepEqual(calls.stored, ["tenant-1", [], 8, null]);
-  assert.deepEqual(calls.acknowledged, { deviceId: "device-1", sequence: 8 });
+  assert.deepEqual(calls.acknowledged, { deviceId: "device-1", sequence: 8, branchId: null });
 });
 
 test("pull rejects a scan cursor preceding a visible operation", async () => {
