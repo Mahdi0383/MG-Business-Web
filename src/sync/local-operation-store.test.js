@@ -576,6 +576,15 @@ test("caches authoritative server customers for offline access without overwriti
   assert.equal(customer.syncStatus, "synced");
   assert.equal(customer.name, "Server Original");
 
+  await store.cacheServerCustomers(tenantId, [{
+    id: customerId, code: "SERVER-001", name: "Stale Server Replica",
+    phone: null, email: null, address: null, notes: null, isActive: true, version: 4
+  }]);
+  rows = await store.getCustomers(tenantId);
+  customer = rows.find(row => row.id === customerId);
+  assert.equal(customer.version, 5);
+  assert.equal(customer.name, "Server Original");
+
   await store.updateCustomer({
     tenantId, branchId, actorId, customerId,
     customer: { name: "Local Offline Edit" }
