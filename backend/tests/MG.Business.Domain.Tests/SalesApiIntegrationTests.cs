@@ -164,6 +164,65 @@ public sealed class SalesApiIntegrationTests
 
 
     [Fact]
+    public async Task SaleRejectsOverpaymentAndUnassignedPartialPaymentAsValidationErrors()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sales-settlement-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Settlement Validation Store",
+            slug = $"settlement-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var revenue = await CreateAccountAsync(client, "4000", "Sales Revenue", AccountType.Revenue);
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "SERVICE-SETTLEMENT",
+            name = "Service",
+            baseUnit = "service",
+            tracksInventory = false,
+            defaultSalePrice = 10m
+        });
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
+
+        async Task<HttpResponseMessage> CreateInvalidSale(decimal amountPaid, string reference)
+        {
+            return await client.PostAsJsonAsync("/api/sales/orders", new
+            {
+                customerId = (Guid?)null,
+                discount = 0m,
+                amountPaid,
+                paymentMethod = PaymentMethod.Cash,
+                revenueAccountId = revenue.Id,
+                paymentAccountId = Guid.NewGuid(),
+                receivableAccountId = (Guid?)null,
+                inventoryAccountId = (Guid?)null,
+                costOfGoodsSoldAccountId = (Guid?)null,
+                paymentReference = reference,
+                lines = new[] { new { productId = product!.Id, quantity = 1m, unitPrice = 10m, discount = 0m } }
+            });
+        }
+
+        using var overpayment = await CreateInvalidSale(11m, "OVERPAY");
+        using var unassignedPartial = await CreateInvalidSale(5m, "PARTIAL");
+        Assert.Equal(HttpStatusCode.BadRequest, overpayment.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, unassignedPartial.StatusCode);
+
+        var orders = await client.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
+        Assert.Empty(orders!);
+        var trial = await client.GetFromJsonAsync<TrialBalanceResponse>("/api/accounting/trial-balance");
+        Assert.Equal(0m, trial!.TotalDebit);
+        Assert.Equal(0m, trial.TotalCredit);
+    }
+
+    [Fact]
     public async Task BranchScopedCashierListsOnlySalesFromAssignedBranch()
     {
         using var factory = CreateFactory();
