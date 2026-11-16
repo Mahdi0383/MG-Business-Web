@@ -89,9 +89,8 @@ public static class AccountingEndpoints
 
         group.MapGet("/trial-balance", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
-            var entries = await db.JournalEntries.AsNoTracking()
-                .Where(x => x.TenantId == tenant.TenantId)
-                .SelectMany(x => x.Lines)
+            var entries = await db.JournalEntryLines.AsNoTracking()
+                .Where(line => line.TenantId == tenant.TenantId)
                 .Join(db.Accounts.AsNoTracking(), line => line.AccountId, account => account.Id,
                     (line, account) => new { line, account })
                 .ToListAsync(cancellationToken);
