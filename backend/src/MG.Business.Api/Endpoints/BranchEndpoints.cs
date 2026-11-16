@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -40,6 +41,7 @@ public static class BranchEndpoints
             db.Branches.Add(branch);
             try { await db.SaveChangesAsync(cancellationToken); }
             catch (DbUpdateException) { return Results.Conflict(new { message = "کد شعبه در این کسب‌وکار تکراری است." }); }
+            catch (DbException) { return Results.Conflict(new { message = "پایگاه داده نتوانست شعبه را با اطمینان ثبت کند؛ وضعیت را بررسی و دوباره تلاش کنید." }); }
 
             return Results.Created($"/api/branches/{branch.Id}", ToResponse(branch));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ManageRoles)));
@@ -63,6 +65,10 @@ public static class BranchEndpoints
             catch (DbUpdateException)
             {
                 return Results.Conflict(new { message = "کد شعبه تکراری است." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست تغییرات شعبه را با اطمینان ثبت کند؛ اطلاعات را تازه‌سازی کنید." });
             }
 
             return Results.Ok(ToResponse(branch));
@@ -90,7 +96,18 @@ public static class BranchEndpoints
             }
 
             branch.SetActive(request.IsActive);
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new { message = "وضعیت شعبه به دلیل تعارض داده‌ها تغییر نکرد؛ اطلاعات را تازه‌سازی کنید." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست وضعیت شعبه را با اطمینان تغییر دهد؛ وضعیت را دوباره بررسی کنید." });
+            }
             return Results.Ok(ToResponse(branch));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ManageRoles)));
 
