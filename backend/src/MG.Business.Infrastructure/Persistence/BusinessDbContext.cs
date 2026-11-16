@@ -88,6 +88,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Ignore(x => x.SignedQuantity);
             entity.Property(x => x.Quantity).HasColumnName("quantity").HasPrecision(18, 3);
             entity.Property(x => x.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
             entity.Property(x => x.Reference).HasMaxLength(100);
