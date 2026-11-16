@@ -173,7 +173,7 @@ public sealed class TenantOnboardingAndInventoryTests
         foreach (var receipt in new[] { (quantity: 10m, cost: 5m), (quantity: 10m, cost: 10m) })
         {
             client.DefaultRequestHeaders.Remove("Idempotency-Key");
-            client.DefaultRequestHeaders.Add("Idempotency-Key", $"valuation-receipt-{receipt.quantity}");
+            client.DefaultRequestHeaders.Add("Idempotency-Key", $"valuation-receipt-{receipt.quantity}-{receipt.cost}");
             var receiptResponse = await client.PostAsJsonAsync("/api/inventory/movements", new
             {
                 productId = product!.Id,
