@@ -35,6 +35,11 @@ public static class SalesEndpoints
                 return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
             if (request.Lines is null || request.Lines.Count == 0)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["فاکتور باید حداقل یک قلم داشته باشد."] });
+            if (!Enum.IsDefined(request.PaymentMethod))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت معتبر نیست."] });
+            if ((request.AmountPaid > 0m && request.PaymentMethod == PaymentMethod.OnAccount)
+                || (request.AmountPaid == 0m && request.PaymentMethod != PaymentMethod.OnAccount))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت با مبلغ پرداختی سازگار نیست."] });
             if (request.AmountPaid < 0m || decimal.Round(request.AmountPaid, 2) != request.AmountPaid)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداخت معتبر نیست."] });
 
