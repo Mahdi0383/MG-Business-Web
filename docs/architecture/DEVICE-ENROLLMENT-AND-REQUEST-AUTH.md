@@ -69,9 +69,9 @@ A separate `DeviceAuthorityLease` aggregate and persistence table now provide te
 - `POST /api/sync/authority-lease` acquires or renews a short-lived (two-minute) lease. Acquisition is serialized using a serializable database transaction.
 - Only Owner/Manager can acquire; authenticated tenant members can read the current signed lease using `GET /api/sync/authority-lease`.
 - The issuer signs a canonical lease using ECDSA P-256 / SHA-256. Lease fields include tenant, branch, scope, device, lease ID, monotonic epoch, issued-at and expiry.
-- An expired/revoked lease advances the fencing epoch. A competing device cannot take over an unexpired lease.
-- When `SyncSecurity:RequireAuthorityLeases=true`, push rejects zero/stale epochs, wrong device, wrong branch, revoked leases and operations outside the lease validity window.
-- Browser verification uses a pinned SPKI key from `VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64`; offline commands obtain the epoch only after re-verifying the signature, device/scope binding and expiry from IndexedDB.
+- An expired/revoked lease advances the fencing epoch. A competing Owner/Manager device cannot take over an unexpired lease. The lease holder controls the branch authority term; every separately enrolled branch device can submit its own signed operations using that verified branch epoch.
+- When `SyncSecurity:RequireAuthorityLeases=true`, push rejects zero/stale epochs, wrong branch, revoked leases and operations outside the lease validity window. The request signature independently binds each operation to the authenticated source device; the source device does not have to be the lease-holder device.
+- Browser verification uses a pinned SPKI key from `VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64`; offline commands obtain the epoch only after re-verifying the signature, branch-scope binding and expiry from IndexedDB. The signed lease identifies its leader device; the local operation retains its own independently enrolled device ID.
 - Credential rotation/revocation invalidates the device's active authority leases.
 
 ## Required production configuration
