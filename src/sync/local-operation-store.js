@@ -90,12 +90,19 @@ export class LocalOperationStore {
   }
 
   async enqueue({ tenantId, branchId = null, operationType, payload, schemaVersion = 1, authorityEpoch = 0 }) {
-    if (!tenantId) throw new TypeError("tenantId is required.");
-    if (!operationType || operationType.length > 100) throw new TypeError("operationType must be 1–100 characters.");
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (typeof operationType !== "string" || !operationType.trim() || operationType.trim().length > 100)
+      throw new TypeError("operationType must be 1–100 characters.");
     if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError("schemaVersion must be a positive integer.");
     if (authorityEpoch !== 0) throw new TypeError("Non-zero authority epochs require a verified signed lease; failover is not enabled yet.");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      throw new TypeError("Offline operation payload must be a JSON object.");
 
-    const payloadJson = JSON.stringify(payload);
+    let payloadJson;
+    try { payloadJson = JSON.stringify(payload); }
+    catch { throw new TypeError("Offline operation payload must be JSON serializable."); }
+    if (typeof payloadJson !== "string")
+      throw new TypeError("Offline operation payload must be JSON serializable.");
     if (new TextEncoder().encode(payloadJson).byteLength > 64 * 1024)
       throw new RangeError("Offline operation payload exceeds 64 KiB.");
 
@@ -104,7 +111,7 @@ export class LocalOperationStore {
       deviceId: await this.getDeviceId(),
       tenantId,
       branchId,
-      operationType,
+      operationType: operationType.trim(),
       schemaVersion,
       authorityEpoch,
       occurredAtUtc: new Date().toISOString(),
