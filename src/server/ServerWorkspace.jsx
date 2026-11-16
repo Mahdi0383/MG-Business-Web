@@ -13,7 +13,8 @@ const navigation = [
   ["accounts", "∑", "حساب‌ها"],
   ["cafe", "☕", "آشپزخانه"],
   ["gamenet", "⌁", "گیم‌نت"],
-  ["devices", "◉", "وضعیت دستگاه‌ها"]
+  ["devices", "◉", "وضعیت دستگاه‌ها"],
+  ["syncConflicts", "⚠", "تعارض‌های همگام‌سازی"]
 ];
 
 const accountTypeName = {
@@ -56,6 +57,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
   const [accounts, setAccounts] = useState([]);
   const [kitchenTickets, setKitchenTickets] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [syncConflicts, setSyncConflicts] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -87,6 +89,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     if (id === "cafe") return canViewCafe;
     if (id === "gamenet") return canViewGameNet;
     if (id === "devices") return ["Owner", "Manager"].includes(tenant.role);
+    if (id === "syncConflicts") return ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "GameOperator", "KitchenStaff", "InventoryManager"].includes(tenant.role);
     return true;
   });
 
@@ -123,7 +126,12 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     setLoading(true);
     setError("");
     try {
-      if (page === "products") {
+      if (page === "syncConflicts") {
+        const allowTenantWide = ["Owner", "Manager"].includes(tenant.role);
+        const conflicts = await operationStore.getOpenConflicts(tenant.id, branch.id, allowTenantWide, 100);
+        setSyncConflicts(conflicts || []);
+      }
+      else if (page === "products") {
         const [productRows, currentStock] = await Promise.all([
           client.get("/api/inventory/products"),
           client.get("/api/inventory/stock")
@@ -552,6 +560,16 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         {loading && <div className="mg-server-loading">در حال دریافت اطلاعات از سرور...</div>}
         {syncStatus === "offline" && <div className="mg-server-offline-warning" role="status"><b>اتصال اینترنت قطع است.</b> پوسته برنامه و زیرساخت صف محلی موجود است، اما هنوز به فرم‌های فروش، انبار و حسابداری متصل نشده است؛ تا تکمیل این بخش، ثبت عملیات مالی را آفلاین انجام ندهید.</div>}
         {disconnectedDevices.length > 0 && <div className="mg-server-device-alert" role="alert"><b>هشدار قطع ارتباط دستگاه‌ها</b><p>{count(disconnectedDevices.length)} دستگاه در ۹۰ ثانیه اخیر heartbeat ارسال نکرده‌اند.</p><ul>{disconnectedDevices.map(device => <li key={device.deviceId}>{device.deviceName} — آخرین ارتباط: {dateTime(device.lastSeenAtUtc)}</li>)}</ul></div>}
+
+        {page === "syncConflicts" && <section className="mg-server-panel">
+          <div className="mg-server-panel-head"><div><h2>تعارض‌ها و عملیات نیازمند بررسی</h2><p>{count(syncConflicts.length)} مورد باز · ترتیب پردازش تا تعیین تکلیف هر مورد متوقف می‌ماند</p></div><button className="mg-secondary-btn" onClick={loadData} disabled={loading}>↻ بروزرسانی</button></div>
+          {syncConflicts.length === 0
+            ? <div className="mg-server-empty">در این شعبه تعارض بازی ثبت نشده است.</div>
+            : <div className="mg-server-table-wrap"><table><thead><tr><th>شماره توالی</th><th>نوع عملیات</th><th>نتیجه بررسی</th><th>علت</th><th>زمان ثبت</th><th>جزئیات</th></tr></thead><tbody>{syncConflicts.map(conflict => <tr key={conflict.sequence}>
+              <td>{count(conflict.sequence)}</td><td dir="ltr">{conflict.operationType || "—"}</td><td>{conflict.disposition === "conflict" ? "تعارض داده" : "بررسی دستی"}</td><td>{conflict.reason}</td><td>{dateTime(conflict.createdAtUtc)}</td><td><details><summary>مشاهده داده</summary><pre className="mg-sync-conflict-details">{JSON.stringify({ operationId: conflict.operationId, branchId: conflict.branchId, details: conflict.details }, null, 2)}</pre></details></td>
+            </tr>)}</tbody></table></div>}
+          <p className="mg-server-modal-hint">برای جلوگیری از تغییر ناخواسته اطلاعات مالی و موجودی، این صفحه فقط جزئیات را نمایش می‌دهد؛ حل تعارض‌های حساس باید با سیاست تطبیق و تأیید صریح انجام شود.</p>
+        </section>}
 
         {page === "devices" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>وضعیت اتصال دستگاه‌ها</h2><p>آستانه هشدار: ۹۰ ثانیه بدون heartbeat · آخرین بررسی هر ۳۰ ثانیه</p></div><span className="mg-server-device-count">{count(deviceStatuses.length)} دستگاه ثبت‌شده</span></div>
