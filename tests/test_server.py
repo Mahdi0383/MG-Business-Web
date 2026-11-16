@@ -86,6 +86,11 @@ class ApiIntegrationTests(unittest.TestCase):
                 WHERE e.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
                   AND e.source_type='transaction' AND e.source_id='tx-test-1'""").fetchone()
             self.assertEqual((totals[0], totals[1]), (150000, 150000))
+            journal_id = db.execute("SELECT id FROM journal_entries WHERE source_type='transaction' AND source_id='tx-test-1'").fetchone()[0]
+            with self.assertRaises(Exception):
+                db.execute("UPDATE journal_entries SET memo='tampered' WHERE id=?", (journal_id,))
+                db.commit()
+            db.rollback()
         finally:
             db.close()
 
