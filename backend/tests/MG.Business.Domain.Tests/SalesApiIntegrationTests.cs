@@ -526,6 +526,35 @@ public sealed class SalesApiIntegrationTests
         var sale = await saleResponse.Content.ReadFromJsonAsync<SaleResponse>();
         Assert.Equal(100m, sale!.BalanceDue);
 
+        using var zeroPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 0m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "ZERO"
+        });
+        using var excessivePrecision = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 1.001m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "PRECISION"
+        });
+        using var onAccountReceipt = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 10m, paymentMethod = PaymentMethod.OnAccount,
+            paymentAccountId = cash.Id, receivableAccountId = receivable.Id,
+            paymentReference = "ON-ACCOUNT"
+        });
+        using var foreignCashAccount = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
+        {
+            amount = 10m, paymentMethod = PaymentMethod.Cash,
+            paymentAccountId = Guid.NewGuid(), receivableAccountId = receivable.Id,
+            paymentReference = "FOREIGN-ACCOUNT"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, zeroPayment.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, excessivePrecision.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, onAccountReceipt.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, foreignCashAccount.StatusCode);
+
         var firstPayment = await client.PostAsJsonAsync($"/api/sales/orders/{sale.Id}/payments", new
         {
             amount = 40m, paymentMethod = PaymentMethod.Cash,
