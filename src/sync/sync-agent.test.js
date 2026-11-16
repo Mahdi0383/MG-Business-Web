@@ -270,3 +270,35 @@ test("does not misreport local validation errors as network outages", async () =
     /tenantId is required/
   );
 });
+
+test("rejects malformed branch identities and hashes before inbox persistence", async () => {
+  let persisted = false;
+  const api = {
+    async get() {
+      return {
+        operations: [{
+          sequence: 4,
+          operationId: "bad-envelope",
+          branchId: 42,
+          operationType: "customer.updated",
+          schemaVersion: 1,
+          payloadJson: "{}",
+          payloadSha256: "A".repeat(64)
+        }],
+        nextSequence: 4,
+        hasMore: false
+      };
+    },
+    async post() { assert.fail("invalid pull page must not be acknowledged"); }
+  };
+  const store = {
+    async getCursor() { return 3; },
+    async storeIncomingPage() { persisted = true; }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    /invalid branch identity/
+  );
+  assert.equal(persisted, false);
+});
