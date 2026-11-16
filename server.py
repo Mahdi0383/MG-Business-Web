@@ -213,7 +213,7 @@ def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind,
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
 
-def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost):
+def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost, note=''):
     amount = abs(quantity_delta) * unit_cost
     if amount <= 0:
         return
@@ -224,6 +224,8 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
         lines = ((accounts["5100"],amount,0),(accounts["1200"],0,amount))
     elif movement_type == "waste":
         lines = ((accounts["5200"],amount,0),(accounts["1200"],0,amount))
+    elif movement_type == "adjustment" and note.startswith("برگشت سفارش"):
+        lines = ((accounts["1200"],amount,0),(accounts["5100"],0,amount))
     elif quantity_delta > 0:
         lines = ((accounts["1200"],amount,0),(accounts["4100"],0,amount))
     else:
@@ -403,6 +405,33 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path.startswith("/api/orders/"):
+                order_id = path.rsplit("/", 1)[-1]
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error": "فقط مدیر می‌تواند سفارش را برگشت بزند."})
+                db.execute("BEGIN IMMEDIATE")
+                order = db.execute("SELECT * FROM orders WHERE id=? AND tenant_id=? AND status='paid'",
+                                   (order_id,user["tenant_id"])).fetchone()
+                if not order:
+                    db.rollback()
+                    return self.send_json(404, {"error": "سفارش پرداخت‌شده پیدا نشد."})
+                now = int(time.time())
+                lines = db.execute("SELECT product_id,quantity,unit_cost FROM order_items WHERE tenant_id=? AND order_id=?",
+                                   (user["tenant_id"],order_id)).fetchall()
+                for line in lines:
+                    movement_id = secrets.token_urlsafe(16)
+                    note = "برگشت سفارش "+order["order_number"]
+                    db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,user["tenant_id"],line["product_id"],user["id"],"adjustment",line["quantity"],line["unit_cost"],note,now))
+                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],movement_id,"adjustment",line["quantity"],line["unit_cost"],note)
+                tx_id = "order-"+order_id
+                db.execute("UPDATE transactions SET status='voided',voided_at=?,voided_by=? WHERE id=? AND tenant_id=? AND status='posted'",
+                           (now,user["id"],tx_id,user["tenant_id"]))
+                reverse_transaction_journal(db,user["tenant_id"],user["id"],tx_id)
+                db.execute("UPDATE orders SET status='cancelled' WHERE id=? AND tenant_id=?", (order_id,user["tenant_id"]))
+                audit(db,user["tenant_id"],user["id"],"order.cancelled","order",order_id)
+                db.commit()
+                return self.send_json(200, {"ok": True, "cancelled": True})
             if path.startswith("/api/users/"):
                 target_id = path.rsplit("/", 1)[-1]
                 if user["role"] != "owner":
@@ -645,7 +674,7 @@ class Handler(SimpleHTTPRequestHandler):
                 movement_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
                 db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,user["tenant_id"],product_id,user["id"],movement_type,delta,unit_cost,note,now))
-                post_inventory_movement_journal(db,user["tenant_id"],user["id"],movement_id,movement_type,delta,unit_cost)
+                post_inventory_movement_journal(db,user["tenant_id"],user["id"],movement_id,movement_type,delta,unit_cost,note)
                 audit(db,user["tenant_id"],user["id"],"inventory.movement.created","inventory_movement",movement_id,
                       {"productId":product_id,"quantityDelta":delta,"movementType":movement_type})
                 db.commit()
