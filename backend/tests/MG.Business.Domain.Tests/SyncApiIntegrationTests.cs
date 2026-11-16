@@ -89,6 +89,11 @@ public sealed class SyncApiIntegrationTests
         Assert.True(staleCursor!.StaleAcknowledgement);
         Assert.Equal(firstAck.Accepted[0].Sequence, staleCursor.Sequence);
 
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new { deviceId, deviceName = "Sync Test Device", platform = "Test", clientVersion = "0.1.0" });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+        var deviceInventory = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
+        Assert.Equal(firstAck.Accepted[0].Sequence, Assert.Single(deviceInventory!).LastAcknowledgedSequence);
+
         client.DefaultRequestHeaders.Remove("X-MG-Tenant");
         client.DefaultRequestHeaders.Add("X-MG-Tenant", Guid.NewGuid().ToString());
         var crossTenantPull = await client.GetAsync("/api/sync/operations?afterSequence=0");
@@ -189,7 +194,7 @@ public sealed class SyncApiIntegrationTests
     private sealed record SyncAck(Guid OperationId, long Sequence, bool Duplicate);
     private sealed record SyncCursorResponse(Guid DeviceId, long Sequence, bool StaleAcknowledgement);
     private sealed record SyncPullResponse(SyncOperationResponse[] Operations, long NextSequence, bool HasMore);
-    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, bool IsOnline, string? AlertCode);
+    private sealed record DevicePresenceResponse(Guid DeviceId, Guid ActorId, Guid? BranchId, string DeviceName, string Platform, string ClientVersion, DateTimeOffset FirstSeenAtUtc, DateTimeOffset LastSeenAtUtc, long LastAcknowledgedSequence, bool IsOnline, string? AlertCode);
     private sealed record SyncOperationResponse(long Sequence, Guid OperationId, Guid DeviceId, Guid? BranchId,
         string OperationType, int SchemaVersion, long AuthorityEpoch, DateTimeOffset OccurredAtUtc,
         DateTimeOffset ReceivedAtUtc, string PayloadJson, string PayloadSha256);
