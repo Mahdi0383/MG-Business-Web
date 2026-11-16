@@ -34,8 +34,15 @@ export function classifyIncomingOperation(operation, currentState = null) {
       && typeof payload?.productId === "string" && payload.productId.length > 0
       && Number.isInteger(Number(payload.type)) && Number(payload.type) >= 1 && Number(payload.type) <= 7
       && Number.isFinite(Number(payload.quantity)) && Number(payload.quantity) > 0
+      && Math.round(Number(payload.quantity) * 1000) === Number(payload.quantity) * 1000
       && Number.isFinite(Number(payload.baseQuantityOnHand)) && Number(payload.baseQuantityOnHand) >= 0
-      && Number.isFinite(Number(payload.baseInventoryValue)) && Number(payload.baseInventoryValue) >= 0;
+      && Number.isFinite(Number(payload.baseInventoryValue)) && Number(payload.baseInventoryValue) >= 0
+      && Math.round(Number(payload.baseInventoryValue) * 100) === Number(payload.baseInventoryValue) * 100
+      && (payload.reference == null || (typeof payload.reference === "string" && payload.reference.length <= 250))
+      && ([1, 5, 6].includes(Number(payload.type))
+        ? Number.isFinite(Number(payload.unitCost)) && Number(payload.unitCost) >= 0
+          && Math.round(Number(payload.unitCost) * 100) === Number(payload.unitCost) * 100
+        : payload.unitCost == null);
     if (!valid) {
       return {
         disposition: "manual-review",
