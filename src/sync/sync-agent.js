@@ -144,7 +144,7 @@ export class SyncAgent {
           payloadJson: operation.payloadJson,
           payloadSha256: operation.payloadSha256
         }))
-      }, { tenantId, branchId });
+      }, { tenantId, branchId, actorId });
 
       const acknowledgements = response?.accepted;
       if (!Array.isArray(acknowledgements))
