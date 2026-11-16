@@ -186,10 +186,10 @@ export class DeviceEnrollmentClient {
     const record = await this.ensureEnrolled({ tenantId, branchId, actorId });
     const now = Date.now();
     const cached = record.authorityLease;
-    if (cached?.verified === true && cached.tenantId === tenantId
+    if (cached?.verified === true && cached.tenantId === tenantId && cached.deviceId === record.deviceId
       && (cached.branchId || null) === (branchId || null)
       && Date.parse(cached.expiresAtUtc) > now + 30_000) {
-      await this.operationStore.setAuthorityLease({ tenantId, branchId, lease: cached });
+      await this.operationStore.setAuthorityLease({ tenantId, branchId, actorId, lease: cached });
       return cached;
     }
 
@@ -208,6 +208,7 @@ export class DeviceEnrollmentClient {
     if (!pinnedPublicKey || response?.publicKeySpkiBase64 !== pinnedPublicKey)
       throw new Error("The authority lease signing key does not match the configured trusted public key.");
     if (response.tenantId !== tenantId || (response.branchId || null) !== (branchId || null)
+      || response.deviceId !== record.deviceId
       || !Number.isSafeInteger(response.epoch) || response.epoch < 1
       || typeof response.leaseId !== "string" || typeof response.deviceId !== "string"
       || typeof response.scopeKey !== "string" || typeof response.signatureBase64 !== "string")
@@ -253,7 +254,7 @@ export class DeviceEnrollmentClient {
 
     const lease = { ...response, verified: true };
     await this.writeCredential({ ...record, authorityLease: lease });
-    await this.operationStore.setAuthorityLease({ tenantId, branchId, lease });
+    await this.operationStore.setAuthorityLease({ tenantId, branchId, actorId, lease });
     return lease;
   }
 
