@@ -484,6 +484,12 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"paid")
         self.assertEqual(result["remainingBalance"],0)
+        status, statement = self.request("GET", "/api/suppliers/supplier-1/ledger", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(statement["totalPurchases"],420000)
+        self.assertEqual(statement["totalPayments"],420000)
+        self.assertEqual(statement["balance"],0)
+        self.assertEqual(len(statement["items"]),3)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "amount":1,"paymentMethod":"cash"
         }, token)
