@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -120,7 +121,37 @@ public static class AccountingEndpoints
             }
 
             db.JournalEntries.Add(entry);
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                // EF Core persists the entry and all lines in one SaveChanges transaction.
+                // Convert provider/concurrency failures into a safe retryable response;
+                // never expose database details or report a partially posted journal.
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Results.Conflict(new
+                {
+                    code = "journal_entry_concurrency_conflict",
+                    message = "اطلاعات حساب‌ها هم‌زمان تغییر کرده است؛ سند را تازه‌سازی و دوباره ثبت کنید."
+                });
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new
+                {
+                    code = "journal_entry_persistence_conflict",
+                    message = "ثبت سند به دلیل تعارض یا محدودیت اطلاعات پایگاه داده انجام نشد."
+                });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new
+                {
+                    code = "journal_entry_provider_conflict",
+                    message = "پایگاه داده نتوانست سند را با اطمینان ثبت کند؛ وضعیت سند را بررسی کنید."
+                });
+            }
 
             return Results.Created($"/api/accounting/journal-entries/{entry.Id}", new
             {
