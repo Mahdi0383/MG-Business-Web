@@ -45,6 +45,12 @@ class ApiIntegrationTests(unittest.TestCase):
     def test_setup_auth_transaction_audit_and_isolation(self):
         status, result = self.request("GET", "/api/setup-status")
         self.assertEqual((status, result["configured"]), (200, False))
+        status, result = self.request("POST", "/api/setup", {
+            "businessName": "MG Test Shop", "username": "owner", "password": "short"
+        })
+        self.assertEqual(status, 400)
+        status, result = self.request("GET", "/api/products")
+        self.assertEqual(status, 401)
 
         status, result = self.request("POST", "/api/setup", {
             "businessName": "MG Test Shop", "username": "owner",
