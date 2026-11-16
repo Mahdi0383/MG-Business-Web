@@ -353,6 +353,70 @@ export class LocalOperationStore {
     return { ...initial, ...normalized, version: baseVersion, syncStatus: "pending", lastOperationId: operation.operationId };
   }
 
+
+  async deactivateCustomer({ tenantId, branchId, actorId, customerId }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
+    if (typeof branchId !== "string" || !branchId.trim()) throw new TypeError("branchId is required for a branch-originated customer command.");
+    if (typeof actorId !== "string" || !actorId.trim()) throw new TypeError("actorId is required.");
+    if (typeof customerId !== "string" || !customerId.trim()) throw new TypeError("customerId is required.");
+
+    const database = await openDatabase();
+    const readTransaction = database.transaction(CUSTOMERS_STORE, "readonly");
+    const readDone = transactionDone(readTransaction);
+    const initial = await requestResult(readTransaction.objectStore(CUSTOMERS_STORE).get([tenantId, customerId]));
+    await readDone;
+    if (!initial) throw new Error("Customer does not exist in the local projection.");
+    if (initial.isActive === false) throw new Error("Customer is already inactive.");
+    if (initial.syncStatus === "pending") throw new Error("Customer already has a pending update; synchronize or reconcile it first.");
+    if (!Number.isSafeInteger(initial.version) || initial.version < 1)
+      throw new Error("Customer projection has no valid server-confirmed version.");
+
+    const baseVersion = initial.version;
+    const now = new Date().toISOString();
+    const payloadJson = JSON.stringify({ customerId, baseVersion });
+    const operation = {
+      operationId: crypto.randomUUID(),
+      deviceId: await this.getDeviceId(actorId),
+      tenantId, branchId,
+      operationType: "customer.profile.deactivated",
+      schemaVersion: 1, authorityEpoch: 0,
+      occurredAtUtc: now,
+      payloadJson,
+      payloadSha256: await sha256(payloadJson),
+      state: "pending", attempts: 0,
+      createdAtUtc: now, acknowledgedAtUtc: null, serverSequence: null
+    };
+
+    const transaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    const operations = transaction.objectStore(OPERATIONS_STORE);
+    const customers = transaction.objectStore(CUSTOMERS_STORE);
+    const currentRequest = customers.get([tenantId, customerId]);
+    let integrityError = null;
+    currentRequest.onsuccess = () => {
+      const current = currentRequest.result;
+      if (!current || current.version !== baseVersion || current.isActive === false || current.syncStatus === "pending") {
+        integrityError = new Error("Customer changed while preparing the offline deactivation; reload and retry.");
+        transaction.abort();
+        return;
+      }
+      customers.put({
+        ...current,
+        isActive: false,
+        syncStatus: "pending",
+        lastOperationId: operation.operationId,
+        pendingBaseVersion: baseVersion,
+        updatedAtUtc: now
+      });
+      operations.add(operation);
+    };
+    try { await done; }
+    catch (error) { if (integrityError) throw integrityError; throw error; }
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("mg-customer-sync-updated"));
+    return { ...initial, isActive: false, syncStatus: "pending", lastOperationId: operation.operationId };
+  }
+
   async cacheServerCustomers(tenantId, rows) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (!Array.isArray(rows)) throw new TypeError("Server customer rows must be an array.");
@@ -485,14 +549,15 @@ export class LocalOperationStore {
     const payload = operation.payload;
     const isCreate = operation.operationType === "customer.profile.created";
     const isUpdate = operation.operationType === "customer.profile.updated";
-    if (!isCreate && !isUpdate)
+    const isDeactivate = operation.operationType === "customer.profile.deactivated";
+    if (!isCreate && !isUpdate && !isDeactivate)
       throw new Error("No local projection handler is registered for " + operation.operationType + ".");
     if (typeof payload.customerId !== "string" || !payload.customerId.trim())
       throw new TypeError("Customer command requires a customerId.");
     if (isCreate && payload.baseVersion !== 0)
       throw new TypeError("Customer creation requires baseVersion 0.");
-    if (isUpdate && (!Number.isSafeInteger(payload.baseVersion) || payload.baseVersion < 1))
-      throw new TypeError("Customer update requires a positive baseVersion.");
+    if ((isUpdate || isDeactivate) && (!Number.isSafeInteger(payload.baseVersion) || payload.baseVersion < 1))
+      throw new TypeError("Customer update or deactivation requires a positive baseVersion.");
     const database = await openDatabase();
     const transaction = database.transaction([INBOX_STORE, CUSTOMERS_STORE], "readwrite");
     const done = transactionDone(transaction);
@@ -533,7 +598,7 @@ export class LocalOperationStore {
             serverSequence: sequence
           });
         }
-      } else if (isUpdate) {
+      } else if (isUpdate || isDeactivate) {
         if (!existingCustomer) {
           integrityError = new Error("Customer update projection target does not exist.");
           transaction.abort();
@@ -547,9 +612,15 @@ export class LocalOperationStore {
             transaction.abort();
             return;
           }
-          const normalized = normalizeLocalCustomer({ ...existingCustomer, ...payload });
+          if (isDeactivate && existingCustomer.isActive === false) {
+            integrityError = new Error("Customer is already inactive under a different operation.");
+            transaction.abort();
+            return;
+          }
+          const normalized = isUpdate ? normalizeLocalCustomer({ ...existingCustomer, ...payload }) : existingCustomer;
           customerStore.put({
             ...existingCustomer, ...normalized,
+            ...(isDeactivate ? { isActive: false } : {}),
             version: payload.baseVersion + 1,
             syncStatus: "synced",
             lastOperationId: operation.operationId,
