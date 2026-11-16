@@ -46,7 +46,7 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [stockRows, setStockRows] = useState([]);
@@ -89,6 +89,24 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
     return true;
   });
 
+  const loadCustomers = async () => {
+    let localRows = [];
+    try { localRows = await operationStore.getCustomers(tenant.id); } catch { /* Local storage may be unavailable in private browsing. */ }
+    try {
+      const serverRows = await client.get("/api/customers");
+      const merged = new Map((localRows || []).map(row => [row.id, { ...row }]));
+      for (const row of serverRows || []) {
+        const local = merged.get(row.id);
+        merged.set(row.id, { ...local, ...row, syncStatus: local?.syncStatus || "synced" });
+      }
+      return [...merged.values()].sort((left, right) =>
+        String(right.updatedAtUtc || right.createdAtUtc || "").localeCompare(String(left.updatedAtUtc || left.createdAtUtc || "")));
+    } catch (loadError) {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return localRows;
+      throw loadError;
+    }
+  };
+
   const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -101,7 +119,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
         setProducts(productRows || []);
         setStockRows(currentStock || []);
       }
-      else if (page === "customers") setCustomers(await client.get("/api/customers"));
+      else if (page === "customers") setCustomers(await loadCustomers());
       else if (page === "sales") setSales(await client.get("/api/sales/orders"));
       else if (page === "accounts") {
         const accountRows = await client.get("/api/accounting/accounts");
@@ -120,7 +138,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
         const [productRows, currentStock, customerRows, salesRows, accountRows, ticketRows, sessionRows] = await Promise.all([
           canViewProducts ? client.get("/api/inventory/products") : Promise.resolve([]),
           canViewProducts ? client.get("/api/inventory/stock") : Promise.resolve([]),
-          canViewCustomers ? client.get("/api/customers") : Promise.resolve([]),
+          canViewCustomers ? loadCustomers() : Promise.resolve([]),
           canViewSales ? client.get("/api/sales/orders") : Promise.resolve([]),
           canViewAccounts ? client.get("/api/accounting/accounts") : Promise.resolve([]),
           canViewCafe ? client.get("/api/cafe/kitchen/tickets") : Promise.resolve([]),
@@ -143,7 +161,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
     } finally {
       setLoading(false);
     }
-  }, [client, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
+  }, [client, operationStore, tenant.id, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -257,14 +275,20 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
           defaultSalePrice: Number(form.defaultSalePrice || 0)
         });
       } else if (modal === "customer") {
-        await client.post("/api/customers", {
-          code: form.code.trim(),
-          name: form.name.trim(),
-          phone: form.phone.trim() || null,
-          email: form.email.trim() || null,
-          address: form.address.trim() || null,
-          notes: form.notes.trim() || null
+        await operationStore.createCustomer({
+          tenantId: tenant.id,
+          branchId: branch.id,
+          actorId,
+          customer: {
+            code: form.code,
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            address: form.address,
+            notes: form.notes
+          }
         });
+        successNotice = "مشتری روی دستگاه ذخیره شد و در صف همگام‌سازی قرار گرفت.";
       } else if (modal === "account") {
         await client.post("/api/accounting/accounts", {
           code: form.code.trim(),
@@ -505,7 +529,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
         {page === "customers" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>مشتریان</h2><p>{count(customers.length)} رکورد از پایگاه داده</p></div>{canCreateCustomer && <button className="mg-primary-btn" onClick={() => openCreate("customer")}>＋ مشتری جدید</button>}</div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th></tr></thead>
-            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
+            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.syncStatus === "pending" ? "در انتظار همگام‌سازی" : customer.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
           </table>{!customers.length && <div className="mg-server-empty">هنوز مشتری ثبت نشده است.</div>}</div>
         </section>}
 
