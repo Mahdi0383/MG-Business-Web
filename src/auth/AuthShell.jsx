@@ -40,6 +40,7 @@ function AuthShell({ apiBaseUrl }) {
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState("idle");
   const [pendingOperations, setPendingOperations] = useState(0);
+  const [incomingOperations, setIncomingOperations] = useState(0);
 
   useEffect(() => {
     client.onSessionChanged = value => {
@@ -213,8 +214,11 @@ function AuthShell({ apiBaseUrl }) {
 
     const refreshPendingCount = async () => {
       try {
-        const pending = await operationStoreRef.current.getPendingCount(tenantId);
-        if (active) setPendingOperations(pending);
+        const [pending, incoming] = await Promise.all([
+          operationStoreRef.current.getPendingCount(tenantId),
+          operationStoreRef.current.getInboxCount(tenantId)
+        ]);
+        if (active) { setPendingOperations(pending); setIncomingOperations(incoming); }
       } catch {
         if (active) setSyncStatus("error");
       }
@@ -230,6 +234,7 @@ function AuthShell({ apiBaseUrl }) {
 
       setSyncStatus("syncing");
       try {
+        await syncAgentRef.current.pullIncoming(tenantId);
         const result = await syncAgentRef.current.pushPending(tenantId);
         if (active) setSyncStatus(result.status);
       } catch {
@@ -262,7 +267,7 @@ function AuthShell({ apiBaseUrl }) {
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">
