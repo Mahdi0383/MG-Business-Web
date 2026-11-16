@@ -94,7 +94,7 @@ test("rotates the browser device key with proof of possession and clears its old
     "spki", Buffer.from(rotation.body.publicKeySpkiBase64, "base64"),
     { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
   );
-  const challenge = calls.find(call => call.path.endsWith("/challenges") && call.body.deviceId === deviceId);
+  const challenge = calls.filter(call => call.path.endsWith("/challenges") && call.body.deviceId === deviceId).at(-1);
   const canonical = [
     "MG-DEVICE-ROTATION-V1", tenantId, branchId, actorId, deviceId,
     challenge.body.challengeId, challenge.body.challenge
