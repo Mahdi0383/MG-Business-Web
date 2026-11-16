@@ -163,6 +163,23 @@ public sealed class TenantOnboardingAndInventoryTests
             reference = "oversell"
         });
         Assert.Equal(HttpStatusCode.Conflict, oversell.StatusCode);
+
+        var firstPage = await client.GetFromJsonAsync<MovementPage>(
+            "/api/inventory/movements?page=1&pageSize=2");
+        Assert.NotNull(firstPage);
+        Assert.Equal(1, firstPage.Page);
+        Assert.Equal(2, firstPage.PageSize);
+        Assert.Equal(3, firstPage.TotalCount);
+        Assert.Equal(2, firstPage.TotalPages);
+        Assert.Equal(2, firstPage.Items.Length);
+
+        var secondPage = await client.GetFromJsonAsync<MovementPage>(
+            "/api/inventory/movements?page=2&pageSize=2");
+        Assert.NotNull(secondPage);
+        Assert.Single(secondPage.Items);
+
+        var invalidPage = await client.GetAsync("/api/inventory/movements?page=2147483647&pageSize=200");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidPage.StatusCode);
     }
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
@@ -203,4 +220,6 @@ public sealed class TenantOnboardingAndInventoryTests
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record ProductCreated(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, bool IsActive);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
+    private sealed record MovementPage(int Page, int PageSize, int TotalCount, int TotalPages, MovementItem[] Items);
+    private sealed record MovementItem(Guid Id, Guid ProductId, Guid BranchId, string Type, decimal Quantity, decimal UnitCost, decimal SignedQuantity, string? Reference, DateTimeOffset CreatedAtUtc);
 }
