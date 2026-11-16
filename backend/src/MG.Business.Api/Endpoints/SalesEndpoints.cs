@@ -245,8 +245,9 @@ public static class SalesEndpoints
                     return Results.Conflict(new { message = "کلید Idempotency-Key قبلاً برای درخواست متفاوتی استفاده شده است." });
                 var priorOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
                     x.TenantId == tenantId && x.BranchId == branchId && x.Id == priorPayment.SalesOrderId, cancellationToken);
-                return priorOrder is null ? Results.Conflict(new { message = "رکورد دریافت قبلی با فاکتور متناظر پیدا نشد." })
-                    : Results.Ok(new { priorOrder.Id, priorOrder.Number, priorOrder.Total, priorOrder.PaidAmount, priorOrder.BalanceDue, paymentId = priorPayment.Id, replayed = true });
+                if (priorOrder is null)
+                    return Results.Conflict(new { message = "رکورد دریافت قبلی با فاکتور متناظر پیدا نشد." });
+                return Results.Ok(new { priorOrder.Id, priorOrder.Number, priorOrder.Total, priorOrder.PaidAmount, priorOrder.BalanceDue, paymentId = priorPayment.Id, replayed = true });
             }
 
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
