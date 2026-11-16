@@ -444,3 +444,46 @@ test("refuses to transmit a pending operation belonging to another device", asyn
   );
   assert.equal(transmitted, false);
 });
+
+
+test("runs pull and push independently without starving inbound sync", async () => {
+  let releasePush;
+  let pullCompleted = false;
+  const pushGate = new Promise(resolve => { releasePush = resolve; });
+  const api = {
+    async get() {
+      pullCompleted = true;
+      return { operations: [], nextSequence: 0, hasMore: false };
+    },
+    async post(path) {
+      if (path === "/api/sync/operations") {
+        await pushGate;
+        return { accepted: [{ operationId: "pending-op", sequence: 1, duplicate: false }] };
+      }
+      return {};
+    }
+  };
+  const store = {
+    async getCursor() { return 0; },
+    async getDeviceId() { return "device-1"; },
+    async getPending() {
+      return [{
+        operationId: "pending-op", tenantId: "tenant-1", deviceId: "device-1", branchId: null,
+        operationType: "test.created", schemaVersion: 1, authorityEpoch: 0,
+        occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson: "{}",
+        payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }];
+    },
+    async storeIncomingPage() {},
+    async acknowledge() {}
+  };
+  const agent = new SyncAgent(api, store);
+  const pushPromise = agent.pushPending("tenant-1", { actorId: "actor-1" });
+  await Promise.resolve();
+  const pullResult = await agent.pullIncoming("tenant-1", { actorId: "actor-1" });
+  assert.equal(pullCompleted, true);
+  assert.equal(pullResult.status, "pulled");
+  releasePush();
+  const pushResult = await pushPromise;
+  assert.equal(pushResult.status, "synced");
+});
