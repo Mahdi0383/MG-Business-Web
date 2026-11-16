@@ -50,12 +50,26 @@ jobs:
             for (const name of fs.readdirSync(directory).filter(name => name.endsWith('.cs')).sort()) {
               const fullPath = path.join(directory, name);
               const content = fs.readFileSync(fullPath).toString('base64');
+              const filePath = `${directory}/${name}`;
+              let sha;
+              try {
+                const existing = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: filePath,
+                  ref: branch
+                });
+                if (!Array.isArray(existing.data)) sha = existing.data.sha;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
               await github.rest.repos.createOrUpdateFileContents({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                path: `${directory}/${name}`,
+                path: filePath,
                 message: `Commit generated EF migration source: ${name}`,
                 content,
+                sha,
                 branch
               });
             }
