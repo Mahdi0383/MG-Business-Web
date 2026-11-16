@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Runtime.CompilerServices;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -67,10 +68,7 @@ public static class InventoryEndpoints
                 query = query.Where(x => x.BranchId == branchId);
 
             var totals = new Dictionary<(Guid ProductId, Guid BranchId), (InventoryValuationAccumulator Valuation, int Count)>();
-            await foreach (var movement in query
-                .OrderBy(x => x.ProductId).ThenBy(x => x.BranchId)
-                .ThenBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
-                .AsAsyncEnumerable().WithCancellation(cancellationToken))
+            await foreach (var movement in ReadOrderedMovements(query, db.Database.IsSqlite(), cancellationToken))
             {
                 var key = (movement.ProductId, movement.BranchId);
                 if (!totals.TryGetValue(key, out var state))
@@ -175,6 +173,35 @@ public static class InventoryEndpoints
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
         return endpoints;
+    }
+
+    private static async IAsyncEnumerable<StockMovement> ReadOrderedMovements(
+        IQueryable<StockMovement> query,
+        bool isSqlite,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // EF Core SQLite cannot translate DateTimeOffset ordering. Keep the production
+        // PostgreSQL path fully streamed; use deterministic client ordering for SQLite.
+        if (isSqlite)
+        {
+            var movements = await query.ToListAsync(cancellationToken);
+            foreach (var movement in movements
+                .OrderBy(x => x.ProductId).ThenBy(x => x.BranchId)
+                .ThenBy(x => x.CreatedAtUtc).ThenBy(x => x.Id))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return movement;
+            }
+            yield break;
+        }
+
+        await foreach (var movement in query
+            .OrderBy(x => x.ProductId).ThenBy(x => x.BranchId)
+            .ThenBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
+            .AsAsyncEnumerable().WithCancellation(cancellationToken))
+        {
+            yield return movement;
+        }
     }
 
     public sealed record CreateProductRequest(string Sku, string Name, string BaseUnit, bool TracksInventory = true, decimal DefaultSalePrice = 0m);
