@@ -516,6 +516,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان کامل دریافت کند."})
                 tenant_id = user["tenant_id"]
+                # Keep every table in the export on one SQLite read snapshot.
+                db.execute("BEGIN")
                 tables = {
                     "users": "SELECT id,tenant_id,username,role,active,created_at FROM users WHERE tenant_id=?",
                     "transactions": "SELECT * FROM transactions WHERE tenant_id=?",
@@ -538,6 +540,7 @@ class Handler(SimpleHTTPRequestHandler):
                             "tables":{}}
                 for name, query in tables.items():
                     snapshot["tables"][name] = [dict(row) for row in db.execute(query,(tenant_id,)).fetchall()]
+                db.commit()
                 return self.send_json(200, snapshot)
             if path == "/api/users":
                 if user["role"] not in ("owner","manager"):
@@ -911,6 +914,13 @@ class Handler(SimpleHTTPRequestHandler):
                 if not actor:
                     return self.send_json(503, {"error": "پذیرش سفارش در حال حاضر ممکن نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                # Recheck idempotency under the write lock to serialize concurrent retries.
+                if client_order_id:
+                    existing_order = db.execute("SELECT id,order_number AS orderNumber,total FROM orders WHERE id=? AND tenant_id=?",
+                                                 (client_order_id,tenant_id)).fetchone()
+                    if existing_order:
+                        db.rollback()
+                        return self.send_json(200, {"ok":True,"orderNumber":existing_order["orderNumber"],"total":existing_order["total"],"duplicate":True})
                 customer = db.execute("SELECT id FROM customers WHERE tenant_id=? AND phone=?",
                                       (tenant_id,phone.strip())).fetchone()
                 customer_id = customer["id"] if customer else secrets.token_urlsafe(18)
