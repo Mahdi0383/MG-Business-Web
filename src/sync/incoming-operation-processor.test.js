@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { IncomingOperationProcessor } from "./incoming-operation-processor.js";
+function payloadHash(payloadJson) {
+  return createHash("sha256").update(payloadJson, "utf8").digest("hex");
+}
+
 
 function setup(rows) {
   const calls = [];
@@ -19,7 +24,7 @@ function setup(rows) {
 test("applies eligible incoming operations through the atomic adapter contract", async () => {
   const { processor, calls } = setup([{
     sequence: 1, schemaVersion: 1, operationId: "op-1", operationType: "customer.profile.updated",
-    payloadJson: JSON.stringify({ name: "MG" })
+    payloadJson: JSON.stringify({ name: "MG" }), payloadSha256: payloadHash(JSON.stringify({ name: "MG" }))
   }]);
   const result = await processor.processBatch("tenant-1", 100, null, true);
   assert.equal(result.applied, 1);
@@ -31,7 +36,7 @@ test("applies eligible incoming operations through the atomic adapter contract",
 test("records sensitive operations as conflicts without applying them", async () => {
   const { processor, calls } = setup([{
     sequence: 2, schemaVersion: 1, operationId: "op-2", operationType: "accounting.entry.posted",
-    payloadJson: JSON.stringify({ amount: 100 })
+    payloadJson: JSON.stringify({ amount: 100 }), payloadSha256: payloadHash(JSON.stringify({ amount: 100 }))
   }]);
   const result = await processor.processBatch("tenant-1", 100, null, true);
   assert.equal(result.applied, 0);
@@ -43,7 +48,7 @@ test("stops on adapter failure and does not process later operations", async () 
   const rows = [1, 2].map(sequence => ({
     sequence, schemaVersion: 1, operationId: `op-${sequence}`,
     operationType: "customer.profile.updated",
-    payloadJson: JSON.stringify({ name: "MG" })
+    payloadJson: JSON.stringify({ name: "MG" }), payloadSha256: payloadHash(JSON.stringify({ name: "MG" }))
   }));
   const calls = [];
   const adapter = {
@@ -70,9 +75,9 @@ test("rejects incomplete dependencies", () => {
 test("stops ordered replay at the first unresolved conflict", async () => {
   const rows = [
     { sequence: 2, schemaVersion: 1, operationId: "op-2", operationType: "customer.profile.updated",
-      payloadJson: JSON.stringify({ name: "must-wait" }) },
+      payloadJson: JSON.stringify({ name: "must-wait" }), payloadSha256: payloadHash(JSON.stringify({ name: "must-wait" })) },
     { sequence: 1, schemaVersion: 1, operationId: "op-1", operationType: "accounting.entry.posted",
-      payloadJson: JSON.stringify({ amount: 100 }) }
+      payloadJson: JSON.stringify({ amount: 100 }), payloadSha256: payloadHash(JSON.stringify({ amount: 100 })) }
   ];
   const calls = [];
   const adapter = {
@@ -142,7 +147,7 @@ test("refuses to replay an inbox row from another branch", async () => {
           schemaVersion: 1,
           operationId: "foreign-op",
           operationType: "customer.profile.updated",
-          payloadJson: JSON.stringify({ name: "foreign" })
+          payloadJson: JSON.stringify({ name: "foreign" }), payloadSha256: payloadHash(JSON.stringify({ name: "foreign" }))
         }];
       }
     },
@@ -246,7 +251,7 @@ test("rejects invalid classifier decisions without acknowledging the operation",
   const processor = new IncomingOperationProcessor({
     store: { async getUnappliedIncoming() { return [{
       sequence: 1, schemaVersion: 1, operationId: "op-invalid-decision",
-      operationType: "customer.profile.updated", payloadJson: "{}"
+      operationType: "customer.profile.updated", payloadJson: "{}", payloadSha256: payloadHash("{}")
     }]; } },
     adapter: {
       async readConflictState() { return null; },
@@ -294,7 +299,7 @@ test("rejects tenant-wide rows returned by an untrusted store for a branch membe
     schemaVersion: 1,
     operationId: "tenant-wide",
     operationType: "customer.profile.updated",
-    payloadJson: JSON.stringify({ name: "MG" })
+    payloadJson: JSON.stringify({ name: "MG" }), payloadSha256: payloadHash(JSON.stringify({ name: "MG" }))
   }]);
   await assert.rejects(
     processor.processBatch("tenant-1", 100, "branch-a", false),
@@ -311,11 +316,52 @@ test("rejects inbox rows belonging to another tenant before reading or applying"
     schemaVersion: 1,
     operationId: "foreign-tenant",
     operationType: "customer.profile.updated",
-    payloadJson: JSON.stringify({ name: "MG" })
+    payloadJson: JSON.stringify({ name: "MG" }), payloadSha256: payloadHash(JSON.stringify({ name: "MG" }))
   }]);
   await assert.rejects(
     processor.processBatch("tenant-1", 100, "branch-a", false),
     /outside the active tenant/
   );
   assert.deepEqual(calls, []);
+});
+
+
+test("rejects a persisted payload changed after initial sync verification", async () => {
+  const original = JSON.stringify({ name: "trusted" });
+  const tampered = JSON.stringify({ name: "modified" });
+  let projectionRead = false;
+  const processor = new IncomingOperationProcessor({
+    store: {
+      async getUnappliedIncoming() {
+        return [{
+          sequence: 1, schemaVersion: 1, operationId: "tampered-inbox",
+          operationType: "customer.profile.updated",
+          payloadJson: tampered, payloadSha256: payloadHash(original)
+        }];
+      }
+    },
+    adapter: {
+      async readConflictState() { projectionRead = true; return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() {}
+    },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  });
+
+  await assert.rejects(
+    processor.processBatch("tenant-1", 10, null, true),
+    /payload hash does not match/
+  );
+  assert.equal(projectionRead, false);
+});
+
+test("rejects incoming inbox rows without a persisted payload hash", async () => {
+  const { processor } = setup([{
+    sequence: 1, schemaVersion: 1, operationId: "missing-hash",
+    operationType: "customer.profile.updated", payloadJson: JSON.stringify({ name: "MG" })
+  }]);
+  await assert.rejects(
+    processor.processBatch("tenant-1", 10, null, true),
+    /payload hash is missing or invalid/
+  );
 });
