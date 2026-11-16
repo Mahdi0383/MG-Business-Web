@@ -236,6 +236,8 @@ public static class SalesEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش دریافت وجه معتبر نیست."] });
             if (request.PaymentReference?.Length > 100)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
+            if (request.PaymentAccountId == request.ReceivableAccountId)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["accounts"] = ["حساب دریافت وجه و حساب دریافتنی باید دو حساب مستقل باشند."] });
 
             var priorPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
                 x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
