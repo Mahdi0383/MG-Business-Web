@@ -626,10 +626,12 @@ class Handler(SimpleHTTPRequestHandler):
                 hourly_rate, is_free = data.get("hourlyRate"), data.get("isFree")
                 if not isinstance(name,str) or not 1 <= len(name.strip()) <= 100 or device_type not in ("pc","console","other") or type(hourly_rate) is not int or hourly_rate < 0 or type(is_free) is not bool:
                     return self.send_json(400, {"error": "اطلاعات دستگاه معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
                 changed = db.execute("""UPDATE game_devices SET name=?,device_type=?,hourly_rate=?,is_free=?
                     WHERE id=? AND tenant_id=? AND active=1""",
                     (name.strip(),device_type,hourly_rate,int(is_free),device_id,user["tenant_id"])).rowcount
                 if not changed:
+                    db.rollback()
                     return self.send_json(404, {"error": "دستگاه فعال پیدا نشد."})
                 audit(db,user["tenant_id"],user["id"],"gamenet.device.updated","game_device",device_id)
                 db.commit()
