@@ -92,8 +92,9 @@ public static class GameNetEndpoints
 
             try
             {
-                var quote = session.CalculateCharge(DateTimeOffset.UtcNow);
-                return Results.Ok(new SessionQuoteResponse(session.Id, session.CustomerId, DateTimeOffset.UtcNow,
+                var quotedAt = DateTimeOffset.UtcNow;
+                var quote = session.CalculateCharge(quotedAt);
+                return Results.Ok(new SessionQuoteResponse(session.Id, session.CustomerId, quotedAt,
                     quote.BilledMinutes, quote.TotalAmount));
             }
             catch (InvalidOperationException exception)
