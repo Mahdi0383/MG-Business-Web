@@ -17,6 +17,59 @@ public static class SyncEndpoints
     {
         var group = endpoints.MapGroup("/api/sync").RequireAuthorization("TenantMember");
 
+        group.MapPost("/acknowledgements", async (
+            SyncAcknowledgementRequest request,
+            ITenantContext tenant,
+            BusinessDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId || tenant.UserId is not Guid actorId)
+                return Results.Forbid();
+            if (request.DeviceId == Guid.Empty || request.Sequence < 0)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
+                });
+
+            var maximumSequence = await db.SyncOperations.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .Select(x => (long?)x.Sequence)
+                .MaxAsync(cancellationToken) ?? 0;
+            if (request.Sequence > maximumSequence)
+                return Results.BadRequest(new { message = "Acknowledgement cannot advance beyond the tenant journal." });
+
+            var now = DateTimeOffset.UtcNow;
+            var cursor = await db.SyncDeviceCursors.SingleOrDefaultAsync(
+                x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+            if (cursor is null)
+            {
+                cursor = new SyncDeviceCursor(tenantId, request.DeviceId, actorId, request.Sequence, now);
+                db.SyncDeviceCursors.Add(cursor);
+            }
+            else if (!cursor.Advance(actorId, request.Sequence, now))
+            {
+                return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = true });
+            }
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException) when (cursor.LastAcknowledgedSequence == request.Sequence)
+            {
+                db.Entry(cursor).State = EntityState.Detached;
+                var concurrent = await db.SyncDeviceCursors.SingleOrDefaultAsync(
+                    x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+                if (concurrent is null) throw;
+                if (!concurrent.Advance(actorId, request.Sequence, now))
+                    return Results.Ok(new { deviceId = request.DeviceId, sequence = concurrent.LastAcknowledgedSequence, staleAcknowledgement = true });
+                await db.SaveChangesAsync(cancellationToken);
+                cursor = concurrent;
+            }
+
+            return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = false });
+        });
+
         group.MapPost("/heartbeat", async (
             DeviceHeartbeatRequest request,
             ITenantContext tenant,
@@ -245,7 +298,7 @@ public static class SyncEndpoints
     }
 
     public sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);
-    public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
+    public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence);\n    public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
     public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
         Guid OperationId, Guid DeviceId, Guid? BranchId, string OperationType,
