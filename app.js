@@ -6,7 +6,7 @@ const money=n=>fa(n)+' تومان';
 const $=id=>document.getElementById(id);
 let transactions=[];
 let current='overview';
-try{const saved=localStorage.getItem(key);if(saved){const parsed=JSON.parse(saved);if(Array.isArray(parsed))transactions=parsed.filter(t=>t&&typeof t.title==='string'&&Number.isFinite(Number(t.amount))&&Number(t.amount)>0&&['income','expense'].includes(t.kind));}}catch(error){console.error('Could not load MG Business data',error)}
+try{const saved=localStorage.getItem(key);if(saved){const parsed=JSON.parse(saved);if(Array.isArray(parsed))transactions=parsed.filter(t=>t&& !String(t.id||'').startsWith('seed-')&&typeof t.title==='string'&&Number.isFinite(Number(t.amount))&&Number(t.amount)>0&&['income','expense'].includes(t.kind));}}catch(error){console.error('Could not load MG Business data',error)}
 function persist(){try{localStorage.setItem(key,JSON.stringify(transactions));return true}catch(error){console.error('Local storage error',error);alert('ذخیره اطلاعات انجام نشد. فضای ذخیره‌سازی مرورگر را بررسی کنید.');return false}}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function renderNav(){const groups=['مدیریت','عملیات','مالی','سیستم'];$('navigation').innerHTML=groups.map(g=>'<section class="nav-group"><h3>'+g+'</h3>'+pages.filter(p=>p[3]===g).map(p=>'<button class="nav-item '+(current===p[0]?'active':'')+'" data-page="'+p[0]+'"><span>'+p[2]+'</span>'+p[1]+' '+(current===p[0]?'<i class="pin"></i>':'')+'</button>').join('')+'</section>').join('')}
