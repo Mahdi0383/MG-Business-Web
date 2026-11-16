@@ -180,7 +180,7 @@ test("pull rejects a scan cursor preceding a visible operation", async () => {
         operationId: "operation-visible",
         operationType: "customer.updated",
         payloadJson: "{}",
-        payloadSha256: "b618f9a65827379fd2f866d0ca039122397e99c4d3f7d37052083c4095339f8a",
+        payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         schemaVersion: 1
       }],
       nextSequence: 2,
