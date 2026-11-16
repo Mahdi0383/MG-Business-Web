@@ -223,3 +223,8 @@ A security ADR now defines the target cryptographic enrollment and signed-reques
 - Device credentials are tenant-scoped so one browser identity can be used in the tenant's authorized branches; enrollment proof itself remains branch-context-bound. A future branch-restricted credential can set an explicit branch scope.
 - Production startup now fails unless `SyncSecurity:RequireDeviceSignatures=true`. Enrollment bootstrap routes are excluded from request-signature middleware but still require authenticated tenant membership and challenge proof.
 - This closes device request authentication and replay protection at the API boundary; key rotation/revocation APIs, expired nonce cleanup, browser key recovery, signed authority leases/fencing and end-to-end multi-node recovery tests remain open release gates.
+
+
+### Device enrollment recovery and nonce retention — 2026-11-17
+
+Enrollment now persists a non-extractable browser key before completion and supports idempotent recovery using a fresh challenge with the same public key; the server rotates the one-time credential digest and increments the key version. Signed request processing removes expired nonces per tenant/device and records credential use. Integration tests cover the replay/tamper and enrollment recovery paths.
