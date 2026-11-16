@@ -41,11 +41,17 @@ export class IncomingOperationProcessor {
         throw new TypeError("Incoming inbox contains an invalid or non-monotonic operation envelope.");
       previousSequence = row.sequence;
 
+      let payload;
+      try {
+        payload = JSON.parse(row.payloadJson);
+      } catch {
+        throw new TypeError("Incoming inbox contains malformed JSON payload data.");
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload))
+        throw new TypeError("Incoming inbox payload must be a JSON object.");
+
       const currentState = await this.adapter.readConflictState(tenantId, row);
-      const decision = this.classify({
-        ...row,
-        payload: JSON.parse(row.payloadJson)
-      }, currentState);
+      const decision = this.classify({ ...row, payload }, currentState);
 
       if (decision.disposition !== "apply") {
         await this.adapter.recordConflict({
@@ -67,7 +73,7 @@ export class IncomingOperationProcessor {
       await this.adapter.applyAndAcknowledge({
         tenantId,
         sequence: row.sequence,
-        operation: { ...row, payload: JSON.parse(row.payloadJson) },
+        operation: { ...row, payload },
         decision
       });
       results.push({ sequence: row.sequence, disposition: "applied" });
