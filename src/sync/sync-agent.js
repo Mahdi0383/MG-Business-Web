@@ -1,3 +1,9 @@
+function isNetworkFailure(error) {
+  if (error?.name === "NetworkError") return true;
+  return error instanceof TypeError
+    && /fetch|network|load failed|connection/i.test(error.message || "");
+}
+
 export class SyncAgent {
   constructor(apiClient, operationStore) {
     this.apiClient = apiClient;
@@ -51,7 +57,7 @@ export class SyncAgent {
       }, { tenantId, branchId });
       return { status: response.hasMore ? "more-available" : "pulled", received: response.operations.length, nextSequence: response.nextSequence, hasMore: Boolean(response.hasMore) };
     } catch (error) {
-      if (error instanceof TypeError || error?.name === "NetworkError") return { status: "offline", received: 0, error };
+      if (isNetworkFailure(error)) return { status: "offline", received: 0, error };
       throw error;
     } finally {
       this.running = false;
@@ -100,7 +106,7 @@ export class SyncAgent {
       await this.operationStore.acknowledge(acknowledgements);
       return { status: "synced", acknowledged: acknowledgements.length };
     } catch (error) {
-      if (error instanceof TypeError || error?.name === "NetworkError")
+      if (isNetworkFailure(error))
         return { status: "offline", acknowledged: 0, error };
       throw error;
     } finally {
