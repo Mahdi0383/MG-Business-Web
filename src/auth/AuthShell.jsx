@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatApiError, MgApiClient } from "../api/client.js";
 import ServerWorkspace from "../server/ServerWorkspace.jsx";
+import { LocalOperationStore } from "../sync/local-operation-store.js";
+import { SyncAgent } from "../sync/sync-agent.js";
 import "../server/server.css";
 
 const SESSION_KEY = "mg-business-session";
@@ -18,6 +20,9 @@ function AuthShell({ apiBaseUrl }) {
   const clientRef = useRef(null);
   if (!clientRef.current) clientRef.current = new MgApiClient(apiBaseUrl);
   const client = clientRef.current;
+  const operationStoreRef = useRef(new LocalOperationStore());
+  const syncAgentRef = useRef(null);
+  if (!syncAgentRef.current) syncAgentRef.current = new SyncAgent(client, operationStoreRef.current);
 
   const [session, setSessionState] = useState(readSavedSession);
   const [stage, setStage] = useState("restoring");
@@ -33,6 +38,8 @@ function AuthShell({ apiBaseUrl }) {
   const [selectedBranch, setSelectedBranch] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const [pendingOperations, setPendingOperations] = useState(0);
 
   useEffect(() => {
     client.onSessionChanged = value => {
@@ -199,6 +206,53 @@ function AuthShell({ apiBaseUrl }) {
     setStage("tenant");
   };
 
+  useEffect(() => {
+    if (stage !== "workspace" || !selectedTenant?.id) return undefined;
+    let active = true;
+    const tenantId = selectedTenant.id;
+
+    const refreshPendingCount = async () => {
+      try {
+        const pending = await operationStoreRef.current.getPendingCount(tenantId);
+        if (active) setPendingOperations(pending);
+      } catch {
+        if (active) setSyncStatus("error");
+      }
+    };
+
+    const synchronize = async () => {
+      if (!active) return;
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setSyncStatus("offline");
+        await refreshPendingCount();
+        return;
+      }
+
+      setSyncStatus("syncing");
+      try {
+        const result = await syncAgentRef.current.pushPending(tenantId);
+        if (active) setSyncStatus(result.status);
+      } catch {
+        if (active) setSyncStatus("error");
+      }
+      await refreshPendingCount();
+    };
+
+    const handleOnline = () => { synchronize(); };
+    const handleOffline = () => { setSyncStatus("offline"); refreshPendingCount(); };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    const timer = window.setInterval(synchronize, 15000);
+    synchronize();
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [stage, selectedTenant?.id]);
+
   const workspaceContext = useMemo(() => ({
     tenant: selectedTenant,
     branch: selectedBranch
@@ -208,7 +262,7 @@ function AuthShell({ apiBaseUrl }) {
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">
