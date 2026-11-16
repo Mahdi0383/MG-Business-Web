@@ -6,6 +6,7 @@ using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -67,16 +68,21 @@ public sealed class TenantSecurityIntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
             await db.Database.EnsureCreatedAsync();
-            var user = NewUser("inactive-user@mg.test");
-            db.AddRange(tenant, user);
-            await db.SaveChangesAsync();
-            db.TenantMemberships.Add(new TenantMembership(tenant.Id, user.Id, TenantRole.Viewer));
-            await db.SaveChangesAsync();
-            (await db.TenantMemberships.SingleAsync()).Deactivate();
+            db.Tenants.Add(tenant);
             await db.SaveChangesAsync();
         }
 
         using var client = await RegisterAndLoginAsync(factory, "inactive-user@mg.test");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            var user = await db.Users.SingleAsync(item => item.Email == "inactive-user@mg.test");
+            db.TenantMemberships.Add(new TenantMembership(tenant.Id, user.Id, TenantRole.Viewer));
+            await db.SaveChangesAsync();
+            var membership = await db.TenantMemberships.SingleAsync();
+            membership.Deactivate();
+            await db.SaveChangesAsync();
+        }
         client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.Id.ToString());
         var response = await client.GetAsync("/api/context");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
