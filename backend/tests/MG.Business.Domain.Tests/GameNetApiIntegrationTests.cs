@@ -134,7 +134,13 @@ public sealed class GameNetApiIntegrationTests
             receivableAccountId = (Guid?)null,
             paymentReference = "GAME-CASH-RETRY"
         });
-        Assert.Equal(HttpStatusCode.NotFound, repeatedClose.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, repeatedClose.StatusCode);
+        var repeatedResult = await repeatedClose.Content.ReadFromJsonAsync<ClosedSession>();
+        Assert.NotNull(repeatedResult);
+        Assert.True(repeatedResult!.Replayed);
+        Assert.Equal(result.SalesOrderId, repeatedResult.SalesOrderId);
+        Assert.Equal(result.PaidAmount, repeatedResult.PaidAmount);
+        Assert.Equal(result.BalanceDue, repeatedResult.BalanceDue);
 
         var orders = await client.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
         Assert.Single(orders!);
@@ -192,7 +198,7 @@ public sealed class GameNetApiIntegrationTests
     private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, bool IsActive);
     private sealed record DeviceResponse(Guid Id, string Code, string Name, decimal HourlyRate, int BillingIntervalMinutes, Guid BranchId, bool HasActiveSession);
     private sealed record StartedSession(Guid Id, Guid DeviceId, Guid? CustomerId, DateTimeOffset StartedAtUtc, decimal HourlyRate, int BillingIntervalMinutes);
-    private sealed record ClosedSession(Guid Id, Guid DeviceId, DateTimeOffset StartedAtUtc, DateTimeOffset EndedAtUtc, int BilledMinutes, decimal HourlyRate, decimal TotalAmount, Guid SalesOrderId, decimal PaidAmount, decimal BalanceDue);
+    private sealed record ClosedSession(Guid Id, Guid DeviceId, DateTimeOffset StartedAtUtc, DateTimeOffset EndedAtUtc, int BilledMinutes, decimal HourlyRate, decimal TotalAmount, Guid SalesOrderId, decimal PaidAmount, decimal BalanceDue, bool Replayed = false);
     private sealed record SessionQuote(Guid SessionId, Guid? CustomerId, DateTimeOffset QuotedAtUtc, int BilledMinutes, decimal TotalAmount);
     private sealed record SettlementAccountResponse(Guid Id, string Code, string Name, string Type);
     private sealed record SalesOrderResponse(Guid Id, string Number, Guid? CustomerId, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, string Status, DateTimeOffset CreatedAtUtc);
