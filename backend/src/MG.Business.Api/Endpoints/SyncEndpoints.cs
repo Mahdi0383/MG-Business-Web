@@ -23,6 +23,7 @@ public static class SyncEndpoints
             SyncAcknowledgementRequest request,
             HttpContext httpContext,
             ITenantContext tenant,
+            IConfiguration configuration,
             BusinessDbContext db,
             CancellationToken cancellationToken) =>
         {
@@ -33,7 +34,7 @@ public static class SyncEndpoints
                 {
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
-            if (httpContext.Items.ContainsKey(DeviceRequestSignatureMiddleware.DeviceIdItemKey)
+            if (configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures")
                 && (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
                     || signedDeviceId != request.DeviceId))
                 return Results.Forbid();
@@ -166,6 +167,7 @@ public static class SyncEndpoints
             DeviceHeartbeatRequest request,
             HttpContext httpContext,
             ITenantContext tenant,
+            IConfiguration configuration,
             BusinessDbContext db,
             CancellationToken cancellationToken) =>
         {
@@ -327,7 +329,7 @@ public static class SyncEndpoints
                 {
                     ["operations"] = ["Null operation entries are not allowed."]
                 });
-            if (httpContext.Items.ContainsKey(DeviceRequestSignatureMiddleware.DeviceIdItemKey)
+            if (configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures")
                 && (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
                     || request.Operations.Any(item => item.DeviceId != signedDeviceId)))
                 return Results.Forbid();
