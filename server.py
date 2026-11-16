@@ -371,6 +371,16 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def translate_path(self, path):
+        resolved = Path(super().translate_path(path)).resolve()
+        try:
+            parts = resolved.relative_to(ROOT).parts
+        except ValueError:
+            return str(ROOT / "__blocked_resource__")
+        blocked = any(part.startswith(".") or part in ("data","__pycache__",".venv") for part in parts)
+        blocked = blocked or resolved.suffix.lower() in (".sqlite",".sqlite3",".db",".env")
+        return str(ROOT / "__blocked_resource__") if blocked else str(resolved)
+
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
