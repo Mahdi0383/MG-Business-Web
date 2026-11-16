@@ -33,8 +33,9 @@ public static class SyncEndpoints
                 {
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
-            if (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
-                || signedDeviceId != request.DeviceId)
+            if (httpContext.Items.ContainsKey(DeviceRequestSignatureMiddleware.DeviceIdItemKey)
+                && (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
+                    || signedDeviceId != request.DeviceId))
                 return Results.Forbid();
             if (request.BranchId != tenant.BranchId)
                 return Results.Forbid();
@@ -326,8 +327,9 @@ public static class SyncEndpoints
                 {
                     ["operations"] = ["Null operation entries are not allowed."]
                 });
-            if (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
-                || request.Operations.Any(item => item.DeviceId != signedDeviceId))
+            if (httpContext.Items.ContainsKey(DeviceRequestSignatureMiddleware.DeviceIdItemKey)
+                && (httpContext.Items[DeviceRequestSignatureMiddleware.DeviceIdItemKey] is not Guid signedDeviceId
+                    || request.Operations.Any(item => item.DeviceId != signedDeviceId)))
                 return Results.Forbid();
 
             await using var transaction = await db.Database.BeginTransactionAsync(
