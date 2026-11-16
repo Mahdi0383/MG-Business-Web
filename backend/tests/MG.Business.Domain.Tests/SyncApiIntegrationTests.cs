@@ -83,7 +83,7 @@ public sealed class SyncApiIntegrationTests
 
         var unregisteredPush = await client.PostAsJsonAsync("/api/sync/operations", request);
         Assert.Equal(HttpStatusCode.Forbidden, unregisteredPush.StatusCode);
-        var unregisteredAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new { deviceId, sequence = 0 });
+        var unregisteredAck = await client.PostAsJsonAsync("/api/sync/acknowledgements", new { deviceId, branchId = tenant.BranchId, sequence = 0 });
         Assert.Equal(HttpStatusCode.Forbidden, unregisteredAck.StatusCode);
 
         var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
@@ -249,6 +249,7 @@ public sealed class SyncApiIntegrationTests
         var staleAcknowledgement = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId,
+            branchId = tenant.BranchId,
             sequence = 0
         });
         var staleCursor = await staleAcknowledgement.Content.ReadFromJsonAsync<SyncCursorResponse>();
@@ -490,6 +491,7 @@ public sealed class SyncApiIntegrationTests
         var spoofedAcknowledgement = await staff.PostAsJsonAsync("/api/sync/acknowledgements", new
         {
             deviceId,
+            branchId = tenant.BranchId,
             sequence = 0
         });
         Assert.Equal(HttpStatusCode.Forbidden, spoofedAcknowledgement.StatusCode);
