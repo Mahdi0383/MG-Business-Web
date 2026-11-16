@@ -208,3 +208,8 @@ The current repository is a foundation, not a finished commercial product. A foc
 - The API rejects multiple new mutations of the same customer aggregate in one batch. This prevents two updates carrying the same baseVersion from being accepted against one tracked entity and skipping a version.
 - Added frontend regression tests and a SQLite-backed API integration test. Latest frontend and backend SQLite CI passed; PostgreSQL API integration CI passed on the preceding backend code commit.
 - These checks improve transport and customer aggregate correctness but do not implement cryptographic device enrollment, signed authority leases, cross-domain local commands, conflict resolution, or HA failover.
+
+
+### Device trust protocol design — 2026-11-17
+
+A security ADR now defines the target cryptographic enrollment and signed-request protocol, including explicit threat-model limitations for browser-held keys and adversarial tests. This is not implementation evidence; device enrollment, request authentication, lease issuance, and fencing remain unimplemented blockers.
