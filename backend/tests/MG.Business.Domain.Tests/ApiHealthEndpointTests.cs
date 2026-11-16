@@ -21,7 +21,7 @@ public sealed class ApiHealthEndpointTests
     [Fact]
     public async Task ReadyEndpoint_ReturnsHealthyWhenDatabaseIsReachable()
     {
-        using var factory = CreateFactory("Data Source=:memory:");
+        using var factory = CreateFactory();
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/health/ready");
