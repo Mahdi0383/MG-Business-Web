@@ -45,7 +45,7 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [stockRows, setStockRows] = useState([]);
@@ -445,6 +445,8 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   };
 
   const heading = navigation.find(item => item[0] === page)?.[2] || "نمای کلی";
+  const syncLabel = syncStatus === "offline" ? "اینترنت قطع است" : syncStatus === "syncing" ? "در حال همگام‌سازی" : syncStatus === "synced" ? "همگام‌سازی انجام شد" : syncStatus === "error" ? "خطا در همگام‌سازی" : "آماده همگام‌سازی";
+  const syncClass = syncStatus === "offline" ? "offline" : syncStatus === "error" ? "error" : syncStatus === "syncing" ? "syncing" : "ready";
   const totalSales = useMemo(() => sales.reduce((sum, order) => sum + Number(order.total || 0), 0), [sales]);
   const assetAccounts = accounts.filter(x => x.type === "Asset");
   const revenueAccounts = accounts.filter(x => x.type === "Revenue");
@@ -465,7 +467,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     <main className="mg-server-main">
       <header className="mg-server-topbar">
         <div><small>MG BUSINESS PLATFORM / {tenant.slug}</small><h1>{heading}</h1></div>
-        <div className="mg-server-status"><i /> متصل به سرور</div>
+        <div className={`mg-server-status ${syncClass}`} title="وضعیت صف عملیات محلی"><i /> {syncLabel} · صف محلی: {count(pendingOperations)}</div>
       </header>
 
       <section className="mg-server-content">
