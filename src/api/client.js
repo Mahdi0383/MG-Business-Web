@@ -78,10 +78,19 @@ export class MgApiClient {
     const headers = new Headers(options.headers || {});
     if (this.session?.accessToken)
       headers.set("Authorization", `Bearer ${this.session.accessToken}`);
-    if (this.tenantId)
+    if (Object.prototype.hasOwnProperty.call(options, "tenantId")) {
+      if (options.tenantId) headers.set("X-MG-Tenant", options.tenantId);
+      else headers.delete("X-MG-Tenant");
+    } else if (this.tenantId) {
       headers.set("X-MG-Tenant", this.tenantId);
-    if (this.branchId)
+    }
+
+    if (Object.prototype.hasOwnProperty.call(options, "branchId")) {
+      // An explicit empty branch header clears mutable client context for this request.
+      headers.set("X-MG-Branch", options.branchId || "");
+    } else if (this.branchId) {
       headers.set("X-MG-Branch", this.branchId);
+    }
 
     try {
       return await this.rawRequest(path, { ...options, headers });
