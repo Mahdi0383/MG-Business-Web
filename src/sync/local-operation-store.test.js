@@ -2,6 +2,8 @@ import "fake-indexeddb/auto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload, normalizeLocalCustomer, isConflictVisible } from "./local-operation-store.js";
+import { IncomingOperationProcessor } from "./incoming-operation-processor.js";
+import { classifyIncomingOperation } from "./conflict-policy.js";
 
 
 
@@ -407,4 +409,99 @@ test("serializes competing local customer edits and keeps only one pending comma
   const deviceId = await store.getDeviceId(actorId);
   const pending = await store.getPending(tenantId, 100, branchId, false, deviceId);
   assert.equal(pending.length, 1);
+});
+
+test("applies a remote customer update atomically and records stale versions as conflicts", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-local-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId,
+    customer: { code: "C-INBOUND-1", name: "Before" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+
+  const makeRow = async (sequence, operationId, baseVersion, name) => {
+    const payloadJson = JSON.stringify({
+      customerId: created.id, baseVersion, name,
+      phone: null, email: null, address: null, notes: null
+    });
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payloadJson));
+    const payloadSha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+    return {
+      tenantId, sequence, operationId, actorId: "actor-remote",
+      deviceId: "device-remote", branchId,
+      operationType: "customer.profile.updated", schemaVersion: 1,
+      authorityEpoch: 0, occurredAtUtc: new Date().toISOString(),
+      receivedAtUtc: new Date().toISOString(), payloadJson, payloadSha256
+    };
+  };
+
+  const processor = new IncomingOperationProcessor({
+    store, adapter: store, classify: classifyIncomingOperation
+  });
+  const update = await makeRow(2, "remote-update-1", 1, "Remote update");
+  await store.storeIncomingPage(tenantId, [update], 2, branchId);
+  const applied = await processor.processBatch(tenantId, 20, branchId, false);
+  assert.equal(applied.applied, 1);
+  let rows = await store.getCustomers(tenantId);
+  let customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.version, 2);
+  assert.equal(customer.name, "Remote update");
+
+  const stale = await makeRow(3, "remote-update-stale", 1, "Stale overwrite");
+  await store.storeIncomingPage(tenantId, [stale], 3, branchId);
+  const blocked = await processor.processBatch(tenantId, 20, branchId, false);
+  assert.equal(blocked.blockedByConflict, true);
+  assert.equal(blocked.applied, 0);
+  const conflicts = await store.getOpenConflicts(tenantId, branchId, false);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].reason, "stale-customer-base-version");
+  rows = await store.getCustomers(tenantId);
+  customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.version, 2);
+  assert.equal(customer.name, "Remote update");
+});
+
+test("acknowledged customer update journal echo does not reapply the originating device mutation", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-origin-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId,
+    customer: { code: "C-ECHO-1", name: "Before" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+  const updated = await store.updateCustomer({
+    tenantId, branchId, actorId, customerId: created.id,
+    customer: { name: "Local edit" }
+  });
+  const deviceId = await store.getDeviceId(actorId);
+  const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
+  const operation = pending[0];
+  await store.acknowledge([{ operationId: operation.operationId, sequence: 2 }]);
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(operation.payloadJson));
+  const payloadSha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+  await store.storeIncomingPage(tenantId, [{
+    tenantId, sequence: 2, operationId: operation.operationId,
+    actorId, deviceId, branchId,
+    operationType: operation.operationType, schemaVersion: 1, authorityEpoch: 0,
+    occurredAtUtc: operation.occurredAtUtc, receivedAtUtc: new Date().toISOString(),
+    payloadJson: operation.payloadJson, payloadSha256
+  }], 2, branchId);
+
+  const processor = new IncomingOperationProcessor({
+    store, adapter: store, classify: classifyIncomingOperation
+  });
+  const result = await processor.processBatch(tenantId, 10, branchId, false);
+  assert.equal(result.applied, 1);
+  assert.equal(result.blockedByConflict, false);
+  const rows = await store.getCustomers(tenantId);
+  const customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.version, 2);
+  assert.equal(customer.name, "Local edit");
+  assert.equal((await store.getOpenConflicts(tenantId, branchId, false)).length, 0);
 });
