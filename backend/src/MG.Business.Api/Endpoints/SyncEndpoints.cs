@@ -31,6 +31,8 @@ public static class SyncEndpoints
                 {
                     ["acknowledgement"] = ["A valid device ID and non-negative sequence are required."]
                 });
+            if (request.BranchId.HasValue && request.BranchId != tenant.BranchId)
+                return Results.Forbid();
 
             var enrolledDevice = await db.DevicePresences.AsNoTracking().AnyAsync(
                 x => x.TenantId == tenantId && x.DeviceId == request.DeviceId && x.ActorId == actorId,
@@ -50,30 +52,86 @@ public static class SyncEndpoints
                 return Results.BadRequest(new { message = "Acknowledgement cannot advance beyond the tenant journal head." });
 
             var now = DateTimeOffset.UtcNow;
-            var cursor = await db.SyncDeviceCursors.SingleOrDefaultAsync(
-                x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
-            var isNewCursor = cursor is null;
-            if (isNewCursor)
+            if (request.BranchId is Guid branchId)
             {
-                cursor = new SyncDeviceCursor(tenantId, request.DeviceId, actorId, request.Sequence, now);
-                db.SyncDeviceCursors.Add(cursor);
+                var cursor = await db.SyncDeviceBranchCursors.SingleOrDefaultAsync(
+                    x => x.TenantId == tenantId && x.DeviceId == request.DeviceId && x.BranchId == branchId,
+                    cancellationToken);
+                var isNewCursor = cursor is null;
+                if (isNewCursor)
+                {
+                    cursor = new SyncDeviceBranchCursor(tenantId, request.DeviceId, branchId, actorId, request.Sequence, now);
+                    db.SyncDeviceBranchCursors.Add(cursor);
+                }
+                else if (cursor!.ActorId != actorId)
+                {
+                    return Results.Forbid();
+                }
+                else if (!cursor!.Advance(actorId, request.Sequence, now))
+                {
+                    return Results.Ok(new { deviceId = request.DeviceId, branchId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = true });
+                }
+
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateException) when (isNewCursor)
+                {
+                    db.Entry(cursor!).State = EntityState.Detached;
+                    var concurrent = await db.SyncDeviceBranchCursors.SingleOrDefaultAsync(
+                        x => x.TenantId == tenantId && x.DeviceId == request.DeviceId && x.BranchId == branchId,
+                        cancellationToken);
+                    if (concurrent is null) throw;
+                    if (concurrent.ActorId != actorId) return Results.Forbid();
+                    if (!concurrent.Advance(actorId, request.Sequence, now))
+                        return Results.Ok(new { deviceId = request.DeviceId, branchId, sequence = concurrent.LastAcknowledgedSequence, staleAcknowledgement = true });
+                    await db.SaveChangesAsync(cancellationToken);
+                    cursor = concurrent;
+                }
+                catch (DbUpdateConcurrencyException) when (!isNewCursor)
+                {
+                    db.Entry(cursor!).State = EntityState.Detached;
+                    var latest = await db.SyncDeviceBranchCursors.SingleAsync(
+                        x => x.TenantId == tenantId && x.DeviceId == request.DeviceId && x.BranchId == branchId,
+                        cancellationToken);
+                    if (latest.ActorId != actorId) return Results.Forbid();
+                    if (!latest.Advance(actorId, request.Sequence, now))
+                        return Results.Ok(new { deviceId = request.DeviceId, branchId, sequence = latest.LastAcknowledgedSequence, staleAcknowledgement = true });
+                    await db.SaveChangesAsync(cancellationToken);
+                    cursor = latest;
+                }
+
+                return Results.Ok(new { deviceId = request.DeviceId, branchId, sequence = cursor!.LastAcknowledgedSequence, staleAcknowledgement = false });
             }
-            else if (cursor!.ActorId != actorId)
+
+            // A null branch context is the explicit all-branches cursor for Owner/Manager views.
+            if (tenant.Role is not ("Owner" or "Manager"))
+                return Results.Forbid();
+            var tenantCursor = await db.SyncDeviceCursors.SingleOrDefaultAsync(
+                x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+            var isNewTenantCursor = tenantCursor is null;
+            if (isNewTenantCursor)
+            {
+                tenantCursor = new SyncDeviceCursor(tenantId, request.DeviceId, actorId, request.Sequence, now);
+                db.SyncDeviceCursors.Add(tenantCursor);
+            }
+            else if (tenantCursor!.ActorId != actorId)
             {
                 return Results.Forbid();
             }
-            else if (!cursor!.Advance(actorId, request.Sequence, now))
+            else if (!tenantCursor!.Advance(actorId, request.Sequence, now))
             {
-                return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = true });
+                return Results.Ok(new { deviceId = request.DeviceId, sequence = tenantCursor.LastAcknowledgedSequence, staleAcknowledgement = true });
             }
 
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
             }
-            catch (DbUpdateException) when (isNewCursor)
+            catch (DbUpdateException) when (isNewTenantCursor)
             {
-                db.Entry(cursor).State = EntityState.Detached;
+                db.Entry(tenantCursor!).State = EntityState.Detached;
                 var concurrent = await db.SyncDeviceCursors.SingleOrDefaultAsync(
                     x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
                 if (concurrent is null) throw;
@@ -81,21 +139,21 @@ public static class SyncEndpoints
                 if (!concurrent.Advance(actorId, request.Sequence, now))
                     return Results.Ok(new { deviceId = request.DeviceId, sequence = concurrent.LastAcknowledgedSequence, staleAcknowledgement = true });
                 await db.SaveChangesAsync(cancellationToken);
-                cursor = concurrent;
+                tenantCursor = concurrent;
             }
-            catch (DbUpdateConcurrencyException) when (!isNewCursor)
+            catch (DbUpdateConcurrencyException) when (!isNewTenantCursor)
             {
-                db.Entry(cursor!).State = EntityState.Detached;
+                db.Entry(tenantCursor!).State = EntityState.Detached;
                 var latest = await db.SyncDeviceCursors.SingleAsync(
                     x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
                 if (latest.ActorId != actorId) return Results.Forbid();
                 if (!latest.Advance(actorId, request.Sequence, now))
                     return Results.Ok(new { deviceId = request.DeviceId, sequence = latest.LastAcknowledgedSequence, staleAcknowledgement = true });
                 await db.SaveChangesAsync(cancellationToken);
-                cursor = latest;
+                tenantCursor = latest;
             }
 
-            return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor!.LastAcknowledgedSequence, staleAcknowledgement = false });
+            return Results.Ok(new { deviceId = request.DeviceId, sequence = tenantCursor!.LastAcknowledgedSequence, staleAcknowledgement = false });
         });
 
         group.MapPost("/heartbeat", async (
@@ -173,6 +231,9 @@ public static class SyncEndpoints
             var acknowledgedSequences = await db.SyncDeviceCursors.AsNoTracking()
                 .Where(x => x.TenantId == tenantId)
                 .ToDictionaryAsync(x => x.DeviceId, x => x.LastAcknowledgedSequence, cancellationToken);
+            var branchAcknowledgedSequences = await db.SyncDeviceBranchCursors.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .ToDictionaryAsync(x => (x.DeviceId, x.BranchId), x => x.LastAcknowledgedSequence, cancellationToken);
             var latestJournalSequence = await db.SyncOperations.AsNoTracking()
                 .Where(x => x.TenantId == tenantId)
                 .Select(x => (long?)x.Sequence)
@@ -182,28 +243,35 @@ public static class SyncEndpoints
                 join membership in db.TenantMemberships.AsNoTracking()
                     on new { presence.TenantId, UserId = presence.ActorId }
                     equals new { membership.TenantId, membership.UserId }
-                join cursor in db.SyncDeviceCursors.AsNoTracking()
-                    on new { presence.TenantId, presence.DeviceId }
-                    equals new { cursor.TenantId, cursor.DeviceId } into cursorGroup
-                from cursor in cursorGroup.DefaultIfEmpty()
                 where presence.TenantId == tenantId && membership.IsActive
                 select new
                 {
                     presence.DeviceId,
                     Count = db.SyncOperations.AsNoTracking().LongCount(operation =>
                         operation.TenantId == tenantId
-                        && operation.Sequence > (cursor == null ? 0 : cursor.LastAcknowledgedSequence)
-                        && ((presence.BranchId.HasValue && operation.BranchId == presence.BranchId)
-                            || ((membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)
-                                && operation.BranchId == null)))
+                        && operation.Sequence > (presence.BranchId.HasValue
+                            ? db.SyncDeviceBranchCursors.AsNoTracking()
+                                .Where(cursor => cursor.TenantId == tenantId && cursor.DeviceId == presence.DeviceId
+                                    && cursor.BranchId == presence.BranchId)
+                                .Select(cursor => (long?)cursor.LastAcknowledgedSequence).FirstOrDefault() ?? 0
+                            : db.SyncDeviceCursors.AsNoTracking()
+                                .Where(cursor => cursor.TenantId == tenantId && cursor.DeviceId == presence.DeviceId)
+                                .Select(cursor => (long?)cursor.LastAcknowledgedSequence).FirstOrDefault() ?? 0)
+                        && (presence.BranchId.HasValue
+                            ? operation.BranchId == presence.BranchId
+                                || ((membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)
+                                    && operation.BranchId == null)
+                            : (membership.Role == TenantRole.Owner || membership.Role == TenantRole.Manager)))
                 })
                 .ToDictionaryAsync(x => x.DeviceId, x => x.Count, cancellationToken);
 
             var inventory = new List<object>(devices.Count);
             foreach (var device in devices.OrderByDescending(device => device.LastSeenAtUtc))
             {
-                var lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0);
-                // Count only journal rows this device's active membership is allowed to pull.
+                var lastAcknowledgedSequence = device.BranchId is Guid activeBranchId
+                    ? branchAcknowledgedSequences.GetValueOrDefault((device.DeviceId, activeBranchId), 0)
+                    : acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0);
+                // Branch-scoped acknowledgements are independent; switching branches cannot hide older unseen rows.
                 var pendingOperationCount = pendingCounts.GetValueOrDefault(device.DeviceId, 0);
 
                 inventory.Add(new
@@ -469,7 +537,7 @@ public static class SyncEndpoints
     }
 
     public sealed record SyncOperationAck(Guid OperationId, long Sequence, bool Duplicate);
-    public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence);
+    public sealed record SyncAcknowledgementRequest(Guid DeviceId, long Sequence, Guid? BranchId = null);
     public sealed record DeviceHeartbeatRequest(Guid DeviceId, string? DeviceName, string? Platform, string? ClientVersion);
     public sealed record PushOperationsRequest(List<PushOperationRequest> Operations);
     public sealed record PushOperationRequest(
