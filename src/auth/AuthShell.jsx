@@ -340,7 +340,7 @@ function AuthShell({ apiBaseUrl }) {
       if (!active || heartbeatInFlight || document.visibilityState === "hidden") return;
       heartbeatInFlight = true;
       try {
-        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, branchId);
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, selectedTenant.id, selectedBranch?.id || null);
         await client.post("/api/sync/heartbeat", {
           deviceId,
           deviceName: "MG Business Web",
