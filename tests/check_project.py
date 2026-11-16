@@ -40,6 +40,12 @@ if "def translate_path(self, path):" not in server or "def list_directory(self, 
     raise SystemExit("static server must block private files and directory listing")
 if "def verify_license_code(code):" not in server or 'if path == "/api/backup/restore":' not in server:
     raise SystemExit("license verification or backup restoration endpoint is missing")
+get_handler = server.split("    def do_GET(self):", 1)[1].split("    def do_DELETE(self):", 1)[0]
+post_handler = server.split("    def do_POST(self):", 1)[1].split("    def create_session", 1)[0]
+if re.search(r"\\bdata(?:\\.get|\\[)", get_handler):
+    raise SystemExit("GET handler must not read mutation request data")
+if 'if path.startswith("/api/gamenet/devices/")' not in post_handler:
+    raise SystemExit("game device updates must be routed through POST")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
