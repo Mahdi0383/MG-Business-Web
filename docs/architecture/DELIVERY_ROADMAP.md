@@ -161,3 +161,5 @@ The current repository is a foundation, not a finished commercial product. A foc
 
 - Local acknowledgement now fails closed and aborts the entire IndexedDB acknowledgement transaction if a pending customer update's local baseVersion/pendingBaseVersion no longer matches. A regression test confirms the outbox item is not silently marked acknowledged.
 
+- Customer reads from the authoritative API are now cached into the local IndexedDB projection. The cache validates the complete batch before writing and never overwrites a pending local customer edit; this closes the gap where customers created on another device were unavailable after a network loss.
+
