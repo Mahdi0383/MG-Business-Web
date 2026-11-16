@@ -428,8 +428,10 @@ public static class SyncEndpoints
                 .Take(take)
                 .ToListAsync(cancellationToken);
 
+            var canReadTenantWide = tenant.Role is "Owner" or "Manager";
             var operations = journalWindow
-                .Where(x => tenant.BranchId is null || x.BranchId is null || x.BranchId == tenant.BranchId)
+                .Where(x => (tenant.BranchId.HasValue && x.BranchId == tenant.BranchId)
+                    || (canReadTenantWide && x.BranchId is null))
                 .Select(x => new
                 {
                     x.Sequence, x.OperationId, x.ActorId, x.DeviceId, x.BranchId,
