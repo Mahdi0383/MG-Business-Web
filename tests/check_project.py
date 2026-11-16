@@ -17,11 +17,11 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd"}
+dynamic = {"moduleAdd", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
-for asset in ("styles.css", "app.js", "core.js", "manifest.webmanifest", "service-worker.js"):
+for asset in ("styles.css", "app.js", "core.js", "server.py", "manifest.webmanifest", "service-worker.js", "tests/test_server.py"):
     if not (root / asset).is_file():
         raise SystemExit(f"missing required asset: {asset}")
 if "./core.js" not in html:
