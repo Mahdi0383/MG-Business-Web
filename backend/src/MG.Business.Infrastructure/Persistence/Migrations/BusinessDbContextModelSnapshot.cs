@@ -1252,6 +1252,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Sequence");
                     b.HasIndex("ActorId");
+                    b.HasIndex("TenantId", "BranchId");
                     b.HasIndex("TenantId", "DeviceId", "Sequence");
                     b.HasIndex("TenantId", "Sequence");
                     b.HasIndex("TenantId", "OperationId").IsUnique();
@@ -1265,6 +1266,12 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ActorId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BranchId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("MG.Business.Domain.Entities.Tenant", null)
                         .WithMany()
