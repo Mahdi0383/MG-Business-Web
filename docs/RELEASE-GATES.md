@@ -7,7 +7,7 @@ A release is blocked until every mandatory gate below has objective evidence att
 
 - [x] Frontend CI (tests and production build) passes on the current development head.
 - [x] Backend SQLite build, model-snapshot verification and integration/domain tests pass on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` (run `43958619643`).
-- [ ] PostgreSQL API CI for code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` is still running; the preceding head passed PostgreSQL migration application.
+- [x] PostgreSQL API CI, including PostgreSQL migration application and integration/domain tests, passes on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` (run `43958607238`).
 - [x] Sales receipt creation and journal posting are transactional.
 - [x] Partial and full customer-balance settlement API exists.
 - [x] Payment history is tenant/branch scoped.
