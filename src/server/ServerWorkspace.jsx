@@ -12,7 +12,8 @@ const navigation = [
   ["sales", "▣", "فروش / صندوق"],
   ["accounts", "∑", "حساب‌ها"],
   ["cafe", "☕", "آشپزخانه"],
-  ["gamenet", "⌁", "گیم‌نت"]
+  ["gamenet", "⌁", "گیم‌نت"],
+  ["devices", "◉", "وضعیت دستگاه‌ها"]
 ];
 
 const accountTypeName = {
@@ -45,7 +46,7 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, disconnectedDevices = [], tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [stockRows, setStockRows] = useState([]);
@@ -84,6 +85,7 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
     if (id === "accounts") return canViewAccounts;
     if (id === "cafe") return canViewCafe;
     if (id === "gamenet") return canViewGameNet;
+    if (id === "devices") return ["Owner", "Manager"].includes(tenant.role);
     return true;
   });
 
@@ -474,6 +476,13 @@ function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingO
         {error && <div className="mg-server-error" role="alert">{error}</div>}
         {loading && <div className="mg-server-loading">در حال دریافت اطلاعات از سرور...</div>}
         {disconnectedDevices.length > 0 && <div className="mg-server-device-alert" role="alert"><b>هشدار قطع ارتباط دستگاه‌ها</b><p>{count(disconnectedDevices.length)} دستگاه در ۹۰ ثانیه اخیر heartbeat ارسال نکرده‌اند.</p><ul>{disconnectedDevices.map(device => <li key={device.deviceId}>{device.deviceName} — آخرین ارتباط: {dateTime(device.lastSeenAtUtc)}</li>)}</ul></div>}
+
+        {page === "devices" && <section className="mg-server-panel">
+          <div className="mg-server-panel-head"><div><h2>وضعیت اتصال دستگاه‌ها</h2><p>آستانه هشدار: ۹۰ ثانیه بدون heartbeat · آخرین بررسی هر ۳۰ ثانیه</p></div><span className="mg-server-device-count">{count(deviceStatuses.length)} دستگاه ثبت‌شده</span></div>
+          {deviceStatuses.length === 0
+            ? <div className="mg-server-empty">هنوز دستگاهی به این کسب‌وکار متصل نشده است.</div>
+            : <div className="mg-server-table-wrap"><table className="mg-server-table"><thead><tr><th>دستگاه</th><th>پلتفرم</th><th>نسخه</th><th>آخرین ارتباط</th><th>وضعیت</th></tr></thead><tbody>{deviceStatuses.map(device => <tr key={device.deviceId}><td>{device.deviceName}</td><td>{device.platform}</td><td>{device.clientVersion}</td><td>{dateTime(device.lastSeenAtUtc)}</td><td><span className={device.isOnline ? "mg-device-online" : "mg-device-offline"}>{device.isOnline ? "متصل" : "قطع ارتباط"}</span></td></tr>)}</tbody></table></div>}
+        </section>}
 
         {page === "dashboard" && !loading && <>
           <div className="mg-server-stats">
