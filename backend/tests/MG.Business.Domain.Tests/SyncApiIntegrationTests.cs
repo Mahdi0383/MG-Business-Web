@@ -591,11 +591,22 @@ public sealed class SyncApiIntegrationTests
 
         var pull = await staff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
         Assert.NotNull(pull);
-        Assert.Equal(2, pull!.Operations.Length);
+        Assert.Single(pull!.Operations);
         Assert.Contains(pull.Operations, operation => operation.OperationId == secondaryOperationId);
-        Assert.Contains(pull.Operations, operation => operation.OperationId == globalOperationId);
+        Assert.DoesNotContain(pull.Operations, operation => operation.OperationId == globalOperationId);
         Assert.DoesNotContain(pull.Operations, operation => operation.OperationId == mainOperationId);
         Assert.True(pull.NextSequence >= pull.Operations.Max(operation => operation.Sequence));
+
+        var ownerPull = await owner.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.NotNull(ownerPull);
+        Assert.Equal(2, ownerPull!.Operations.Length);
+        Assert.Contains(ownerPull.Operations, operation => operation.OperationId == secondaryOperationId);
+        Assert.Contains(ownerPull.Operations, operation => operation.OperationId == globalOperationId);
+        Assert.DoesNotContain(ownerPull.Operations, operation => operation.OperationId == mainOperationId);
+
+        var unassignedPull = await unassignedStaff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
+        Assert.NotNull(unassignedPull);
+        Assert.Empty(unassignedPull!.Operations);
     }
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
