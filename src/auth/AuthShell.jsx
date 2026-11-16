@@ -50,6 +50,7 @@ function AuthShell({ apiBaseUrl }) {
   const [syncStatus, setSyncStatus] = useState("idle");
   const [pendingOperations, setPendingOperations] = useState(0);
   const [incomingOperations, setIncomingOperations] = useState(0);
+  const [openSyncConflicts, setOpenSyncConflicts] = useState(0);
   const [disconnectedDevices, setDisconnectedDevices] = useState([]);
   const [deviceStatuses, setDeviceStatuses] = useState([]);
 
@@ -236,11 +237,12 @@ function AuthShell({ apiBaseUrl }) {
         const branchId = selectedBranch?.id || null;
         const allowTenantWide = ["Owner", "Manager"].includes(selectedTenant?.role);
         const deviceId = await operationStoreRef.current.getDeviceId(activeActorId);
-        const [pending, incoming] = await Promise.all([
+        const [pending, incoming, conflicts] = await Promise.all([
           operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide, deviceId),
-          operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide)
+          operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide),
+          operationStoreRef.current.getOpenConflicts(tenantId, branchId)
         ]);
-        if (active) { setPendingOperations(pending); setIncomingOperations(incoming); }
+        if (active) { setPendingOperations(pending); setIncomingOperations(incoming); setOpenSyncConflicts(conflicts.length); }
       } catch {
         if (active) setSyncStatus("error");
       }
@@ -370,7 +372,7 @@ function AuthShell({ apiBaseUrl }) {
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} actorId={activeActorId} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} disconnectedDevices={disconnectedDevices} deviceStatuses={deviceStatuses} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} actorId={activeActorId} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} openSyncConflicts={openSyncConflicts} disconnectedDevices={disconnectedDevices} deviceStatuses={deviceStatuses} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">
