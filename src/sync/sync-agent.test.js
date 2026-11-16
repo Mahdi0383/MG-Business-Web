@@ -188,3 +188,64 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
   assert.deepEqual(requestContext.options, { tenantId: "tenant-1", branchId: "branch-a" });
   assert.equal(requestContext.operation.branchId, "branch-a");
 });
+
+test("rejects a pull response containing another branch's operation", async () => {
+  let persisted = false;
+  const api = {
+    async get() {
+      return {
+        operations: [{
+          sequence: 4,
+          operationId: "foreign-branch-operation",
+          branchId: "branch-b",
+          operationType: "customer.updated",
+          schemaVersion: 1,
+          payloadJson: "{}",
+          payloadSha256: "A".repeat(64)
+        }],
+        nextSequence: 4,
+        hasMore: false
+      };
+    },
+    async post() { assert.fail("cross-branch data must not be acknowledged"); }
+  };
+  const store = {
+    async getCursor() { return 3; },
+    async storeIncomingPage() { persisted = true; }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pullIncoming("tenant-1", { branchId: "branch-a" }),
+    /outside the active branch/
+  );
+  assert.equal(persisted, false);
+});
+
+test("rejects malformed incoming operation envelopes before persistence", async () => {
+  let persisted = false;
+  const api = {
+    async get() {
+      return {
+        operations: [{
+          sequence: 4,
+          operationId: "malformed-operation",
+          operationType: "customer.updated",
+          schemaVersion: 1
+        }],
+        nextSequence: 4,
+        hasMore: false
+      };
+    },
+    async post() { assert.fail("malformed data must not be acknowledged"); }
+  };
+  const store = {
+    async getCursor() { return 3; },
+    async storeIncomingPage() { persisted = true; }
+  };
+
+  await assert.rejects(
+    new SyncAgent(api, store).pullIncoming("tenant-1"),
+    /invalid operation envelope/
+  );
+  assert.equal(persisted, false);
+});
