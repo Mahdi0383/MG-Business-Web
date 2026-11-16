@@ -459,7 +459,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "{\\"scope\\":\\"secondary\\"}",
+                    payloadJson = "{\"scope\":\"secondary\"}",
                     payloadSha256 = (string?)null
                 }
             }
@@ -480,7 +480,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "{\\"scope\\":\\"tenant\\"}",
+                    payloadJson = "{\"scope\":\"tenant\"}",
                     payloadSha256 = (string?)null
                 }
             }
