@@ -149,14 +149,24 @@ public static class SyncEndpoints
             var acknowledgedSequences = await db.SyncDeviceCursors.AsNoTracking()
                 .Where(x => x.TenantId == tenantId)
                 .ToDictionaryAsync(x => x.DeviceId, x => x.LastAcknowledgedSequence, cancellationToken);
+            var latestJournalSequence = await db.SyncOperations.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .Select(x => (long?)x.Sequence)
+                .MaxAsync(cancellationToken) ?? 0;
 
-            return Results.Ok(devices.OrderByDescending(device => device.LastSeenAtUtc).Select(device => new
+            return Results.Ok(devices.OrderByDescending(device => device.LastSeenAtUtc).Select(device =>
             {
-                device.DeviceId, device.ActorId, device.BranchId, device.DeviceName,
-                device.Platform, device.ClientVersion, device.FirstSeenAtUtc, device.LastSeenAtUtc,
-                lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0),
-                isOnline = device.LastSeenAtUtc >= cutoff,
-                alertCode = device.LastSeenAtUtc >= cutoff ? null : "DEVICE_HEARTBEAT_MISSED"
+                var lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0);
+                return new
+                {
+                    device.DeviceId, device.ActorId, device.BranchId, device.DeviceName,
+                    device.Platform, device.ClientVersion, device.FirstSeenAtUtc, device.LastSeenAtUtc,
+                    lastAcknowledgedSequence,
+                    latestJournalSequence,
+                    pendingOperationCount = Math.Max(0, latestJournalSequence - lastAcknowledgedSequence),
+                    isOnline = device.LastSeenAtUtc >= cutoff,
+                    alertCode = device.LastSeenAtUtc >= cutoff ? null : "DEVICE_HEARTBEAT_MISSED"
+                };
             }));
         });
 
