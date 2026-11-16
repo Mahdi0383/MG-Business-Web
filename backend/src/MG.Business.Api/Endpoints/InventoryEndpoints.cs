@@ -94,6 +94,48 @@ public static class InventoryEndpoints
             return Results.Ok(result);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
+        group.MapGet("/movements", async (int? page, int? pageSize, Guid? productId, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            var pageNumber = page ?? 1;
+            var take = pageSize ?? 50;
+            if (pageNumber < 1 || take is < 1 or > 200)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["pagination"] = ["شماره صفحه باید مثبت و اندازه صفحه بین ۱ تا ۲۰۰ باشد."]
+                });
+
+            var query = db.StockMovements.AsNoTracking()
+                .Where(x => x.TenantId == tenant.TenantId);
+            if (tenant.BranchId is Guid branchId)
+                query = query.Where(x => x.BranchId == branchId);
+            if (productId is Guid selectedProductId)
+                query = query.Where(x => x.ProductId == selectedProductId);
+
+            List<StockMovement> movements;
+            if (db.Database.IsSqlite())
+            {
+                // SQLite cannot translate DateTimeOffset ordering; the tenant/branch/product
+                // filters are still applied by the database before deterministic paging.
+                var filtered = await query.ToListAsync(cancellationToken);
+                movements = filtered.OrderByDescending(x => x.CreatedAtUtc)
+                    .ThenByDescending(x => x.Id)
+                    .Skip((pageNumber - 1) * take).Take(take).ToList();
+            }
+            else
+            {
+                movements = await query.OrderByDescending(x => x.CreatedAtUtc)
+                    .ThenByDescending(x => x.Id)
+                    .Skip((pageNumber - 1) * take).Take(take)
+                    .ToListAsync(cancellationToken);
+            }
+
+            return Results.Ok(movements.Select(x => new
+            {
+                x.Id, x.ProductId, x.BranchId, type = x.Type.ToString(),
+                x.Quantity, x.UnitCost, x.SignedQuantity, x.Reference, x.CreatedAtUtc
+            }));
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
         group.MapPost("/movements", async (CreateStockMovementRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
