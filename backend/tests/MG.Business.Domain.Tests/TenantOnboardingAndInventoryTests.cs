@@ -100,6 +100,12 @@ public sealed class TenantOnboardingAndInventoryTests
 
     private static async Task<HttpClient> RegisterAndLoginAsync(WebApplicationFactory<Program> factory, string email)
     {
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            await db.Database.EnsureCreatedAsync();
+        }
+
         var client = factory.CreateClient();
         var register = await client.PostAsJsonAsync("/auth/register", new { email, password = "Strong!Passw0rd" });
         Assert.Equal(HttpStatusCode.OK, register.StatusCode);
