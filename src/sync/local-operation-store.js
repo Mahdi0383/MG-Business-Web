@@ -51,6 +51,12 @@ const INBOX_STORE = "inbox";
 const CUSTOMERS_STORE = "customers";
 const CONFLICTS_STORE = "conflicts";
 const REQUIRE_AUTHORITY_LEASES = import.meta.env?.VITE_REQUIRE_AUTHORITY_LEASES === "true";
+const AUTHORITY_PUBLIC_KEY = import.meta.env?.VITE_AUTHORITY_LEASE_PUBLIC_KEY_SPKI_BASE64 || "";
+
+function decodeBase64(value) {
+  if (typeof value !== "string" || !value) throw new TypeError("A Base64 value is required.");
+  return Uint8Array.from(atob(value), character => character.charCodeAt(0));
+}
 
 let databasePromise;
 
@@ -202,16 +208,19 @@ export class LocalOperationStore {
     return deviceId;
   }
 
-  async setAuthorityLease({ tenantId, branchId = null, lease }) {
+  async setAuthorityLease({ tenantId, branchId = null, actorId, lease }) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required to store an authority lease.");
+    if (typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("actorId is required to store an authority lease.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
-    if (!lease || lease.verified !== true || lease.tenantId !== tenantId
-      || (lease.branchId || null) !== (branchId || null)
-      || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
+    const deviceId = await this.getDeviceId(actorId);
+    if (!lease || lease.tenantId !== tenantId || (lease.branchId || null) !== (branchId || null)
+      || lease.deviceId !== deviceId || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
+      || typeof lease.signatureBase64 !== "string" || typeof lease.publicKeySpkiBase64 !== "string"
       || !Number.isFinite(Date.parse(lease.expiresAtUtc)) || Date.parse(lease.expiresAtUtc) <= Date.now())
-      throw new TypeError("Only a verified, active authority lease for the selected scope can be stored.");
+      throw new TypeError("Only an active authority lease bound to this browser device and scope can be stored.");
     const key = `authority-lease:${tenantId}:${branchId || "tenant-wide"}`;
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readwrite");
@@ -220,9 +229,11 @@ export class LocalOperationStore {
     await done;
   }
 
-  async getAuthorityEpoch({ tenantId, branchId = null }) {
+  async getAuthorityEpoch({ tenantId, branchId = null, actorId }) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required to read the authority lease.");
+    if (typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("actorId is required to read the authority lease.");
     const key = `authority-lease:${tenantId}:${branchId || "tenant-wide"}`;
     const database = await openDatabase();
     const transaction = database.transaction(META_STORE, "readonly");
@@ -230,13 +241,49 @@ export class LocalOperationStore {
     const stored = await requestResult(transaction.objectStore(META_STORE).get(key));
     await done;
     const lease = stored?.value;
-    const valid = lease?.verified === true && lease.tenantId === tenantId
-      && (lease.branchId || null) === (branchId || null)
-      && Number.isSafeInteger(lease.epoch) && lease.epoch > 0
-      && Date.parse(lease.expiresAtUtc) > Date.now();
+    let valid = false;
+    try {
+      const deviceId = await this.getDeviceId(actorId);
+      const now = Date.now();
+      const issuedAt = Date.parse(lease?.issuedAtUtc);
+      const expiresAt = Date.parse(lease?.expiresAtUtc);
+      const expectedScope = branchId ? branchId.replaceAll("-", "").toLowerCase() : "tenant-wide";
+      if (lease?.tenantId === tenantId && (lease.branchId || null) === (branchId || null)
+        && lease.deviceId === deviceId && lease.scopeKey === expectedScope
+        && Number.isSafeInteger(lease.epoch) && lease.epoch > 0
+        && Number.isFinite(issuedAt) && Number.isFinite(expiresAt)
+        && issuedAt <= now + 30_000 && expiresAt > now && expiresAt > issuedAt
+        && expiresAt - issuedAt <= 5 * 60_000
+        && AUTHORITY_PUBLIC_KEY && lease.publicKeySpkiBase64 === AUTHORITY_PUBLIC_KEY
+        && typeof lease.leaseId === "string" && typeof lease.signatureBase64 === "string") {
+        const publicKey = await crypto.subtle.importKey(
+          "spki", decodeBase64(AUTHORITY_PUBLIC_KEY),
+          { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
+        );
+        const canonical = [
+          "MG-AUTHORITY-LEASE-V1",
+          lease.tenantId,
+          lease.branchId || "",
+          lease.scopeKey,
+          lease.deviceId,
+          lease.leaseId,
+          String(lease.epoch),
+          String(issuedAt),
+          String(expiresAt)
+        ].join("\n");
+        valid = await crypto.subtle.verify(
+          { name: "ECDSA", hash: "SHA-256" },
+          publicKey,
+          decodeBase64(lease.signatureBase64),
+          new TextEncoder().encode(canonical)
+        );
+      }
+    } catch {
+      valid = false;
+    }
     if (!valid) {
       if (REQUIRE_AUTHORITY_LEASES)
-        throw new Error("A verified, unexpired authority lease is required before making offline business changes.");
+        throw new Error("A cryptographically verified, unexpired authority lease for this device is required before making offline business changes.");
       return 0;
     }
     return lease.epoch;
@@ -251,7 +298,7 @@ export class LocalOperationStore {
     if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError("schemaVersion must be a positive integer.");
     if (!Number.isSafeInteger(authorityEpoch) || authorityEpoch < 0)
       throw new TypeError("authorityEpoch must be a non-negative safe integer.");
-    const verifiedEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
+    const verifiedEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
     if (authorityEpoch !== 0 && authorityEpoch !== verifiedEpoch)
       throw new TypeError("The operation authority epoch does not match the verified signed lease.");
     const effectiveAuthorityEpoch = verifiedEpoch || authorityEpoch;
