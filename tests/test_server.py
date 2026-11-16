@@ -369,6 +369,46 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["amountDue"], 0)
 
+        # Supplier invoices must increase stock, create payable journal entries, and settle atomically.
+        status, result = self.request("POST", "/api/products", {
+            "id":"product-purchase-test","name":"Milk","sku":"MILK-01",
+            "sellPrice":40000,"costPrice":20000
+        }, token)
+        self.assertEqual(status,201)
+        status, result = self.request("POST", "/api/suppliers", {
+            "id":"supplier-1","name":"Test Dairy","phone":"+49123456789"
+        }, token)
+        self.assertEqual(status,201)
+        status, result = self.request("POST", "/api/purchase-invoices", {
+            "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
+            "invoiceDate":"2026-11-16","discount":0,
+            "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000}]
+        }, token)
+        self.assertEqual(status,201)
+        self.assertEqual(result["total"],250000)
+        status, result = self.request("GET", "/api/inventory", token=token)
+        self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test")["quantity"],10)
+        status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "amount":100000,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,201)
+        self.assertEqual(result["status"],"partial")
+        self.assertEqual(result["remainingBalance"],150000)
+        status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "amount":150000,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,201)
+        self.assertEqual(result["status"],"paid")
+        self.assertEqual(result["remainingBalance"],0)
+        status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "amount":1,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,409)
+        status, result = self.request("GET", "/api/purchase-invoices", token=token)
+        self.assertEqual(result["items"][0]["status"],"paid")
+        status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
+        self.assertEqual(trial["totalDebit"],trial["totalCredit"])
+
         status, snapshot = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         altered = json.loads(json.dumps(snapshot))
