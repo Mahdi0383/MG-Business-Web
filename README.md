@@ -45,7 +45,7 @@ git pull --ff-only
 - `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger` و `POST /api/customers/{id}/payments`
 - `GET /api/inventory` و `POST /api/inventory/movements`
-- `GET/POST /api/suppliers`، `GET/POST /api/purchase-invoices` و `POST /api/purchase-invoices/{id}/payments` برای خرید، ورود موجودی، بدهی تأمین‌کننده و پرداخت جزئی/کامل
+- `GET/POST /api/suppliers`، `GET /api/suppliers/{id}/ledger` برای گردش حساب و مانده بدهی تأمین‌کننده، `GET/POST /api/purchase-invoices` و `POST /api/purchase-invoices/{id}/payments` برای خرید، ورود موجودی، بدهی تأمین‌کننده و پرداخت جزئی/کامل
 - `GET /api/accounting/accounts`، `GET /api/accounting/journal`، `GET /api/accounting/trial-balance`، `GET /api/accounting/balance-sheet` و `GET /api/accounting/profit-loss`
 - `GET/POST /api/gamenet/devices`، `POST/DELETE /api/gamenet/devices/{id}`، `GET /api/gamenet/sessions` و `POST /api/gamenet/sessions/{id}/end`
 - `GET/POST /api/gamenet/reservations` و `POST /api/gamenet/reservations/{id}/cancel` برای رزرو دستگاه و جلوگیری از تداخل زمان‌ها
@@ -64,7 +64,7 @@ git pull --ff-only
 - سرور API مبتنی بر Python و SQLite، ایجاد فضای کاری/مالک، ورود با نشست bearer، محدودسازی تلاش ورود، ثبت/خواندن/برگشت تراکنش و audit log.
 - دفتر حساب‌ها پایه، ثبت خودکار سند دوبل برای درآمد/هزینه و سند معکوس به‌جای حذف سند مالی.
 - کاتالوگ کالا، پرونده مشتری، دفتر بدهکار/بستانکار مشتری با مشاهده گردش کامل حساب، دریافت جزئی از بدهی، گردش انبار، محاسبه موجودی و جلوگیری از موجودی منفی.
-- مدیریت تأمین‌کنندگان، فاکتور خرید چندقلمی، ورود اتمیک کالا به انبار، ثبت بهای خرید خالص پس از تخفیف واحدی، ایجاد بدهی در دفتر کل و پرداخت جزئی/کامل تأمین‌کننده.
+- مدیریت تأمین‌کنندگان، گردش حساب و مانده بدهی، فاکتور خرید چندقلمی، ورود اتمیک کالا به انبار، ثبت بهای خرید خالص پس از تخفیف واحدی، ایجاد بدهی در دفتر کل و پرداخت جزئی/کامل تأمین‌کننده.
 - گزارش سود و زیان، تراز آزمایشی و ترازنامه پایه بر مبنای دفتر کل؛ معادله دارایی = بدهی + حقوق مالکانه بررسی می‌شود.
 - کافه POS پایه: سبد سفارش، تخفیف، انتخاب مشتری و روش پرداخت؛ ثبت اتمیک سفارش، کسر موجودی و ثبت درآمد/بهای تمام‌شده. شناسه پایدار سفارش در تلاش مجدد شبکه استفاده می‌شود تا سفارش تکراری ثبت نشود.
 - منوی عمومی QR در `/order.html`، ثبت سفارش مهمان با شماره تماس، محدودیت نرخ درخواست، ایجاد پرونده مشتری و ثبت فروش اعتباری/مانده مشتری.
