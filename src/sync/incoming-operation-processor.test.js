@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { IncomingOperationProcessor } from "./incoming-operation-processor.js";
+import { classifyIncomingOperation } from "./conflict-policy.js";
 function payloadHash(payloadJson) {
   return createHash("sha256").update(payloadJson, "utf8").digest("hex");
 }
@@ -364,4 +365,70 @@ test("rejects incoming inbox rows without a persisted payload hash", async () =>
     processor.processBatch("tenant-1", 10, null, true),
     /payload hash is missing or invalid/
   );
+});
+
+
+test("applies an incoming customer creation through the transactional adapter contract", async () => {
+  const payload = {
+    customerId: "customer-remote-1",
+    code: "C-REMOTE-1",
+    name: "Remote Customer",
+    baseVersion: 0
+  };
+  const payloadJson = JSON.stringify(payload);
+  const applied = [];
+  const conflicts = [];
+  const operation = {
+    tenantId: "tenant-1",
+    branchId: "branch-a",
+    sequence: 7,
+    operationId: "remote-create-1",
+    operationType: "customer.profile.created",
+    schemaVersion: 1,
+    payloadJson,
+    payloadSha256: payloadHash(payloadJson)
+  };
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return [operation]; } },
+    adapter: {
+      async readConflictState() { return null; },
+      async recordConflict(value) { conflicts.push(value); },
+      async applyAndAcknowledge(value) { applied.push(value); }
+    },
+    classify: classifyIncomingOperation
+  });
+  const result = await processor.processBatch("tenant-1", 10, "branch-a", false);
+  assert.equal(result.applied, 1);
+  assert.equal(result.blockedByConflict, false);
+  assert.equal(applied[0].operation.payload.customerId, "customer-remote-1");
+  assert.deepEqual(conflicts, []);
+});
+
+test("persists a duplicate customer creation as a conflict and stops later replay", async () => {
+  const firstPayload = { customerId: "customer-existing", code: "C-1", name: "Duplicate", baseVersion: 0 };
+  const firstJson = JSON.stringify(firstPayload);
+  const secondJson = JSON.stringify({ customerId: "customer-later", code: "C-2", name: "Later", baseVersion: 0 });
+  const rows = [
+    { tenantId: "tenant-1", branchId: "branch-a", sequence: 8, operationId: "duplicate-create",
+      operationType: "customer.profile.created", schemaVersion: 1, payloadJson: firstJson, payloadSha256: payloadHash(firstJson) },
+    { tenantId: "tenant-1", branchId: "branch-a", sequence: 9, operationId: "later-create",
+      operationType: "customer.profile.created", schemaVersion: 1, payloadJson: secondJson, payloadSha256: payloadHash(secondJson) }
+  ];
+  const conflicts = [];
+  const applied = [];
+  const processor = new IncomingOperationProcessor({
+    store: { async getUnappliedIncoming() { return rows; } },
+    adapter: {
+      async readConflictState() { return { version: 1, originOperationId: "original-create" }; },
+      async recordConflict(value) { conflicts.push(value); },
+      async applyAndAcknowledge(value) { applied.push(value); }
+    },
+    classify: classifyIncomingOperation
+  });
+  const result = await processor.processBatch("tenant-1", 10, "branch-a", false);
+  assert.equal(result.blockedByConflict, true);
+  assert.equal(result.applied, 0);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].sequence, 8);
+  assert.deepEqual(applied, []);
 });
