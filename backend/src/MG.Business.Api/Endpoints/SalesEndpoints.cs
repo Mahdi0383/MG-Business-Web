@@ -211,7 +211,7 @@ public static class SalesEndpoints
             // SQLite cannot translate ordering over DateTimeOffset consistently; keep the
             // tenant/branch filter in SQL and order the bounded invoice history in memory.
             var paymentRows = await paymentQuery.ToListAsync(cancellationToken);
-            var payments = paymentRows.OrderBy(x => x.CreatedAtUtc)
+            var payments = paymentRows.OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
                 .Select(x => new SalesPaymentResponse(x.Id, x.Amount, x.Method.ToString(), x.Reference, x.CreatedAtUtc))
                 .ToList();
             return Results.Ok(payments);
