@@ -111,3 +111,10 @@ The current repository is a foundation, not a finished commercial product. A foc
 - Consolidated component ownership, trust boundaries, deployment/persistence strategy, domain boundaries, command envelope, API conventions, local transaction rules, sync/conflict lifecycle, fencing/failback, security, licensing, observability, backup/restore, verification suites and delivery gates.
 - Recorded seven architecture decisions: modular monolith first, local journal/at-least-once sync, append-only financial facts, fenced failover, separate creator control plane, SQLite/PostgreSQL deployment roles, and signed entitlement leases.
 - This is completion of the documented architecture baseline, not completion of its implementation. Gate 0 still requires threat-model review, contract verification and reproducible CI evidence. The implementation blockers in section 16 of the reference architecture remain release blockers.
+
+### Outgoing sync envelope integrity gate — 2026-11-16
+
+- Before transmitting a pending batch, the client now verifies tenant and device ownership, branch scope, operation identity/type, schema version, timestamp, supported authority epoch, payload size/shape and SHA-256 integrity.
+- Missing secure cryptography, malformed payloads, cross-device rows and tampered payloads fail closed before network transmission; no acknowledgement is written for rejected local queue data.
+- Added regression tests for payload tampering and foreign-device queue entries.
+- This hardens the browser sync transport boundary; it does not replace server authorization, device cryptographic enrollment or signed authority leases.
