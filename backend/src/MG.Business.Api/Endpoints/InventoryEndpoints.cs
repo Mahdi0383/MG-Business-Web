@@ -127,7 +127,6 @@ public static class InventoryEndpoints
 
                 var history = await db.StockMovements.AsNoTracking()
                     .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.ProductId == request.ProductId)
-                    .OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
                     .ToListAsync(cancellationToken);
                 var current = InventoryValuation.Calculate(history);
                 decimal unitCost;
