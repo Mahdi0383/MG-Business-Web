@@ -38,7 +38,8 @@ public static class SyncEndpoints
             var now = DateTimeOffset.UtcNow;
             var cursor = await db.SyncDeviceCursors.SingleOrDefaultAsync(
                 x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
-            if (cursor is null)
+            var isNewCursor = cursor is null;
+            if (isNewCursor)
             {
                 cursor = new SyncDeviceCursor(tenantId, request.DeviceId, actorId, request.Sequence, now);
                 db.SyncDeviceCursors.Add(cursor);
@@ -52,7 +53,7 @@ public static class SyncEndpoints
             {
                 await db.SaveChangesAsync(cancellationToken);
             }
-            catch (DbUpdateException) when (cursor.LastAcknowledgedSequence == request.Sequence)
+            catch (DbUpdateException) when (isNewCursor)
             {
                 db.Entry(cursor).State = EntityState.Detached;
                 var concurrent = await db.SyncDeviceCursors.SingleOrDefaultAsync(
@@ -63,8 +64,18 @@ public static class SyncEndpoints
                 await db.SaveChangesAsync(cancellationToken);
                 cursor = concurrent;
             }
+            catch (DbUpdateConcurrencyException) when (!isNewCursor)
+            {
+                db.Entry(cursor!).State = EntityState.Detached;
+                var latest = await db.SyncDeviceCursors.SingleAsync(
+                    x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+                if (!latest.Advance(actorId, request.Sequence, now))
+                    return Results.Ok(new { deviceId = request.DeviceId, sequence = latest.LastAcknowledgedSequence, staleAcknowledgement = true });
+                await db.SaveChangesAsync(cancellationToken);
+                cursor = latest;
+            }
 
-            return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = false });
+            return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor!.LastAcknowledgedSequence, staleAcknowledgement = false });
         });
 
         group.MapPost("/heartbeat", async (
