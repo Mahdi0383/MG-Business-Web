@@ -163,3 +163,5 @@ The current repository is a foundation, not a finished commercial product. A foc
 
 - Customer reads from the authoritative API are now cached into the local IndexedDB projection. The cache validates the complete batch before writing and never overwrites a pending local customer edit; this closes the gap where customers created on another device were unavailable after a network loss.
 
+- Customer cache persistence is best-effort: browsers that deny or exhaust IndexedDB storage continue to show authoritative online customer data instead of losing the page to a local-cache error.
+
