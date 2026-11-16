@@ -36,6 +36,21 @@ public sealed class DeviceCredential
         LastRotatedAtUtc = nowUtc.ToUniversalTime();
     }
 
+    public void RotatePublicKeyAndCredential(string publicKeySpkiBase64, string credentialSha256, DateTimeOffset nowUtc)
+    {
+        if (RevokedAtUtc is not null)
+            throw new InvalidOperationException("A revoked device credential cannot be rotated.");
+        if (string.IsNullOrWhiteSpace(publicKeySpkiBase64) || publicKeySpkiBase64.Length > 2048)
+            throw new ArgumentException("A valid ECDSA P-256 public key is required.", nameof(publicKeySpkiBase64));
+        if (string.IsNullOrWhiteSpace(credentialSha256) || credentialSha256.Length != 64
+            || !credentialSha256.All(Uri.IsHexDigit))
+            throw new ArgumentException("A SHA-256 credential digest is required.", nameof(credentialSha256));
+        PublicKeySpkiBase64 = publicKeySpkiBase64;
+        CredentialSha256 = credentialSha256.ToLowerInvariant();
+        KeyVersion = checked(KeyVersion + 1);
+        LastRotatedAtUtc = nowUtc.ToUniversalTime();
+    }
+
     public void RecordUse(DateTimeOffset nowUtc)
     {
         if (RevokedAtUtc is null)
