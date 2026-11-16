@@ -1,4 +1,6 @@
 using MG.Business.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -36,6 +38,32 @@ public sealed class ApiHealthEndpointTests
         var response = await client.GetAsync("/health/ready");
 
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public void ProductionStartup_RejectsDevelopmentSqliteFallback()
+    {
+        var keyDirectory = Path.Combine(Path.GetTempPath(), $"mg-business-production-keys-{Guid.NewGuid():N}");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Production");
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Database:Provider"] = "Sqlite",
+                    ["ConnectionStrings:Business"] = "Data Source=production-misconfigured.db",
+                    ["DataProtection:KeysDirectory"] = keyDirectory,
+                    ["Cors:AllowedOrigins:0"] = "https://app.example.com",
+                    ["ForwardedHeaders:KnownProxies:0"] = "127.0.0.1"
+                }));
+        });
+
+        var exception = Record.Exception(() => factory.CreateClient());
+
+        Assert.NotNull(exception);
+        Assert.Contains("Production deployments must explicitly configure PostgreSQL", exception!.ToString());
+        if (Directory.Exists(keyDirectory))
+            Directory.Delete(keyDirectory, recursive: true);
     }
 
     private static WebApplicationFactory<Program> CreateFactory()
