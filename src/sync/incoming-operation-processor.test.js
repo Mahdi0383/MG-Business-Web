@@ -178,3 +178,64 @@ test("does not query a tenant-wide inbox without explicit manager authority", as
   assert.equal(result.received, 0);
   assert.equal(queried, false);
 });
+
+
+test("rejects malformed or non-object persisted payloads before touching projections", async () => {
+  let projectionRead = false;
+  let applied = false;
+  const processor = new IncomingOperationProcessor({
+    store: {
+      async getUnappliedIncoming() {
+        return [{
+          sequence: 1,
+          branchId: "branch-a",
+          schemaVersion: 1,
+          operationId: "invalid-payload",
+          operationType: "customer.profile.updated",
+          payloadJson: "[]"
+        }];
+      }
+    },
+    adapter: {
+      async readConflictState() { projectionRead = true; return null; },
+      async recordConflict() {},
+      async applyAndAcknowledge() { applied = true; }
+    },
+    classify: () => ({ disposition: "apply" })
+  });
+
+  await assert.rejects(
+    processor.processBatch("tenant-1", 100, "branch-a"),
+    /payload must be a JSON object/
+  );
+  assert.equal(projectionRead, false);
+  assert.equal(applied, false);
+});
+
+test("rejects malformed JSON persisted in the incoming inbox", async () => {
+  const processor = new IncomingOperationProcessor({
+    store: {
+      async getUnappliedIncoming() {
+        return [{
+          sequence: 1,
+          branchId: "branch-a",
+          schemaVersion: 1,
+          operationId: "malformed-payload",
+          operationType: "customer.profile.updated",
+          payloadJson: "{"
+        }];
+      }
+    },
+    adapter: {
+      async readConflictState() { throw new Error("must not read projections"); },
+      async recordConflict() {},
+      async applyAndAcknowledge() {}
+    },
+    classify: () => ({ disposition: "apply" })
+  });
+
+  await assert.rejects(
+    processor.processBatch("tenant-1", 100, "branch-a"),
+    /malformed JSON payload/
+  );
+});
