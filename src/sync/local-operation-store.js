@@ -1,3 +1,12 @@
+export function isPendingOperationVisible(operation, branchId, allowTenantWide, deviceId) {
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) return false;
+  if (typeof allowTenantWide !== "boolean" || typeof deviceId !== "string" || !deviceId.trim()) return false;
+  if (operation.deviceId !== deviceId) return false;
+  if (branchId === null) return allowTenantWide;
+  if (typeof branchId !== "string" || !branchId.trim()) return false;
+  return operation.branchId === branchId || (allowTenantWide && operation.branchId == null);
+}
+
 export function isIncomingRowVisible(row, branchId, allowTenantWide) {
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
   if (typeof allowTenantWide !== "boolean") return false;
@@ -189,11 +198,7 @@ export class LocalOperationStore {
           return;
         }
         const operation = cursor.value;
-        const matchesDevice = operation.deviceId === deviceId;
-        const matchesBranch = branchId === null
-          ? allowTenantWide || operation.branchId != null
-          : operation.branchId === branchId;
-        if (matchesDevice && (matchesBranch || (allowTenantWide && operation.branchId == null)))
+        if (isPendingOperationVisible(operation, branchId, allowTenantWide, deviceId))
           matching.push(operation);
         cursor.continue();
       };
@@ -253,11 +258,8 @@ export class LocalOperationStore {
           return;
         }
         const operation = cursor.value;
-        const matchesDevice = operation.deviceId === deviceId;
-        const matchesBranch = branchId === null
-          ? allowTenantWide || operation.branchId != null
-          : operation.branchId === branchId || (allowTenantWide && operation.branchId == null);
-        if (matchesDevice && matchesBranch) matching += 1;
+        if (isPendingOperationVisible(operation, branchId, allowTenantWide, deviceId))
+          matching += 1;
         cursor.continue();
       };
     });
