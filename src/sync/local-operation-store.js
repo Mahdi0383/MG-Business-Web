@@ -189,6 +189,28 @@ async function sha256(value) {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
 }
 
+function roundInventoryValue(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function roundInventoryAverage(value) {
+  return Math.round((value + Number.EPSILON) * 10_000) / 10_000;
+}
+
+function applyLocalStockMovement(balance, movement) {
+  const inbound = [1, 5, 6].includes(Number(movement.type));
+  if (inbound) {
+    balance.quantity += Number(movement.quantity);
+    balance.value += Number(movement.quantity) * Number(movement.unitCost);
+  } else {
+    if (Number(movement.quantity) > balance.quantity)
+      throw new Error("موجودی محلی برای خروج کالا کافی نیست.");
+    const averageCost = balance.quantity === 0 ? 0 : roundInventoryAverage(roundInventoryValue(balance.value) / balance.quantity);
+    balance.quantity -= Number(movement.quantity);
+    balance.value -= Number(movement.quantity) * averageCost;
+  }
+}
+
 export function normalizeLocalCustomer(input) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new TypeError("Customer input must be an object.");
@@ -238,6 +260,192 @@ export class LocalOperationStore {
     store.put({ key, value: deviceId });
     await done;
     return deviceId;
+  }
+
+  async cacheInventorySnapshot({ tenantId, branchId, products, stockRows }) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required to cache inventory.");
+    if (typeof branchId !== "string" || !branchId.trim())
+      throw new TypeError("branchId is required to cache branch inventory.");
+    if (!Array.isArray(products) || !Array.isArray(stockRows))
+      throw new TypeError("Inventory products and stock rows must be arrays.");
+    const stockByProduct = new Map(stockRows
+      .filter(row => row && row.branchId === branchId && typeof row.productId === "string")
+      .map(row => [row.productId, row]));
+    const database = await openDatabase();
+    const transaction = database.transaction(
+      [INVENTORY_PRODUCTS_STORE, INVENTORY_BASELINES_STORE], "readwrite"
+    );
+    const done = transactionDone(transaction);
+    const productStore = transaction.objectStore(INVENTORY_PRODUCTS_STORE);
+    const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
+    const cachedAtUtc = new Date().toISOString();
+    for (const product of products) {
+      if (!product || typeof product.id !== "string" || !product.id.trim()) continue;
+      productStore.put({ ...product, tenantId, cachedAtUtc });
+      if (!product.tracksInventory) continue;
+      const stock = stockByProduct.get(product.id);
+      baselineStore.put({
+        tenantId, branchId, productId: product.id,
+        quantityOnHand: Number(stock?.quantityOnHand || 0),
+        inventoryValue: Number(stock?.inventoryValue || 0),
+        averageUnitCost: Number(stock?.averageUnitCost || 0),
+        cachedAtUtc
+      });
+    }
+    await done;
+  }
+
+  async getInventoryProducts(tenantId) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required to read cached inventory products.");
+    const database = await openDatabase();
+    const transaction = database.transaction(INVENTORY_PRODUCTS_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const rows = await requestResult(transaction.objectStore(INVENTORY_PRODUCTS_STORE)
+      .index("byTenant").getAll(tenantId));
+    await done;
+    return rows;
+  }
+
+  async getInventoryStock(tenantId, branchId) {
+    if (typeof tenantId !== "string" || !tenantId.trim()
+      || typeof branchId !== "string" || !branchId.trim())
+      throw new TypeError("Tenant and branch are required to read cached stock.");
+    const database = await openDatabase();
+    const transaction = database.transaction(
+      [INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE], "readonly"
+    );
+    const done = transactionDone(transaction);
+    const baselines = await requestResult(transaction.objectStore(INVENTORY_BASELINES_STORE)
+      .index("byTenantBranch").getAll([tenantId, branchId]));
+    const movements = await requestResult(transaction.objectStore(STOCK_MOVEMENTS_STORE)
+      .index("byTenantBranchProduct").getAll(IDBKeyRange.bound([tenantId, branchId, ""], [tenantId, branchId, "\uffff"])));
+    await done;
+    const pendingByProduct = new Map();
+    for (const movement of movements.filter(row => row.state === "pending")) {
+      if (!pendingByProduct.has(movement.productId)) pendingByProduct.set(movement.productId, []);
+      pendingByProduct.get(movement.productId).push(movement);
+    }
+    return baselines.map(baseline => {
+      const balance = {
+        quantity: Number(baseline.quantityOnHand || 0),
+        value: Number(baseline.inventoryValue || 0)
+      };
+      const pending = (pendingByProduct.get(baseline.productId) || [])
+        .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc));
+      for (const movement of pending) applyLocalStockMovement(balance, movement);
+      const value = roundInventoryValue(balance.value);
+      return {
+        productId: baseline.productId,
+        branchId,
+        quantityOnHand: balance.quantity,
+        inventoryValue: value,
+        averageUnitCost: balance.quantity === 0 ? 0 : roundInventoryAverage(value / balance.quantity),
+        pendingMovementCount: pending.length,
+        cachedAtUtc: baseline.cachedAtUtc
+      };
+    });
+  }
+
+  async createStockMovement({ tenantId, branchId, actorId, movement }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()
+      || typeof branchId !== "string" || !branchId.trim()
+      || typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("Tenant, branch and actor are required for an offline stock movement.");
+    if (!movement || typeof movement !== "object" || Array.isArray(movement))
+      throw new TypeError("Stock movement input must be an object.");
+    const productId = movement.productId;
+    const type = Number(movement.type);
+    const quantity = Number(movement.quantity);
+    const inbound = [1, 5, 6].includes(type);
+    const unitCost = inbound ? Number(movement.unitCost) : null;
+    const reference = typeof movement.reference === "string" && movement.reference.trim()
+      ? movement.reference.trim() : null;
+    if (typeof productId !== "string" || !productId.trim() || !Number.isInteger(type) || type < 1 || type > 7)
+      throw new TypeError("A valid product and stock movement type are required.");
+    if (!Number.isFinite(quantity) || quantity <= 0 || Math.round(quantity * 1000) !== quantity * 1000)
+      throw new TypeError("Stock quantity must be positive and support at most three decimal places.");
+    if (inbound && (!Number.isFinite(unitCost) || unitCost < 0 || Math.round(unitCost * 100) !== unitCost * 100))
+      throw new TypeError("Inbound stock movements require a non-negative unit cost with at most two decimals.");
+    if (reference && reference.length > 250)
+      throw new TypeError("Stock movement reference cannot exceed 250 characters.");
+
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId, actorId });
+    if (REQUIRE_AUTHORITY_LEASES && authorityEpoch < 1)
+      throw new Error("A verified authority lease is required before queuing offline inventory movements.");
+    const operationId = crypto.randomUUID();
+    const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
+    const now = new Date().toISOString();
+    const database = await openDatabase();
+    const transaction = database.transaction(
+      [OPERATIONS_STORE, INVENTORY_PRODUCTS_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE],
+      "readwrite"
+    );
+    const done = transactionDone(transaction);
+    const productStore = transaction.objectStore(INVENTORY_PRODUCTS_STORE);
+    const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
+    const movementStore = transaction.objectStore(STOCK_MOVEMENTS_STORE);
+    const product = await requestResult(productStore.get([tenantId, productId]));
+    if (!product || !product.isActive || !product.tracksInventory) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("کالای فعال و انبارگردانی‌شونده در حافظه محلی موجود نیست.");
+    }
+    const baseline = await requestResult(baselineStore.get([tenantId, branchId, productId]));
+    if (!baseline) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("ابتدا باید موجودی کالا هنگام اتصال به سرور دریافت و ذخیره شود.");
+    }
+    const localMovements = await requestResult(movementStore.index("byTenantBranchProduct")
+      .getAll(IDBKeyRange.only([tenantId, branchId, productId])));
+    const balance = {
+      quantity: Number(baseline.quantityOnHand || 0),
+      value: Number(baseline.inventoryValue || 0)
+    };
+    for (const localMovement of localMovements
+      .filter(row => row.state === "pending")
+      .sort((a, b) => a.createdAtUtc.localeCompare(b.createdAtUtc)))
+      applyLocalStockMovement(balance, localMovement);
+
+    const baseQuantityOnHand = balance.quantity;
+    const baseInventoryValue = roundInventoryValue(balance.value);
+    const averageUnitCost = balance.quantity === 0
+      ? 0 : roundInventoryAverage(baseInventoryValue / balance.quantity);
+    if (!inbound && quantity > baseQuantityOnHand) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("موجودی محلی برای خروج کالا کافی نیست.");
+    }
+    const effectiveUnitCost = inbound ? unitCost : averageUnitCost;
+    const nextBalance = { quantity: balance.quantity, value: balance.value };
+    applyLocalStockMovement(nextBalance, { type, quantity, unitCost: effectiveUnitCost });
+    const payloadJson = JSON.stringify({
+      productId, type, quantity, unitCost: inbound ? unitCost : null,
+      baseQuantityOnHand, baseInventoryValue, reference
+    });
+    const operation = {
+      operationId, deviceId, tenantId, branchId,
+      operationType: "inventory.stock.movement.created",
+      schemaVersion: 1, authorityEpoch,
+      occurredAtUtc: now, payloadJson,
+      payloadSha256: await sha256(payloadJson),
+      state: "pending", attempts: 0, createdAtUtc: now,
+      acknowledgedAtUtc: null, serverSequence: null
+    };
+    const localMovement = {
+      tenantId, branchId, productId, operationId,
+      type, quantity, unitCost: effectiveUnitCost, reference,
+      baseQuantityOnHand, baseInventoryValue,
+      resultQuantityOnHand: nextBalance.quantity,
+      resultInventoryValue: roundInventoryValue(nextBalance.value),
+      state: "pending", createdAtUtc: now, serverSequence: null
+    };
+    movementStore.add(localMovement);
+    transaction.objectStore(OPERATIONS_STORE).add(operation);
+    await done;
+    return localMovement;
   }
 
   async setAuthorityLease({ tenantId, branchId = null, actorId, lease }) {
