@@ -146,11 +146,15 @@ public static class SyncEndpoints
                     x.ClientVersion, x.FirstSeenAtUtc, x.LastSeenAtUtc
                 })
                 .ToListAsync(cancellationToken);
+            var acknowledgedSequences = await db.SyncDeviceCursors.AsNoTracking()
+                .Where(x => x.TenantId == tenantId)
+                .ToDictionaryAsync(x => x.DeviceId, x => x.LastAcknowledgedSequence, cancellationToken);
 
             return Results.Ok(devices.OrderByDescending(device => device.LastSeenAtUtc).Select(device => new
             {
                 device.DeviceId, device.ActorId, device.BranchId, device.DeviceName,
                 device.Platform, device.ClientVersion, device.FirstSeenAtUtc, device.LastSeenAtUtc,
+                lastAcknowledgedSequence = acknowledgedSequences.GetValueOrDefault(device.DeviceId, 0),
                 isOnline = device.LastSeenAtUtc >= cutoff,
                 alertCode = device.LastSeenAtUtc >= cutoff ? null : "DEVICE_HEARTBEAT_MISSED"
             }));
