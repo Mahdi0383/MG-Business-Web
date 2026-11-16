@@ -30,6 +30,22 @@ test("rejects circular and oversized payloads before enqueue", async () => {
   );
 });
 
+
+test("rejects invalid branch IDs before opening local storage", async () => {
+  const store = new LocalOperationStore();
+  for (const branchId of ["", "   ", 17, {}]) {
+    await assert.rejects(
+      store.enqueue({
+        tenantId: "tenant-1",
+        branchId,
+        operationType: "customer.profile.updated",
+        payload: { name: "MG" }
+      }),
+      /branchId/
+    );
+  }
+});
+
 test("requires a normalized non-empty operation type", async () => {
   const store = new LocalOperationStore();
   await assert.rejects(
