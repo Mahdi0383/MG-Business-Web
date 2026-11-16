@@ -621,7 +621,7 @@ class ApiIntegrationTests(unittest.TestCase):
     def test_public_static_server_hides_source_and_development_files(self):
         with urllib.request.urlopen(self.base + "/", timeout=5) as response:
             self.assertEqual(response.status, 200)
-        for path in ("/server.py", "/license_tool.py", "/README.md", "/tests/test_server.py"):
+        for path in ("/server.py", "/license_tool.py", "/backup_manager.py", "/README.md", "/tests/test_server.py"):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(self.base + path, timeout=5)
             self.assertEqual(caught.exception.code, 404)
