@@ -358,6 +358,61 @@ public sealed class SalesApiIntegrationTests
         Assert.Empty(stock!);
     }
 
+    [Fact]
+    public async Task InventoryRejectsOutboundMovementThatWouldMakeStockNegative()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"inventory-overdraw-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Inventory Overdraw Store",
+            slug = $"inventory-overdraw-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
+        {
+            sku = "INV-OVERDRAW-01",
+            name = "Stocked Item",
+            baseUnit = "unit",
+            tracksInventory = true,
+            defaultSalePrice = 8m
+        });
+        Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
+
+        using var receipt = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product!.Id,
+            type = StockMovementType.Receipt,
+            quantity = 3m,
+            unitCost = 2m,
+            reference = "RECEIPT-3"
+        });
+        Assert.Equal(HttpStatusCode.Created, receipt.StatusCode);
+
+        using var overdraw = await client.PostAsJsonAsync("/api/inventory/movements", new
+        {
+            productId = product.Id,
+            type = StockMovementType.Issue,
+            quantity = 4m,
+            unitCost = (decimal?)null,
+            reference = "ISSUE-4"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, overdraw.StatusCode);
+
+        var stock = await client.GetFromJsonAsync<StockResponse[]>("/api/inventory/stock");
+        Assert.Single(stock!);
+        Assert.Equal(3m, stock[0].QuantityOnHand);
+        Assert.Equal(6m, stock[0].InventoryValue);
+        Assert.Equal(1, stock[0].MovementCount);
+    }
+
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
