@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MG Business local-first HTTP application and SQLite API (stdlib only)."""
 from __future__ import annotations
-import hashlib, hmac, json, os, secrets, sqlite3, time, threading
+import base64, hashlib, hmac, json, os, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +14,7 @@ PORT = int(os.environ.get("MG_PORT", "8080"))
 SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 50 * 1024 * 1024
+MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 
@@ -156,6 +157,17 @@ CREATE TABLE IF NOT EXISTS order_items(
  FOREIGN KEY(product_id) REFERENCES products(id)
 );
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+CREATE TABLE IF NOT EXISTS licenses(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ code_hash TEXT NOT NULL UNIQUE, plan TEXT NOT NULL, expires_at INTEGER NOT NULL,
+ activated_at INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','expired','revoked'))
+);
+CREATE TABLE IF NOT EXISTS tenant_modules(
+ tenant_id TEXT NOT NULL REFERENCES tenants(id), module_key TEXT NOT NULL,
+ enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), expires_at INTEGER,
+ license_id TEXT, updated_at INTEGER NOT NULL,
+ PRIMARY KEY(tenant_id,module_key)
+);
 CREATE TABLE IF NOT EXISTS audit_log(
  id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  actor_id TEXT REFERENCES users(id), action TEXT NOT NULL,
@@ -295,6 +307,41 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
     for line in lines:
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
+
+def verify_license_code(code):
+    secret = os.environ.get("MG_LICENSE_SECRET")
+    if not secret:
+        raise ValueError("کلید صادرکننده لایسنس روی سرور تنظیم نشده است.")
+    if not isinstance(code,str) or len(code) > 4096:
+        raise ValueError("کد لایسنس معتبر نیست.")
+    parts = code.split(".")
+    if len(parts) != 3 or parts[0] != "MG1":
+        raise ValueError("ساختار کد لایسنس معتبر نیست.")
+    signed = (parts[0]+"."+parts[1]).encode()
+    expected = base64.urlsafe_b64encode(hmac.new(secret.encode(),signed,hashlib.sha256).digest()).decode().rstrip("=")
+    if not hmac.compare_digest(expected,parts[2]):
+        raise ValueError("امضای کد لایسنس معتبر نیست.")
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1]+"==="))
+    except (ValueError, json.JSONDecodeError):
+        raise ValueError("محتوای کد لایسنس معتبر نیست.")
+    modules = payload.get("modules")
+    expires_at = payload.get("expires_at")
+    license_id = payload.get("license_id")
+    if not isinstance(license_id,str) or not 1 <= len(license_id) <= 100:
+        raise ValueError("شناسه لایسنس معتبر نیست.")
+    if not isinstance(modules,list) or any(module not in MODULE_KEYS for module in modules):
+        raise ValueError("فهرست ماژول‌های لایسنس معتبر نیست.")
+    if type(expires_at) is not int or expires_at <= int(time.time()):
+        raise ValueError("اعتبار لایسنس پایان یافته یا تاریخ آن معتبر نیست.")
+    return {"license_id":license_id,"modules":sorted(set(modules)),"expires_at":expires_at,
+            "plan":str(payload.get("plan","custom"))[:80]}
+
+def seed_trial_modules(db, tenant_id):
+    expires = int(time.time()) + 14*24*60*60
+    for module in ("overview",)+MODULE_KEYS:
+        db.execute("""INSERT OR IGNORE INTO tenant_modules(tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+            VALUES(?,?,1,?,'trial',?)""", (tenant_id,module,expires,int(time.time())))
 
 def public_user(row):
     return {"id": row["id"], "username": row["username"], "role": row["role"], "tenantId": row["tenant_id"]}
@@ -612,6 +659,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
                            (user_id, tenant_id, username, password_hash(password), "owner", now))
                 seed_accounts(db, tenant_id)
+                seed_trial_modules(db, tenant_id)
                 audit(db, tenant_id, user_id, "tenant.created", "tenant", tenant_id)
                 db.commit()
                 return self.create_session(db, user_id)
