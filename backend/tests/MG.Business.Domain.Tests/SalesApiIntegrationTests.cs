@@ -212,6 +212,8 @@ public sealed class SalesApiIntegrationTests
 
         client.DefaultRequestHeaders.Remove("Idempotency-Key");
         client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-overpayment-61");
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "settlement-overpayment-61");
         using var overpayment = await CreateInvalidSale(11m, "OVERPAY");
         using var unassignedPartial = await CreateInvalidSale(5m, "PARTIAL");
         Assert.Equal(HttpStatusCode.BadRequest, overpayment.StatusCode);
