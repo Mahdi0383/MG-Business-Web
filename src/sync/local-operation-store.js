@@ -281,7 +281,7 @@ export class LocalOperationStore {
     const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
     const localMovements = await requestResult(transaction.objectStore(STOCK_MOVEMENTS_STORE)
       .index("byTenantBranchProduct")
-      .getAll(IDBKeyRange.bound([tenantId, branchId, ""], [tenantId, branchId, "\\uffff"])));
+      .getAll(IDBKeyRange.bound([tenantId, branchId, ""], [tenantId, branchId, "\uffff"])));
     const productsWithPendingMovements = new Set(localMovements
       .filter(row => row.state === "pending").map(row => row.productId));
     const cachedAtUtc = new Date().toISOString();
