@@ -115,14 +115,15 @@ Delivery is **at least once**. Exactly-once network delivery is not assumed. The
 ## 9. Current implementation status (honest boundary)
 
 Implemented on the feature branch:
-- tenant-scoped append-only sync journal, idempotent push/pull transport and monotonic per-device acknowledgement cursors;
-- browser IndexedDB outbound queue and inbound inbox with cursor persistence;
+- tenant-scoped append-only sync journal, idempotent push/pull transport, payload hash verification and per-device/per-branch acknowledgement cursors;
+- browser IndexedDB outbound queue and inbound inbox with independent tenant/branch scan cursors;
+- a versioned customer create/update vertical slice: atomic local projection/outbox, authoritative server replay, optimistic concurrency, atomic inbound projection/acknowledgement, origin echo suppression and durable stale-version conflicts;
+- customer offline read caching that preserves pending edits and monotonic aggregate versions;
 - PWA application-shell caching;
 - tenant heartbeat registration and Owner/Manager stale-device polling.
 
 Not yet implemented:
-- routing live sales, stock, accounting, cafe and Game Net commands through a transactional local database/outbox;
-- applying inbound operations to local domain projections;
+- routing live sales, payments, stock, accounting, purchasing, cafe and Game Net commands through transactional local projections/outbox and server replay;
 - cryptographic device enrollment, lease signing/verification and fencing enforcement;
 - CCS runtime/installer, MG Master continuity replication and automatic failover/failback;
 - domain conflict engine, persistent alert incident history, alert relay/push;
