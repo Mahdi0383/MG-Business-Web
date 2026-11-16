@@ -542,7 +542,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "{\\"scope\\":\\"main\\"}",
+                    payloadJson = "null",
                     payloadSha256 = (string?)null
                 }
             }
