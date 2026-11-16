@@ -1233,7 +1233,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId").HasColumnType("uuid");
                     b.Property<Guid>("DeviceId").HasColumnType("uuid");
                     b.Property<Guid>("ActorId").HasColumnType("uuid");
-                    b.Property<long>("LastAcknowledgedSequence").HasColumnType("bigint");
+                    b.Property<long>("LastAcknowledgedSequence").IsConcurrencyToken().HasColumnType("bigint");
                     b.Property<DateTimeOffset>("UpdatedAtUtc").HasColumnType("timestamp with time zone");
 
                     b.HasKey("TenantId", "DeviceId");
