@@ -1,55 +1,36 @@
 # Browser offline journal
 
-The browser client now has a durable IndexedDB operation store, a push agent and a production service worker that caches the application shell and same-origin static assets. API/auth/sync routes are explicitly excluded from caching.
+The browser client has a durable IndexedDB operation store, a sync agent and a service worker that caches the application shell and same-origin static assets. API, authentication and sync routes are explicitly excluded from service-worker caching.
 
-- A stable browser device ID is created and persisted per authenticated actor in IndexedDB, so switching accounts in the same browser cannot reuse a device registration owned by another user. Offline enqueue also requires that actor identity and stamps the corresponding actor-owned device ID into the durable operation envelope; it never creates an anonymous device registration.
-- Business commands can be explicitly appended with tenant/branch, actor-independent device identity, schema version, authority epoch, payload JSON and SHA-256 hash.
-- The client currently permits only authority epoch zero. Non-zero epochs are rejected locally and by the API until a signed lease verifier and fencing authority are deployed; a client cannot promote itself by choosing an epoch.
-- Pending operations survive page reloads and browser restarts.
-- The sync agent sends bounded batches to the authenticated tenant sync API and marks records acknowledged only after a complete, matching server acknowledgement.
-- Network failures leave the local queue untouched for a later retry.
+## Transport and device boundaries
 
-## Branch-isolated journal cursors
+- A stable browser device ID is stored per authenticated actor; another account's queued operations cannot be pushed or counted as the active actor's backlog.
+- Commands carry tenant/branch, actor-owned device identity, schema version, authority epoch, operation ID, payload JSON and SHA-256 hash.
+- The client currently permits authority epoch zero only. Non-zero epochs fail closed until a signed lease verifier and fencing authority exist.
+- Pending operations survive page reloads and browser restarts. Network failures leave the outbox unchanged for retry.
+- Push batches are bounded and branch-aware. Tenant-wide commands are drained only for Owner/Manager roles.
+- Pull cursors are independent per tenant/branch. Server acknowledgement watermarks are also branch-scoped; a separate null-branch watermark is reserved for manager all-branches visibility. Neither acknowledgement nor receipt cursor proves that a business projection has been applied.
+- Tenant-wide inbox reads require explicit manager authority. Branch views contain only their branch and permitted tenant-wide rows.
+- Incoming pages are validated as a whole: operation envelope, JSON payload shape, payload size and SHA-256 are checked before the inbox/cursor transaction commits. Persisted payload integrity is rechecked immediately before projection replay.
 
-The server scans the tenant journal in sequence order but returns only tenant-wide and active-branch operations to a branch-scoped member. Its scan cursor can advance past rows hidden by branch permissions; those rows are not included in the response. The browser therefore stores a separate pull cursor for each tenant/branch pair. This is required so switching from one branch to another and later returning does not skip that branch's older operations. Server acknowledgement cursors remain monotonic telemetry and do not replace the browser's branch-specific pull cursors. Server acknowledgement cursors are also branch-scoped: each device stores an independent acknowledgement watermark for each branch, while the null-branch manager view has its own tenant-wide watermark. Switching a device between branches therefore cannot advance one branch past another branch's unseen journal rows.
+## Implemented customer vertical slice
 
-Push batches are selected from the active branch queue in global FIFO order; commands from other branches are skipped rather than blocking the selected branch. Tenant-wide queued commands are drained only for Owner/Manager roles. Sync HTTP requests carry an explicit tenant/branch context captured by the sync cycle, preventing a branch switch during an in-flight request from storing another branch's response under the wrong cursor.
+Customer is currently the only business aggregate with an end-to-end local-first command workflow:
 
-Before any incoming page is committed, the sync agent validates each operation envelope, parses its payload as a JSON object, enforces the payload size bound, and recomputes SHA-256 over the exact UTF-8 payload bytes. A malformed or tampered operation rejects the entire page; the local inbox cursor and device acknowledgement are left unchanged.
+1. Customer creation writes a tenant-scoped local projection and branch-originated outbox command in one IndexedDB transaction.
+2. Customer contact updates require a positive baseVersion, enforce one pending edit per customer, and atomically update the local projection with its outbox command.
+3. The server validates tenant, actor, device, branch, role, schema and payload identity. Customer updates use database-enforced optimistic concurrency; stale versions return conflict without overwriting newer data.
+4. Server replay and append-only journal insertion are committed together. Exact retries are idempotent; reusing an operation ID with a changed envelope is rejected.
+5. Other devices apply customer create/update projections and inbox acknowledgement atomically. Origin-device echoes are not applied twice. Stale versions and invalid identity transitions are retained as durable conflicts.
+6. Local acknowledgement verifies the pending customer baseVersion again inside the IndexedDB transaction; a version drift aborts acknowledgement instead of silently marking an unapplied edit as synced.
+7. Authoritative online customer reads are cached for offline browsing. Cache refreshes never overwrite pending edits or downgrade a newer local confirmed version. Cache persistence is best-effort so browser storage failure does not break the online customer view.
 
-A non-manager session with no selected branch has no cross-branch outbox or inbox view. The API also rejects branch-targeted writes from that tenant-wide context; cross-branch writes require an Owner or Manager context, while ordinary members must operate within their selected branch.
+The customer conflict count is surfaced in the workspace, but there is no governed operator conflict-resolution UI yet. The current conflict policy remains fail-closed for unknown commands.
 
-Pending outbox reads are additionally filtered to the authenticated browser device ID. If another account has unsynced operations in the same browser profile, those rows remain queued for that account's next login and cannot block or be submitted by the current actor.
+## Not yet offline-ready
 
-Incoming inbox reads and replay batches are branch-scoped: a branch receives its own operations plus tenant-wide operations, while the tenant-wide view can inspect all branches. Repeated delivery of a shared tenant-wide sequence preserves its applied/conflict state only when the immutable operation envelope matches; a reused sequence with different content aborts the local transaction rather than silently discarding data.
+Sales/POS, payments, purchasing, inventory, accounting, café orders and kitchen tickets, Game Net sessions, membership, licensing and configuration do not yet have complete local command handlers, transactional projections, server replay, inbound application and domain-specific conflict resolution. Generic HTTP POST requests are deliberately not queued automatically.
 
-## Integration boundary
+The platform still needs cryptographic device enrollment, signed authority leases and fencing, local durable databases on every target device, conflict review/resolution workflows, peer health monitoring independent of an open browser session, alert relay, CCS/MG Master failover/failback and multi-node partition/recovery tests.
 
-This is infrastructure only. Existing demo screens and current live business forms are not yet routed through this journal, and generic POST requests are deliberately not auto-queued. Each business workflow must be converted to an explicit local command handler that validates and applies the local projection in the same transaction as enqueueing the operation.
-
-The current server pull endpoint exposes an append-only operation stream. Applying inbound commands to local domain projections, server-side per-device acknowledgement telemetry with branch-aware semantics, cryptographic device enrollment, signed leases/fencing, conflict review, service-worker lifecycle and end-to-end multi-node failover are subsequent work. The browser already keeps independent local scan cursors per tenant/branch; the server acknowledgement cursor is a separate monotonic telemetry value and must not be treated as proof that every branch's operations were applied. Do not interpret the presence of this module as a complete offline mode.
-
-## Conflict classification foundation
-
-`conflict-policy.js` provides a deliberately fail-closed classifier for incoming operation types:
-- accounting, sales, payment, inventory, purchase, cafe-order and game-session operations are routed to manual review;
-- customer creation is eligible for projection only when its base version is zero and the customer ID/code is not already owned by another operation; customer profile/contact updates remain in manual review until authoritative server update handling exists;
-- unknown operation types and missing version preconditions are never auto-applied.
-
-This classifier is an isolated policy primitive with unit tests. It is not yet wired to an inbound projection applier or business forms, so no incoming business operation is automatically applied by this change.
-
-## Local customer command foundation
-
-The IndexedDB schema now includes a tenant-scoped customer projection. Creating a customer validates and normalizes its fields, then writes the local projection and a branch-originated `customer.profile.created` outbox command in one read-write transaction. The UI reads the local projection alongside the server list and shows pending synchronization state. The sync API validates this command and saves the authoritative customer row with the append-only journal operation in one EF Core save; the client-generated customer ID is preserved, so retries remain idempotent. Acknowledging the outbox command marks the local projection synchronized in a single IndexedDB transaction.
-
-This is the first completed offline-first business workflow, not full offline readiness. Inbound customer creation is now applied through a local transaction that commits the projection and inbox acknowledgement together. Duplicate customer identities are recorded as durable conflicts and block later journal application. Customer update commands remain in manual review until the server-side versioned update handler and outbound edit workflow are implemented; sales and inventory handlers also remain future work.
-
-## Incoming operation processor
-
-`incoming-operation-processor.js` reads a bounded ordered inbox batch, obtains the current conflict state, invokes the fail-closed classifier, and routes eligible commands through an adapter contract. The adapter's `applyAndAcknowledge` method is required to atomically commit the local projection mutation and inbox acknowledgement. Conflicts are recorded separately and are never silently discarded.
-
-The processor validates and sorts each batch by journal sequence and stops at the first unresolved conflict so later commands cannot be applied across a missing prerequisite. Conflict records are durable and keyed by tenant and journal sequence. The IndexedDB adapter currently applies only `customer.profile.created`, atomically committing the local customer projection and inbox acknowledgement. Unknown commands, customer updates, sales, accounting, inventory, cafe and game-net commands remain fail-closed in manual review; no financial or stock projection is automatically applied.
-
-Pending-operation dashboard counts use the same authenticated device boundary as push selection. Other accounts' queued rows remain stored but are not included in the active actor's pending count.
-
-Tenant-wide incoming inbox reads and replay are fail-closed: callers must explicitly pass manager authority when no branch is selected. Branch-scoped reads include only the selected branch and tenant-wide rows; the processor independently requires the same explicit authority before requesting an unscoped batch.
+Do not interpret the existence of this module or the customer vertical slice as a complete offline mode or production replication protocol.
