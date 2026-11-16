@@ -41,6 +41,7 @@ function AuthShell({ apiBaseUrl }) {
   const [syncStatus, setSyncStatus] = useState("idle");
   const [pendingOperations, setPendingOperations] = useState(0);
   const [incomingOperations, setIncomingOperations] = useState(0);
+  const [disconnectedDevices, setDisconnectedDevices] = useState([]);
 
   useEffect(() => {
     client.onSessionChanged = value => {
@@ -258,6 +259,31 @@ function AuthShell({ apiBaseUrl }) {
     };
   }, [stage, selectedTenant?.id]);
 
+  useEffect(() => {
+    if (stage !== "workspace" || !selectedTenant?.id) return undefined;
+    let active = true;
+    const sendHeartbeat = async () => {
+      try {
+        const deviceId = await operationStoreRef.current.getDeviceId();
+        await client.post("/api/sync/heartbeat", {
+          deviceId,
+          deviceName: "MG Business Web",
+          platform: navigator.platform || "Web",
+          clientVersion: "0.1.0"
+        });
+        if (active && ["Owner", "Manager"].includes(selectedTenant.role)) {
+          const devices = await client.get("/api/sync/devices");
+          if (active) setDisconnectedDevices((devices || []).filter(device => !device.isOnline));
+        }
+      } catch {
+        // A missed heartbeat is detected by the next successful manager poll.
+      }
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [stage, selectedTenant?.id, selectedTenant?.role, client]);
+
   const workspaceContext = useMemo(() => ({
     tenant: selectedTenant,
     branch: selectedBranch
@@ -267,7 +293,7 @@ function AuthShell({ apiBaseUrl }) {
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} disconnectedDevices={disconnectedDevices} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">
