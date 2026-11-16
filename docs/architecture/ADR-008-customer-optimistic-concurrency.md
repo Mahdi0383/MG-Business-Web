@@ -1,6 +1,6 @@
 # ADR-008 — Customer optimistic concurrency and offline edit contract
 
-- Status: Accepted as the implementation contract; implementation is pending.
+- Status: Accepted; customer versioning, server optimistic concurrency, update-command replay, local outbox enqueue and inbound projection handlers are implemented. Full browser crash/restart and PostgreSQL parity verification remain pending.
 - Date: 2026-11-16
 - Scope: Customer profile/contact edits across browser devices, the tenant API and the sync journal.
 
@@ -58,3 +58,19 @@ No implicit last-writer-wins merge is allowed. Initial release treats a stale wh
 ## Consequences
 
 This contract intentionally delays offline customer editing until the complete path exists. It prevents silent data loss and makes conflict behavior observable and testable. It does not claim that customer updates are currently implemented.
+
+## Implementation status — 2026-11-16
+
+Implemented in the current development branch:
+- Customer aggregate version, EF concurrency token and migration defaulting existing rows to version 1.
+- Version-bearing customer API responses and stale online PUT rejection with HTTP 409.
+- Server journal replay for customer.profile.updated, atomic EF persistence of the customer version change and journal row, exact-operation retry acknowledgement, and stale baseVersion rejection.
+- Local IndexedDB update-plus-outbox transaction, acknowledgement-based confirmed-version advancement, inbound projection update and origin-operation echo suppression.
+- Stale inbound base versions are classified as durable conflicts; unresolved conflicts continue to block later ordered replay.
+
+Still required before production sign-off:
+- Real IndexedDB integration tests for crash/abort atomicity and browser restart.
+- Two independent browser/device end-to-end tests including offline edit, reconnect, origin echo and competing edit.
+- PostgreSQL migration and concurrency parity tests.
+- Explicit test for operation-ID reuse with a different payload and mixed-batch rollback.
+
