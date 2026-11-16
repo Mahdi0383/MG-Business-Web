@@ -440,7 +440,7 @@ public static class SyncEndpoints
                     continue;
                 }
 
-                if (item.Request.OperationType is "customer.profile.created" or "customer.profile.updated"
+                if ((item.Request.OperationType is "customer.profile.created" or "customer.profile.updated")
                     && tenant.Role is not ("Owner" or "Manager" or "Cashier"))
                     return Results.Forbid();
 
