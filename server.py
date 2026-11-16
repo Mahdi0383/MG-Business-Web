@@ -672,6 +672,29 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"items":items,
                     "totalDebit":sum(x["debit"] for x in items),
                     "totalCredit":sum(x["credit"] for x in items)})
+            if path == "/api/accounting/balance-sheet":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                rows = db.execute("""SELECT a.code,a.name,a.account_type AS accountType,
+                    COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
+                    FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
+                    WHERE a.tenant_id=? AND a.active=1 AND a.account_type IN ('asset','liability','equity')
+                    GROUP BY a.id ORDER BY a.code""", (user["tenant_id"],)).fetchall()
+                items = [dict(row) for row in rows]
+                assets = sum(x["debit"]-x["credit"] for x in items if x["accountType"]=="asset")
+                liabilities = sum(x["credit"]-x["debit"] for x in items if x["accountType"]=="liability")
+                equity_accounts = sum(x["credit"]-x["debit"] for x in items if x["accountType"]=="equity")
+                profit_rows = db.execute("""SELECT a.account_type AS accountType,
+                    COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
+                    FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
+                    WHERE a.tenant_id=? AND a.account_type IN ('revenue','expense') GROUP BY a.account_type""",
+                    (user["tenant_id"],)).fetchall()
+                totals = {x["accountType"]:x for x in profit_rows}
+                profit = (totals.get("revenue")["credit"]-totals.get("revenue")["debit"] if totals.get("revenue") else 0) - (totals.get("expense")["debit"]-totals.get("expense")["credit"] if totals.get("expense") else 0)
+                equity = equity_accounts + profit
+                return self.send_json(200, {"assets":assets,"liabilities":liabilities,"equity":equity,
+                    "currentProfit":profit,"liabilitiesAndEquity":liabilities+equity,
+                    "balanced":assets == liabilities+equity,"items":items})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
         finally: db.close()
 
