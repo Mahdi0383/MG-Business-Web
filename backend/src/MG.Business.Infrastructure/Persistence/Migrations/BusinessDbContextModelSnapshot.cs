@@ -1228,6 +1228,46 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                 {
                     b.Navigation("Lines");
                 });
+            modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
+                {
+                    b.Property<Guid>("TenantId").HasColumnType("uuid");
+                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
+                    b.Property<Guid>("ActorId").HasColumnType("uuid");
+                    b.Property<Guid?>("BranchId").HasColumnType("uuid");
+                    b.Property<string>("DeviceName").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
+                    b.Property<string>("Platform").IsRequired().HasMaxLength(40).HasColumnType("character varying(40)");
+                    b.Property<string>("ClientVersion").IsRequired().HasMaxLength(40).HasColumnType("character varying(40)");
+                    b.Property<DateTimeOffset>("FirstSeenAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset>("LastSeenAtUtc").HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TenantId", "DeviceId");
+                    b.HasIndex("ActorId");
+                    b.HasIndex("TenantId", "BranchId");
+                    b.HasIndex("TenantId", "LastSeenAtUtc");
+                    b.ToTable("device_presences", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BranchId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.SyncOperation", b =>
                 {
                     b.Property<long>("Sequence")
