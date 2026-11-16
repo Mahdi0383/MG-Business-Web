@@ -384,6 +384,8 @@ class Handler(SimpleHTTPRequestHandler):
                 tenant_id = user["tenant_id"]
                 try:
                     db.execute("BEGIN IMMEDIATE")
+                    db.execute("DROP TRIGGER IF EXISTS journal_entries_no_delete")
+                    db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
                     column_map = {}
                     for name in allowed:
                         column_map[name] = {row["name"] for row in db.execute("PRAGMA table_info("+name+")").fetchall()}
@@ -411,6 +413,10 @@ class Handler(SimpleHTTPRequestHandler):
                             placeholders = ",".join("?" for _ in columns)
                             sql = "INSERT INTO "+name+"("+",".join(columns)+") VALUES("+placeholders+")"
                             db.execute(sql,tuple(record[column] for column in columns))
+                    db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
+                        BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
+                    db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
+                        BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
                     audit(db,tenant_id,user["id"],"backup.restored","tenant",tenant_id,{"rows":total_rows})
                     db.commit()
                     return self.send_json(200, {"ok":True,"restoredRows":total_rows})
