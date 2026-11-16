@@ -43,6 +43,144 @@ public sealed class SyncApiIntegrationTests
 
 
     [Fact]
+    public async Task CustomerCreationCommandProjectsAuthoritativeCustomerAtomicallyWithJournal()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-customer-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Customer Sync Store",
+            slug = $"customer-sync-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Customer Sync Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var customerId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            customerId,
+            code = "C-LOCAL-001",
+            name = "Offline Customer",
+            phone = "09120000000",
+            email = "CUSTOMER@EXAMPLE.COM",
+            address = "Main Street",
+            notes = "Created offline",
+            baseVersion = 0
+        });
+        var request = new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId, deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.created",
+                    schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = payload, payloadSha256 = (string?)null
+                }
+            }
+        };
+
+        var firstPush = await client.PostAsJsonAsync("/api/sync/operations", request);
+        Assert.Equal(HttpStatusCode.Accepted, firstPush.StatusCode);
+        var firstAck = await firstPush.Content.ReadFromJsonAsync<SyncPushResponse>();
+        Assert.Single(firstAck!.Accepted);
+        Assert.False(firstAck.Accepted[0].Duplicate);
+
+        var customerResponse = await client.GetAsync($"/api/customers/{customerId}");
+        Assert.Equal(HttpStatusCode.OK, customerResponse.StatusCode);
+        var customer = await customerResponse.Content.ReadFromJsonAsync<CustomerResponse>();
+        Assert.NotNull(customer);
+        Assert.Equal(customerId, customer!.Id);
+        Assert.Equal("C-LOCAL-001", customer.Code);
+        Assert.Equal("Offline Customer", customer.Name);
+        Assert.Equal("customer@example.com", customer.Email);
+
+        var retry = await client.PostAsJsonAsync("/api/sync/operations", request);
+        Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+        var retryAck = await retry.Content.ReadFromJsonAsync<SyncPushResponse>();
+        Assert.True(retryAck!.Accepted.Single().Duplicate);
+        Assert.Equal(firstAck.Accepted[0].Sequence, retryAck.Accepted[0].Sequence);
+
+        var customers = await client.GetFromJsonAsync<CustomerResponse[]>("/api/customers");
+        Assert.Single(customers!);
+    }
+
+    [Fact]
+    public async Task CustomerCreationCommandRejectsInvalidVersionAndTenantWideScope()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"sync-customer-invalid-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Invalid Customer Sync Store",
+            slug = $"invalid-customer-sync-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+        var deviceId = Guid.NewGuid();
+        var heartbeat = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Invalid Customer Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeat.StatusCode);
+
+        var invalidVersion = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "customer.profile.created", schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        customerId = Guid.NewGuid(), code = "C-1", name = "Invalid", baseVersion = 1
+                    }),
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidVersion.StatusCode);
+
+        var tenantWide = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = (Guid?)null,
+                    operationType = "customer.profile.created", schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        customerId = Guid.NewGuid(), code = "C-2", name = "Tenant Wide", baseVersion = 0
+                    }),
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, tenantWide.StatusCode);
+    }
+
+    [Fact]
     public async Task PushIsIdempotentAndPullIsTenantScoped()
     {
         using var factory = CreateFactory();
