@@ -67,6 +67,9 @@ public sealed class CafeKitchenApiIntegrationTests
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponse>();
 
+        var disableBranch = await client.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.Conflict, disableBranch.StatusCode);
+
         var invalid = await client.PutAsJsonAsync($"/api/cafe/kitchen/tickets/{ticket!.Id}/status",
             new { status = KitchenTicketStatus.Ready });
         Assert.Equal(HttpStatusCode.Conflict, invalid.StatusCode);
