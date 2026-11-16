@@ -111,17 +111,23 @@ public static class InventoryEndpoints
             if (!isInboundMovement && request.UnitCost is not null)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["unitCost"] = ["برای خروج موجودی، بهای واحد به‌صورت خودکار از میانگین موجودی محاسبه می‌شود."] });
 
-            var productExists = await db.Products.AnyAsync(x =>
-                x.TenantId == tenantId && x.Id == request.ProductId && x.IsActive && x.TracksInventory,
-                cancellationToken);
-            if (!productExists)
-                return Results.NotFound(new { message = "کالای فعالِ انبارگردانی‌شونده در این کسب‌وکار پیدا نشد." });
-
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
             {
+                // Resolve the product and read its stock ledger inside the same serializable
+                // transaction as the movement write, preventing stale pre-transaction checks.
+                var productExists = await db.Products.AnyAsync(x =>
+                    x.TenantId == tenantId && x.Id == request.ProductId && x.IsActive && x.TracksInventory,
+                    cancellationToken);
+                if (!productExists)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return Results.NotFound(new { message = "کالای فعالِ انبارگردانی‌شونده در این کسب‌وکار پیدا نشد." });
+                }
+
                 var history = await db.StockMovements.AsNoTracking()
                     .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.ProductId == request.ProductId)
+                    .OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
                     .ToListAsync(cancellationToken);
                 var current = InventoryValuation.Calculate(history);
                 decimal unitCost;
