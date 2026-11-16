@@ -44,6 +44,9 @@ class BackupManagerTests(unittest.TestCase):
             database = root / "live.sqlite3"
             backup_dir = root / "backups"
             db = sqlite3.connect(database)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY)")
+            db.execute("CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id))")
             db.execute("CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
             db.execute("INSERT INTO records(value) VALUES('before restore')")
             db.commit()
@@ -69,6 +72,13 @@ class BackupManagerTests(unittest.TestCase):
                 create_snapshot(Path(directory) / "missing.sqlite3", Path(directory) / "backups", 0)
             with self.assertRaises(FileNotFoundError):
                 create_snapshot(Path(directory) / "missing.sqlite3", Path(directory) / "backups", 2)
+            invalid = Path(directory) / "not-mg.sqlite3"
+            db = sqlite3.connect(invalid)
+            db.execute("CREATE TABLE random_table(id INTEGER PRIMARY KEY)")
+            db.commit()
+            db.close()
+            with self.assertRaises(sqlite3.DatabaseError):
+                restore_snapshot(invalid, Path(directory) / "target.sqlite3", Path(directory) / "backups")
 
 
 if __name__ == "__main__":
