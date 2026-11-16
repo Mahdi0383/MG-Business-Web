@@ -284,6 +284,17 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         client.get("/api/accounting/accounts"),
         client.get(`/api/sales/orders/${order.id}/payments`)
       ]);
+      const intentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${order.id}`;
+      try {
+        const pendingIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
+        const pendingPayload = pendingIntent?.fingerprint ? JSON.parse(pendingIntent.fingerprint) : null;
+        const methodName = ({ 1: "Cash", 2: "Card", 3: "BankTransfer", 4: "Wallet" })[pendingPayload?.paymentMethod];
+        const alreadyRecorded = pendingPayload && (paymentRows || []).some(payment =>
+          Number(payment.amount) === Number(pendingPayload.amount)
+          && payment.method === methodName
+          && (payment.reference || null) === (pendingPayload.paymentReference || null));
+        if (alreadyRecorded) window.localStorage.removeItem(intentStorageKey);
+      } catch { /* Keep the pending idempotency intent when its status cannot be verified. */ }
       const activeAssets = (accountRows || []).filter(account => account.type === "Asset" && account.isActive);
       const cash = activeAssets.find(account => account.code === "1000") || activeAssets[0];
       const receivable = activeAssets.find(account => account.code === "1100") || activeAssets[0];
@@ -344,6 +355,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     setSaving(true);
     setError("");
     let successNotice = "";
+    let paymentIntentStorageKey = null;
     try {
       if (modal === "product") {
         await client.post("/api/inventory/products", {
@@ -437,23 +449,26 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           paymentReference: form.paymentReference.trim() || null
         };
         const intentFingerprint = JSON.stringify({ orderId: form.orderId, ...paymentPayload });
-        const intentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${form.orderId}`;
+        paymentIntentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${form.orderId}`;
         let storedIntent;
         try {
-          storedIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
-          if (!storedIntent || storedIntent.fingerprint !== intentFingerprint || typeof storedIntent.key !== "string") {
+          storedIntent = JSON.parse(window.localStorage.getItem(paymentIntentStorageKey) || "null");
+          if (storedIntent && storedIntent.fingerprint !== intentFingerprint)
+            throw new Error("یک دریافت قبلی با نتیجه نامشخص وجود دارد؛ ابتدا سوابق دریافت فاکتور را بررسی و صفحه را بروزرسانی کنید.");
+          if (!storedIntent) {
             storedIntent = { fingerprint: intentFingerprint, key: crypto.randomUUID() };
-            window.localStorage.setItem(intentStorageKey, JSON.stringify(storedIntent));
+            window.localStorage.setItem(paymentIntentStorageKey, JSON.stringify(storedIntent));
           }
-        } catch {
+        } catch (storageError) {
+          if (storageError instanceof Error && storageError.message.startsWith("یک دریافت قبلی")) throw storageError;
           throw new Error("ذخیره امن کلید تکرارناپذیری پرداخت در این مرورگر ممکن نیست؛ تنظیمات ذخیره‌سازی مرورگر را بررسی کنید.");
         }
         await client.post(`/api/sales/orders/${form.orderId}/payments`, paymentPayload, {
           headers: { "Idempotency-Key": storedIntent.key }
         });
         try {
-          const currentIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
-          if (currentIntent?.key === storedIntent.key) window.localStorage.removeItem(intentStorageKey);
+          const currentIntent = JSON.parse(window.localStorage.getItem(paymentIntentStorageKey) || "null");
+          if (currentIntent?.key === storedIntent.key) window.localStorage.removeItem(paymentIntentStorageKey);
         } catch { /* A completed payment remains protected by the server-side idempotency key. */ }
         successNotice = `دریافت وجه فاکتور ${form.orderNumber} با موفقیت ثبت شد.`;
       } else if (modal === "sale") {
@@ -502,6 +517,9 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       await loadData();
       if (successNotice) setError(successNotice);
     } catch (saveError) {
+      if (modal === "salePayment" && saveError?.status === 400 && paymentIntentStorageKey) {
+        try { window.localStorage.removeItem(paymentIntentStorageKey); } catch { /* Keep the original validation error visible. */ }
+      }
       setError(formatApiError(saveError));
     } finally {
       setSaving(false);
