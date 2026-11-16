@@ -529,6 +529,26 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Forbidden, forbiddenTenantWidePush.StatusCode);
 
+        var forbiddenOtherBranchPush = await staff.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(),
+                    deviceId = staffDeviceId,
+                    branchId = tenant.BranchId,
+                    operationType = "test.forbidden-other-branch",
+                    schemaVersion = 1,
+                    authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow,
+                    payloadJson = "{\\"scope\\":\\"main\\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenOtherBranchPush.StatusCode);
+
         var pull = await staff.GetFromJsonAsync<SyncPullResponse>("/api/sync/operations?afterSequence=0&limit=20");
         Assert.NotNull(pull);
         Assert.Equal(2, pull!.Operations.Length);
