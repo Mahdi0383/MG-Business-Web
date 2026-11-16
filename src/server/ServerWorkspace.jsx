@@ -71,6 +71,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const canCreateAccount = ["Owner", "Manager", "Accountant"].includes(tenant.role);
   const canCreateSales = ["Owner", "Manager", "Cashier"].includes(tenant.role);
   const canUpdateKitchen = ["Owner", "Manager", "Waiter", "KitchenStaff"].includes(tenant.role);
+  const canCreateKitchen = ["Owner", "Manager", "Cashier", "Waiter"].includes(tenant.role);
   const canStartGame = ["Owner", "Manager", "GameOperator", "Cashier"].includes(tenant.role);
 
   const visibleNavigation = navigation.filter(([id]) => {
@@ -223,6 +224,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     event.preventDefault();
     setSaving(true);
     setError("");
+    let successNotice = "";
     try {
       if (modal === "product") {
         await client.post("/api/inventory/products", {
@@ -262,7 +264,9 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         });
       } else if (modal === "gameClose") {
         const latestQuote = await client.get(`/api/gamenet/sessions/${form.sessionId}/quote`);
-        const amountPaid = form.amountPaid === "" ? latestQuote.totalAmount : Number(form.amountPaid);
+        let amountPaid = form.amountPaid === "" ? latestQuote.totalAmount : Number(form.amountPaid);
+        const initialQuoteTotal = Number(form.quote?.totalAmount ?? latestQuote.totalAmount);
+        if (Math.abs(amountPaid - initialQuoteTotal) < 0.01) amountPaid = latestQuote.totalAmount;
         if (amountPaid < 0 || amountPaid > latestQuote.totalAmount)
           throw new Error("مبلغ پرداختی باید بین صفر و مبلغ قابل پرداخت باشد.");
         if (amountPaid < latestQuote.totalAmount && !form.customerId)
@@ -316,13 +320,14 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
               notes: form.kitchenNotes.trim() || null
             });
           } catch (kitchenError) {
-            setError(`فاکتور ${createdSale.number} ثبت شد، اما ارسال به آشپزخانه انجام نشد: ${formatApiError(kitchenError)}`);
+            successNotice = `فاکتور ${createdSale.number} ثبت شد، اما ارسال به آشپزخانه انجام نشد: ${formatApiError(kitchenError)}`;
           }
         }
       }
 
       setModal("");
       await loadData();
+      if (successNotice) setError(successNotice);
     } catch (saveError) {
       setError(formatApiError(saveError));
     } finally {
@@ -582,7 +587,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           {balanceDue > 0 && <label>حساب دریافتنی<select required value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>}
           {hasTrackedProductsInSale && <><label>حساب موجودی کالا<select value={form.inventoryAccountId} onChange={e => setForm({ ...form, inventoryAccountId: e.target.value })}>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label><label>حساب بهای تمام‌شده<select value={form.costOfGoodsSoldAccountId} onChange={e => setForm({ ...form, costOfGoodsSoldAccountId: e.target.value })}>{expenseAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label></>}
           <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
-          {canViewCafe && <div className="mg-sale-lines"><label className="mg-server-checkbox"><input type="checkbox" checked={Boolean(form.sendToKitchen)} onChange={e => setForm({ ...form, sendToKitchen: e.target.checked })} /> ارسال این فاکتور به صف آشپزخانه</label>
+          {canCreateKitchen && <div className="mg-sale-lines"><label className="mg-server-checkbox"><input type="checkbox" checked={Boolean(form.sendToKitchen)} onChange={e => setForm({ ...form, sendToKitchen: e.target.checked })} /> ارسال این فاکتور به صف آشپزخانه</label>
             {form.sendToKitchen && <><label>نوع سرویس<select value={form.serviceType || "1"} onChange={e => setForm({ ...form, serviceType: e.target.value })}><option value="1">سرو داخل</option><option value="2">بیرون‌بر</option><option value="3">ارسال</option></select></label><label>شماره میز / محل تحویل<input value={form.tableLabel || ""} onChange={e => setForm({ ...form, tableLabel: e.target.value })} /></label><label>یادداشت آشپزخانه<input value={form.kitchenNotes || ""} onChange={e => setForm({ ...form, kitchenNotes: e.target.value })} /></label></>}
           </div>}
         </>}
