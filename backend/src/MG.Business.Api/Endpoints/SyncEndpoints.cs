@@ -633,7 +633,8 @@ public static class SyncEndpoints
                 nextSequence = journalWindow.Count == 0 ? afterSequence : journalWindow[^1].Sequence,
                 hasMore = journalWindow.Count == take
             });
-        });
+        }).RequireAuthorization(policy => policy.AddRequirements(
+            new TenantRoleRequirement(["Owner", "Manager", "Accountant", "Cashier", "Waiter", "GameOperator", "Viewer"])));
 
         return endpoints;
     }
