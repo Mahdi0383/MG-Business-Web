@@ -157,9 +157,15 @@ public sealed class DeviceRequestSignatureMiddleware
             var deviceNonces = await db.DeviceRequestNonces
                 .Where(x => x.TenantId == tenantId && x.DeviceId == deviceId)
                 .ToListAsync(context.RequestAborted);
+            var nonceValue = nonce.ToString("D");
+            if (deviceNonces.Any(x => x.Nonce == nonceValue && x.ExpiresAtUtc > now))
+            {
+                await Reject(context, StatusCodes.Status401Unauthorized, "DEVICE_SIGNATURE_REPLAYED");
+                return;
+            }
             db.DeviceRequestNonces.RemoveRange(deviceNonces.Where(x => x.ExpiresAtUtc <= now));
             db.DeviceRequestNonces.Add(new(
-                tenantId, deviceId, nonce.ToString("D"), now, now.AddMinutes(5)));
+                tenantId, deviceId, nonceValue, now, now.AddMinutes(5)));
             credential.RecordUse(now);
             await db.SaveChangesAsync(context.RequestAborted);
         }
