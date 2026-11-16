@@ -34,7 +34,7 @@ public sealed class DeviceAuthorityLease
         var now = nowUtc.ToUniversalTime();
         if (IsActiveAt(now) && DeviceId != deviceId)
             return false;
-        if (!IsActiveAt(now))
+        if (RevokedAtUtc is not null || (!IsActiveAt(now) && DeviceId != deviceId))
         {
             Epoch = checked(Epoch + 1);
             LeaseId = Guid.NewGuid();
