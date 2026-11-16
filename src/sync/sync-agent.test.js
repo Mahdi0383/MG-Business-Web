@@ -35,7 +35,7 @@ test("keeps pending operations untouched when the network is unavailable", async
   const api = { async post() { throw new TypeError("Failed to fetch"); } };
   const store = {
     async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
-    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(deviceId, "device-1"); return [{ operationId: "offline-op" }]; },
+    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(deviceId, "device-1"); return [{ operationId: "offline-op", tenantId: "tenant-1", deviceId: "device-1", branchId: null, operationType: "test.created", schemaVersion: 1, authorityEpoch: 0, occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson: "{}", payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" }]; },
     async acknowledge() { acknowledgeCalled = true; }
   };
 
@@ -50,7 +50,7 @@ test("rejects acknowledgements that do not match the submitted batch", async () 
   const api = { async post() { return { accepted: [{ operationId: "unexpected", sequence: 2 }] }; } };
   const store = {
     async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
-    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(deviceId, "device-1"); return [{ operationId: "expected" }]; },
+    async getPending(tenantId, limit, branchId, allowTenantWide, deviceId) { assert.equal(deviceId, "device-1"); return [{ operationId: "expected", tenantId: "tenant-1", deviceId: "device-1", branchId: null, operationType: "test.created", schemaVersion: 1, authorityEpoch: 0, occurredAtUtc: "2026-11-16T10:00:00.000Z", payloadJson: "{}", payloadSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" }]; },
     async acknowledge() { assert.fail("invalid acknowledgements must not be committed"); }
   };
 
@@ -159,6 +159,7 @@ test("pushes only the active branch queue with an explicit tenant context", asyn
   let requestContext;
   const operation = {
     operationId: "branch-op",
+    tenantId: "tenant-1",
     deviceId: "device-1",
     branchId: "branch-a",
     operationType: "customer.profile.updated",
