@@ -145,7 +145,7 @@ test("branch-filtered pull acknowledges the scanned journal cursor", async () =>
     operationId: "operation-visible",
     operationType: "customer.updated",
     payloadJson: "{\"name\":\"MG\"}",
-    payloadSha256: "A".repeat(64),
+    payloadSha256: "b618f9a65827379fd2f866d0ca039122397e99c4d3f7d37052083c4095339f8a",
     schemaVersion: 1
   };
   const { agent, calls } = createSyncAgent({
@@ -180,7 +180,7 @@ test("pull rejects a scan cursor preceding a visible operation", async () => {
         operationId: "operation-visible",
         operationType: "customer.updated",
         payloadJson: "{}",
-        payloadSha256: "A".repeat(64),
+        payloadSha256: "b618f9a65827379fd2f866d0ca039122397e99c4d3f7d37052083c4095339f8a",
         schemaVersion: 1
       }],
       nextSequence: 2,
