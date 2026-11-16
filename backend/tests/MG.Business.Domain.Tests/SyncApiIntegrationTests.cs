@@ -1930,10 +1930,14 @@ public sealed class SyncApiIntegrationTests
         Assert.True(lease.TryAcquire(firstDevice, now.AddSeconds(30), now.AddMinutes(2)));
         Assert.Equal(1, lease.Epoch);
 
-        Assert.True(lease.TryAcquire(secondDevice, now.AddMinutes(3), now.AddMinutes(5)));
+        Assert.True(lease.TryAcquire(firstDevice, now.AddMinutes(3), now.AddMinutes(5)));
+        Assert.Equal(firstDevice, lease.DeviceId);
+        Assert.Equal(1, lease.Epoch);
+
+        Assert.True(lease.TryAcquire(secondDevice, now.AddMinutes(6), now.AddMinutes(8)));
         Assert.Equal(secondDevice, lease.DeviceId);
         Assert.Equal(2, lease.Epoch);
         Assert.NotEqual(Guid.Empty, lease.LeaseId);
-        Assert.True(lease.IsActiveAt(now.AddMinutes(3)));
+        Assert.True(lease.IsActiveAt(now.AddMinutes(6)));
     }
 }
