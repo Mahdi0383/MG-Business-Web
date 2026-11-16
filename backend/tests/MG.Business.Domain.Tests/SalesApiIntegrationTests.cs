@@ -689,17 +689,17 @@ public sealed class SalesApiIntegrationTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var connection = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
-        connection.Open();
+        var connectionString = $"Data Source=mg-business-tests-{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
+        var keepAliveConnection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+        keepAliveConnection.Open();
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<DbContextOptions<BusinessDbContext>>();
                 services.RemoveAll<IDbContextOptionsConfiguration<BusinessDbContext>>();
                 services.RemoveAll<BusinessDbContext>();
-                services.AddSingleton(connection);
-                services.AddDbContext<BusinessDbContext>((provider, options) =>
-                    options.UseSqlite(provider.GetRequiredService<Microsoft.Data.Sqlite.SqliteConnection>()));
+                services.AddSingleton(keepAliveConnection);
+                services.AddDbContext<BusinessDbContext>(options => options.UseSqlite(connectionString));
             }));
     }
 
