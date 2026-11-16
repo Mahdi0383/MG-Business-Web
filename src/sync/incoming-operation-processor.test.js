@@ -130,3 +130,33 @@ test("rejects invalid branch scope before reading the inbox", async () => {
   await assert.rejects(processor.processBatch("tenant-1", 100, " "), /branchId/);
   assert.equal(queried, false);
 });
+
+test("refuses to replay an inbox row from another branch", async () => {
+  let applied = false;
+  const processor = new IncomingOperationProcessor({
+    store: {
+      async getUnappliedIncoming() {
+        return [{
+          sequence: 1,
+          branchId: "branch-b",
+          schemaVersion: 1,
+          operationId: "foreign-op",
+          operationType: "customer.profile.updated",
+          payloadJson: JSON.stringify({ name: "foreign" })
+        }];
+      }
+    },
+    adapter: {
+      async readConflictState() { return { version: 1 }; },
+      async recordConflict() {},
+      async applyAndAcknowledge() { applied = true; }
+    },
+    classify: () => ({ disposition: "apply", reason: "test" })
+  });
+
+  await assert.rejects(
+    processor.processBatch("tenant-1", 100, "branch-a"),
+    /outside the active branch/
+  );
+  assert.equal(applied, false);
+});
