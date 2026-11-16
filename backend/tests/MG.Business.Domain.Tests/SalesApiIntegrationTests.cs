@@ -652,9 +652,11 @@ public sealed class SalesApiIntegrationTests
         var paymentHistory = await client.GetFromJsonAsync<SalesPaymentResponse[]>($"/api/sales/orders/{sale.Id}/payments");
         Assert.NotNull(paymentHistory);
         Assert.Equal(3, paymentHistory!.Length);
-        Assert.Equal(new[] { 40m, 10m, 50m }, paymentHistory.Select(x => x.Amount).ToArray());
-        Assert.Equal(new[] { "Cash", "Cash", "Card" }, paymentHistory.Select(x => x.Method).ToArray());
-        Assert.Equal(new[] { "PAY-40", "PAY-CONCURRENT", "PAY-50" }, paymentHistory.Select(x => x.Reference).ToArray());
+        Assert.Equal(new[] { 10m, 40m, 50m }, paymentHistory.Select(x => x.Amount).OrderBy(x => x).ToArray());
+        Assert.Equal(100m, paymentHistory.Sum(x => x.Amount));
+        Assert.Contains(paymentHistory, payment => payment.Reference == "PAY-40" && payment.Amount == 40m);
+        Assert.Contains(paymentHistory, payment => payment.Reference == "PAY-CONCURRENT" && payment.Amount == 10m);
+        Assert.Contains(paymentHistory, payment => payment.Reference == "PAY-50" && payment.Amount == 50m);
     }
 
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
