@@ -4,6 +4,7 @@ using System.Text;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using MG.Business.Api.Endpoints;
+using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
 using MG.Business.Infrastructure.Persistence;
