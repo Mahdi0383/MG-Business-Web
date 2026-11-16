@@ -477,6 +477,17 @@ class Handler(SimpleHTTPRequestHandler):
                 revenue = totals.get("revenue")["credit"] - totals.get("revenue")["debit"] if totals.get("revenue") else 0
                 expenses = totals.get("expense")["debit"] - totals.get("expense")["credit"] if totals.get("expense") else 0
                 return self.send_json(200, {"revenue": revenue, "expenses": expenses, "netProfit": revenue-expenses})
+            if path == "/api/accounting/trial-balance":
+                rows = db.execute("""SELECT a.code,a.name,a.account_type AS accountType,
+                    a.normal_balance AS normalBalance,COALESCE(SUM(l.debit),0) AS debit,
+                    COALESCE(SUM(l.credit),0) AS credit
+                    FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
+                    WHERE a.tenant_id=? AND a.active=1 GROUP BY a.id ORDER BY a.code""",
+                    (user["tenant_id"],)).fetchall()
+                items = [dict(row) for row in rows]
+                return self.send_json(200, {"items":items,
+                    "totalDebit":sum(x["debit"] for x in items),
+                    "totalCredit":sum(x["credit"] for x in items)})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
         finally: db.close()
 
