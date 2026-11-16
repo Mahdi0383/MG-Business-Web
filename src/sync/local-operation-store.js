@@ -140,6 +140,8 @@ export class LocalOperationStore {
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 100)) : 100;
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof allowTenantWide !== "boolean")
+      throw new TypeError("allowTenantWide must be a boolean.");
 
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
