@@ -80,8 +80,9 @@ public static class SalesEndpoints
                 {
                     var product = products[line.ProductId];
                     var unitCost = product.TracksInventory ? valuations[line.ProductId].AverageUnitCost : 0m;
+                    var unitPrice = line.UnitPrice ?? product.DefaultSalePrice;
                     return new SalesOrderLine(tenantId, product.Id, product.Name, product.Sku,
-                        line.Quantity, line.UnitPrice, line.Discount, unitCost);
+                        line.Quantity, unitPrice, line.Discount, unitCost);
                 }).ToList();
 
                 var orderNumber = $"S-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..19].ToUpperInvariant();
@@ -193,7 +194,7 @@ public static class SalesEndpoints
     public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
         PaymentMethod PaymentMethod, Guid RevenueAccountId, Guid? PaymentAccountId, Guid? ReceivableAccountId,
         Guid? InventoryAccountId, Guid? CostOfGoodsSoldAccountId, string? PaymentReference, List<SaleLineRequest> Lines);
-    public sealed record SaleLineRequest(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal Discount);
+    public sealed record SaleLineRequest(Guid ProductId, decimal Quantity, decimal? UnitPrice, decimal Discount);
     public sealed record SalesOrderResponse(Guid Id, string Number, Guid? CustomerId, decimal Subtotal,
         decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue,
         string Status, DateTimeOffset CreatedAtUtc);
