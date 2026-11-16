@@ -1216,7 +1216,20 @@ class Handler(SimpleHTTPRequestHandler):
                 now=int(time.time())
                 if start_ts<now-60 or end_ts-start_ts<15*60 or end_ts-start_ts>24*60*60:
                     return self.send_json(400,{"error":"رزرو باید از ۱۵ دقیقه تا ۲۴ ساعت باشد و از بیش از یک دقیقه قبل شروع نشده باشد."})
+                reservation_id=str(data.get("id") or secrets.token_urlsafe(18))
+                if not 1<=len(reservation_id)<=100:
+                    return self.send_json(400,{"error":"شناسه رزرو معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
+                existing=db.execute("""SELECT device_id,customer_id,starts_at,ends_at,players_count,notes,status
+                    FROM gamenet_reservations WHERE id=? AND tenant_id=?""",(reservation_id,user["tenant_id"])).fetchone()
+                if existing:
+                    if (existing["device_id"]==device_id and existing["customer_id"]==customer_id and
+                        existing["starts_at"]==start_ts and existing["ends_at"]==end_ts and
+                        existing["players_count"]==players and existing["notes"]==notes and existing["status"]=="booked"):
+                        db.commit()
+                        return self.send_json(200,{"id":reservation_id,"startsAt":start_ts,"endsAt":end_ts,"status":"booked","duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه رزرو قبلاً برای اطلاعات متفاوت استفاده شده است."})
                 device=db.execute("SELECT id FROM game_devices WHERE id=? AND tenant_id=? AND active=1",(device_id,user["tenant_id"])).fetchone()
                 if not device:
                     db.rollback(); return self.send_json(404,{"error":"دستگاه فعال پیدا نشد."})
@@ -1230,9 +1243,7 @@ class Handler(SimpleHTTPRequestHandler):
                     AND starts_at<? AND ends_at>? LIMIT 1""",(user["tenant_id"],device_id,end_ts,start_ts)).fetchone()
                 if conflict:
                     db.rollback(); return self.send_json(409,{"error":"این دستگاه در بازه انتخاب‌شده رزرو دیگری دارد."})
-                reservation_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
-                if not 1<=len(reservation_id)<=100:
-                    db.rollback(); return self.send_json(400,{"error":"شناسه رزرو معتبر نیست."})
+                now=int(time.time())
                 db.execute("""INSERT INTO gamenet_reservations(id,tenant_id,device_id,customer_id,created_by,starts_at,ends_at,status,players_count,notes,created_at)
                     VALUES(?,?,?,?,?,?,?,'booked',?,?,?)""",(reservation_id,user["tenant_id"],device_id,customer_id,user["id"],start_ts,end_ts,players,notes,now))
                 audit(db,user["tenant_id"],user["id"],"gamenet.reservation.created","gamenet_reservation",reservation_id,
