@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload, normalizeLocalCustomer, isConflictVisible } from "./local-operation-store.js";
@@ -344,4 +345,66 @@ test("scopes unresolved conflicts to the active branch and tenant-wide authority
   assert.equal(isConflictVisible(branchConflict, null, true), false);
   assert.equal(isConflictVisible(tenantWideConflict, null, true), true);
   assert.equal(isConflictVisible(branchConflict, null, false), false);
+});
+
+test("commits customer edits with their outbox command and advances version only after acknowledgement", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId,
+    customer: { code: "C-EDIT-1", name: "Before", phone: "09120000000" }
+  });
+
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+  const deviceId = await store.getDeviceId(actorId);
+  const updated = await store.updateCustomer({
+    tenantId, branchId, actorId, customerId: created.id,
+    customer: { name: "After", phone: "09121111111", email: "after@example.com", address: "New", notes: "Updated" }
+  });
+
+  assert.equal(updated.name, "After");
+  assert.equal(updated.version, 1);
+  assert.equal(updated.syncStatus, "pending");
+  const pending = await store.getPending(tenantId, 100, branchId, false, deviceId);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].operationType, "customer.profile.updated");
+  const payload = JSON.parse(pending[0].payloadJson);
+  assert.equal(payload.baseVersion, 1);
+  assert.equal(payload.customerId, created.id);
+
+  await assert.rejects(store.updateCustomer({
+    tenantId, branchId, actorId, customerId: created.id,
+    customer: { name: "Overlapping edit" }
+  }), /pending update/);
+
+  await store.acknowledge([{ operationId: pending[0].operationId, sequence: 2 }]);
+  const rows = await store.getCustomers(tenantId);
+  const confirmed = rows.find(row => row.id === created.id);
+  assert.equal(confirmed.version, 2);
+  assert.equal(confirmed.syncStatus, "synced");
+  assert.equal(confirmed.name, "After");
+});
+
+test("serializes competing local customer edits and keeps only one pending command", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId,
+    customer: { code: "C-EDIT-2", name: "Original" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+
+  const results = await Promise.allSettled([
+    store.updateCustomer({ tenantId, branchId, actorId, customerId: created.id, customer: { name: "First" } }),
+    store.updateCustomer({ tenantId, branchId, actorId, customerId: created.id, customer: { name: "Second" } })
+  ]);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter(result => result.status === "rejected").length, 1);
+  const deviceId = await store.getDeviceId(actorId);
+  const pending = await store.getPending(tenantId, 100, branchId, false, deviceId);
+  assert.equal(pending.length, 1);
 });
