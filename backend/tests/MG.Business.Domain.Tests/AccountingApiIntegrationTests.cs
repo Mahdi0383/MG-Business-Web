@@ -200,6 +200,43 @@ public sealed class AccountingApiIntegrationTests
             secondAccounts.Select(x => x.Id).OrderBy(x => x));
     }
 
+
+    [Fact]
+    public async Task CashierCanReadSettlementAccountsButCannotReadFinancialReports()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"account-owner-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Cashier Access",
+            slug = $"cashier-access-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+
+        var chart = await owner.PostAsync("/api/accounting/accounts/initialize-default-chart", null);
+        Assert.Equal(HttpStatusCode.OK, chart.StatusCode);
+
+        var cashierEmail = $"cashier-{Guid.NewGuid():N}@mg.test";
+        using var cashier = await RegisterAndLoginAsync(factory, cashierEmail);
+        var membership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = cashierEmail,
+            role = TenantRole.Cashier,
+            branchId = (Guid?)null
+        });
+        Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
+
+        cashier.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        var accounts = await cashier.GetAsync("/api/accounting/accounts");
+        var trialBalance = await cashier.GetAsync("/api/accounting/trial-balance");
+
+        Assert.Equal(HttpStatusCode.OK, accounts.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, trialBalance.StatusCode);
+    }
+
     private static async Task<AccountCreated> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
