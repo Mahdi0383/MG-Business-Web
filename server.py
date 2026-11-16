@@ -596,6 +596,8 @@ class Handler(SimpleHTTPRequestHandler):
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
             if path.startswith("/api/gamenet/devices/"):
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 device_id = path.rsplit("/", 1)[-1]
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403, {"error": "فقط مدیر می‌تواند دستگاه را غیرفعال کند."})
@@ -614,6 +616,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(200, {"ok": True})
             if path.startswith("/api/orders/"):
+                if not module_enabled(db,user["tenant_id"],"cafe"):
+                    return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
                 order_id = path.rsplit("/", 1)[-1]
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403, {"error": "فقط مدیر می‌تواند سفارش را برگشت بزند."})
@@ -657,6 +661,8 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(200, {"ok": True})
             if path.startswith("/api/products/"):
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 product_id = path.rsplit("/", 1)[-1]
                 if user["role"] not in ("owner", "manager"):
                     return self.send_json(403, {"error": "فقط مدیر می‌تواند کالا را غیرفعال کند."})
@@ -671,6 +677,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"ok": True})
             if not path.startswith("/api/transactions/"):
                 return self.send_json(404, {"error": "مسیر API پیدا نشد."})
+            if not module_enabled(db,user["tenant_id"],"accounting"):
+                return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
             tx_id = path.rsplit("/", 1)[-1]
             if user["role"] not in ("owner", "manager"):
                 return self.send_json(403, {"error": "فقط مدیر می‌تواند تراکنش را حذف کند."})
