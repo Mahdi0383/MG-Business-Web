@@ -762,6 +762,17 @@ class Handler(SimpleHTTPRequestHandler):
                     "currentProfit":profit,"liabilitiesAndEquity":liabilities+equity,
                     "balanced":assets == liabilities+equity,"items":items})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
+        except sqlite3.IntegrityError:
+            db.rollback()
+            return self.send_json(409, {"error":"رکورد تکراری یا ناسازگار با اطلاعات موجود است."})
+        except sqlite3.OperationalError as exc:
+            db.rollback()
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                return self.send_json(503, {"error":"پایگاه داده مشغول است؛ چند لحظه بعد دوباره تلاش کنید."})
+            return self.send_json(500, {"error":"خطای عملیاتی پایگاه داده رخ داد."})
+        except sqlite3.Error:
+            db.rollback()
+            return self.send_json(500, {"error":"خطای پایگاه داده رخ داد."})
         finally: db.close()
 
     def do_DELETE(self):
