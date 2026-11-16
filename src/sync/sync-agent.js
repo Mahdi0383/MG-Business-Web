@@ -99,6 +99,37 @@ export class SyncAgent {
       const pending = await this.operationStore.getPending(tenantId, boundedBatchSize, branchId, allowTenantWide, deviceId);
       if (pending.length === 0) return { status: "idle", acknowledged: 0 };
 
+      // Never transmit a locally persisted command whose identity, scope or
+      // payload integrity no longer matches the durable envelope.
+      for (const operation of pending) {
+        if (!operation || typeof operation !== "object" || Array.isArray(operation)
+          || operation.tenantId !== tenantId
+          || operation.deviceId !== deviceId
+          || (operation.branchId != null && (typeof operation.branchId !== "string" || !operation.branchId.trim()))
+          || (branchId !== null && operation.branchId !== branchId
+            && !(allowTenantWide && operation.branchId == null))
+          || typeof operation.operationId !== "string" || !operation.operationId.trim()
+          || typeof operation.operationType !== "string" || !operation.operationType.trim()
+          || !Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1
+          || operation.authorityEpoch !== 0
+          || typeof operation.occurredAtUtc !== "string" || !Number.isFinite(Date.parse(operation.occurredAtUtc))
+          || typeof operation.payloadJson !== "string"
+          || new TextEncoder().encode(operation.payloadJson).byteLength > 64 * 1024
+          || typeof operation.payloadSha256 !== "string" || !/^[0-9a-f]{64}$/i.test(operation.payloadSha256))
+          throw new Error("Local sync queue contains an invalid or unauthorized operation envelope.");
+        let payload;
+        try { payload = JSON.parse(operation.payloadJson); }
+        catch { throw new Error("Local sync queue contains malformed JSON payload data."); }
+        if (!payload || typeof payload !== "object" || Array.isArray(payload))
+          throw new Error("Local sync queue payload must be a JSON object.");
+        if (!globalThis.crypto?.subtle)
+          throw new Error("Secure cryptography is unavailable; outgoing sync payloads cannot be verified.");
+        const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(operation.payloadJson));
+        const actualHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+        if (actualHash !== operation.payloadSha256.toLowerCase())
+          throw new Error("Local sync queue payload hash does not match its persisted content.");
+      }
+
       const response = await this.apiClient.post("/api/sync/operations", {
         operations: pending.map(operation => ({
           operationId: operation.operationId,
