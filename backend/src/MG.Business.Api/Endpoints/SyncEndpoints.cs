@@ -217,6 +217,11 @@ public static class SyncEndpoints
                 {
                     ["operations"] = [$"Batch size must be between 1 and {MaxBatchSize}."]
                 });
+            if (request.Operations.Any(item => item is null))
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["operations"] = ["Null operation entries are not allowed."]
+                });
 
             // No signed authority-lease service is deployed yet. Fail closed rather than
             // trusting a client-supplied non-zero fencing epoch.
@@ -248,6 +253,13 @@ public static class SyncEndpoints
                         ["payloadJson"] = ["Payload must contain valid JSON."]
                     });
                 }
+
+                if (!string.IsNullOrWhiteSpace(item.PayloadSha256)
+                    && (item.PayloadSha256.Length != 64 || !item.PayloadSha256.All(Uri.IsHexDigit)))
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["payloadSha256"] = ["Payload hash must be a 64-character hexadecimal SHA-256 value."]
+                    });
 
                 var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.PayloadJson)));
                 if (!string.IsNullOrWhiteSpace(item.PayloadSha256)
