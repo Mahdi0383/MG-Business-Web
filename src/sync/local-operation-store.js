@@ -1595,6 +1595,83 @@ export class LocalOperationStore {
   }
 
 
+  async resolveInventoryConflictFromServer({ tenantId, branchId, sequence, stockRow }) {
+    if (typeof tenantId !== "string" || !tenantId.trim()
+      || typeof branchId !== "string" || !branchId.trim()
+      || !Number.isSafeInteger(sequence) || sequence < 1)
+      throw new TypeError("Tenant, branch and conflict sequence are required.");
+    if (!stockRow || stockRow.branchId !== branchId || typeof stockRow.productId !== "string"
+      || !Number.isFinite(Number(stockRow.quantityOnHand))
+      || !Number.isFinite(Number(stockRow.inventoryValue))
+      || !Number.isFinite(Number(stockRow.rawInventoryValue ?? stockRow.inventoryValue)))
+      throw new TypeError("A current server stock snapshot for the conflicted branch is required.");
+
+    const database = await openDatabase();
+    const transaction = database.transaction(
+      [INBOX_STORE, CONFLICTS_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE, META_STORE],
+      "readwrite"
+    );
+    const done = transactionDone(transaction);
+    const inboxStore = transaction.objectStore(INBOX_STORE);
+    const conflictStore = transaction.objectStore(CONFLICTS_STORE);
+    const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
+    const stockMovementStore = transaction.objectStore(STOCK_MOVEMENTS_STORE);
+    const metadataStore = transaction.objectStore(META_STORE);
+    const inboxRequest = inboxStore.get([tenantId, sequence]);
+    const conflictRequest = conflictStore.get([tenantId, sequence]);
+    const pendingRequest = stockMovementStore.index("byTenantBranchProduct")
+      .getAll(IDBKeyRange.only([tenantId, branchId, stockRow.productId]));
+    const cursorKey = `cursor:${tenantId}:${branchId}`;
+    const cursorRequest = metadataStore.get(cursorKey);
+    const [inboxRow, conflict, localMovements, cursorRow] = await Promise.all([
+      requestResult(inboxRequest), requestResult(conflictRequest),
+      requestResult(pendingRequest), requestResult(cursorRequest)
+    ]);
+    if (!inboxRow || inboxRow.applied || !conflict || conflict.status !== "open"
+      || conflict.operationType !== "inventory.stock.movement.created"
+      || conflict.reason !== "stale-inventory-base-balance") {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("این تعارض دیگر قابل تطبیق با موجودی سرور نیست.");
+    }
+    const pending = localMovements.filter(row => row.state === "pending");
+    if (pending.length > 0) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("برای این کالا گردش انبار محلیِ در انتظار همگام‌سازی وجود دارد؛ ابتدا آن‌ها را تعیین تکلیف کنید.");
+    }
+    const currentCursor = Number.isSafeInteger(cursorRow?.value) ? cursorRow.value : 0;
+    if (currentCursor !== sequence - 1) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw new Error("ترتیب همگام‌سازی اجازه عبور از تعارض‌های قبلی را نمی‌دهد.");
+    }
+
+    const now = new Date().toISOString();
+    baselineStore.put({
+      tenantId, branchId, productId: stockRow.productId,
+      quantityOnHand: Number(stockRow.quantityOnHand),
+      inventoryValue: Number(stockRow.inventoryValue),
+      rawInventoryValue: Number(stockRow.rawInventoryValue ?? stockRow.inventoryValue),
+      averageUnitCost: Number(stockRow.averageUnitCost || 0),
+      cachedAtUtc: now
+    });
+    inboxRow.applied = true;
+    inboxRow.appliedIndex = 1;
+    inboxRow.appliedAtUtc = now;
+    inboxStore.put(inboxRow);
+    conflict.status = "resolved";
+    conflict.resolution = "authoritative-server-stock-snapshot";
+    conflict.resolvedAtUtc = now;
+    conflict.updatedAtUtc = now;
+    conflictStore.put(conflict);
+    metadataStore.put({ key: cursorKey, value: sequence });
+    await done;
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("mg-inventory-sync-updated"));
+    return { sequence, productId: stockRow.productId, resolvedAtUtc: now };
+  }
+
   async getOpenConflicts(tenantId, branchId = null, allowTenantWide = false, limit = 100) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim())) throw new TypeError("branchId must be a non-empty string or null.");
