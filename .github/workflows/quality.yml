@@ -24,3 +24,5 @@ jobs:
         run: python tests/check_project.py
       - name: Run domain unit tests
         run: node --test tests/core.test.js
+      - name: Run backend API integration tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
