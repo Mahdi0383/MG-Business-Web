@@ -82,6 +82,34 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 400)
 
+        status, result = self.request("POST", "/api/products", {
+            "id": "product-1", "name": "Espresso", "sku": "ESP-01",
+            "category": "Coffee", "sellPrice": 85000, "costPrice": 30000
+        }, token)
+        self.assertEqual(status, 201)
+        status, result = self.request("GET", "/api/products", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["items"][0]["sellPrice"], 85000)
+        status, result = self.request("POST", "/api/products", {
+            "id": "product-2", "name": "Duplicate SKU", "sku": "ESP-01",
+            "sellPrice": 90000, "costPrice": 30000
+        }, token)
+        self.assertEqual(status, 409)
+
+        status, result = self.request("POST", "/api/customers", {
+            "id": "customer-1", "fullName": "Test Customer",
+            "phone": "+491234567", "email": "test@example.com"
+        }, token)
+        self.assertEqual(status, 201)
+        status, result = self.request("GET", "/api/customers", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["items"][0]["fullName"], "Test Customer")
+
+        status, result = self.request("DELETE", "/api/products/product-1", token=token)
+        self.assertEqual(status, 200)
+        status, result = self.request("GET", "/api/products", token=token)
+        self.assertEqual(result["items"][0]["active"], 0)
+
         status, result = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/transactions", token=token)
