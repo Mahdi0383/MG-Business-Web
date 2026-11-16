@@ -33,7 +33,7 @@ A release is blocked until every mandatory gate below has objective evidence att
 
 ### Authority, failover and split-brain safety
 - [x] Implement short-lived ECDSA-signed tenant/branch authority leases with serializable acquisition and a pinned client verification key.
-- [x] Enforce expiry, monotonic fencing epochs, device/branch binding and stale-epoch rejection on sync push when production-required lease mode is enabled.
+- [x] Enforce expiry, monotonic fencing epochs, branch-scope binding, independently signed source-device identity and stale-epoch rejection on sync push when production-required lease mode is enabled; follower devices share the current branch epoch.
 - [x] Add backend integration coverage for lease signature verification, competing-device exclusion and fenced push; final PostgreSQL concurrency/race proof remains open.
 - [ ] Implement MG Master / Control Center authority handoff and audited failback.
 - [ ] Run multi-node partition, clock-skew, stale-leader and recovery tests.
