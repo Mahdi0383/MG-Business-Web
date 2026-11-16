@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using MG.Business.Domain.Entities;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +13,22 @@ namespace MG.Business.Domain.Tests;
 
 public sealed class SyncApiIntegrationTests
 {
+    [Fact]
+    public void DeviceCursorCannotBeTakenOverByAnotherTenantMember()
+    {
+        var tenantId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        var enrollingActorId = Guid.NewGuid();
+        var otherActorId = Guid.NewGuid();
+        var cursor = new SyncDeviceCursor(tenantId, deviceId, enrollingActorId, 12, DateTimeOffset.UtcNow);
+
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            cursor.Advance(otherActorId, 13, DateTimeOffset.UtcNow));
+        Assert.Equal(enrollingActorId, cursor.ActorId);
+        Assert.Equal(12, cursor.LastAcknowledgedSequence);
+    }
+
+
     [Fact]
     public async Task PushIsIdempotentAndPullIsTenantScoped()
     {
