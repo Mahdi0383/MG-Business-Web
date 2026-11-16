@@ -14,7 +14,7 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [x] Payment collection persists idempotency keys and request fingerprints; exact retries replay the original receipt and changed payloads are rejected.
 - [x] Game-session closure replays the committed invoice after a lost response and rejects changed settlement payloads.
 - [x] Inventory movement validates the active stock-tracked product and stock ledger inside the serializable write transaction.
-- [x] Inventory stock movement supports optional `Idempotency-Key` replay protection with a persisted request fingerprint, tenant/branch unique index and exact-retry / changed-payload integration tests; making the key mandatory and wiring it into every client remains outstanding.
+- [x] Manual inventory stock-movement API requires `Idempotency-Key`, persists a request fingerprint under a tenant/branch unique constraint, replays exact retries and rejects changed-payload reuse; offline/local stock commands and sales-order-originated stock writes still need end-to-end command idempotency.
 - [x] Public ordering rejects ambiguous multi-tenant routing.
 - [x] Sync journal validates payload integrity, actor scope, idempotency envelopes and monotonic cursors.
 - [x] PWA shell does not cache authentication, API or synchronization traffic.
