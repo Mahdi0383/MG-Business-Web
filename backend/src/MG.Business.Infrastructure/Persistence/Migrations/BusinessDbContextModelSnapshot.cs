@@ -205,6 +205,55 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.ToTable("customers", (string)null);
                 });
 
+            modelBuilder.Entity("MG.Business.Domain.Entities.DeviceEnrollmentChallenge", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<Guid>("ActorId").HasColumnType("uuid");
+                    b.Property<Guid?>("BranchId").HasColumnType("uuid");
+                    b.Property<string>("ChallengeSha256").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<DateTimeOffset>("ConsumedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset>("CreatedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
+                    b.Property<DateTimeOffset>("ExpiresAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<Guid>("TenantId").HasColumnType("uuid");
+                    b.HasKey("Id");
+                    b.HasIndex("ActorId");
+                    b.HasIndex("TenantId", "ActorId", "DeviceId", "ExpiresAtUtc");
+                    b.HasIndex("TenantId", "BranchId");
+                    b.HasIndex("ExpiresAtUtc");
+                    b.ToTable("device_enrollment_challenges", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.DeviceCredential", b =>
+                {
+                    b.Property<Guid>("TenantId").HasColumnType("uuid");
+                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
+                    b.Property<Guid>("ActorId").HasColumnType("uuid");
+                    b.Property<string>("CredentialSha256").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<DateTimeOffset>("CreatedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset?>("LastUsedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTimeOffset>("LastRotatedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<string>("PublicKeySpkiBase64").IsRequired().HasMaxLength(2048).HasColumnType("character varying(2048)");
+                    b.Property<DateTimeOffset?>("RevokedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<int>("KeyVersion").IsConcurrencyToken().HasColumnType("integer");
+                    b.HasKey("TenantId", "DeviceId");
+                    b.HasIndex("TenantId", "ActorId");
+                    b.ToTable("device_credentials", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.DeviceEnrollmentChallenge", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null).WithMany().HasForeignKey("ActorId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null).WithMany().HasForeignKey("TenantId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null).WithMany().HasForeignKey("TenantId", "BranchId").HasPrincipalKey("TenantId", "Id").OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.DeviceCredential", b =>
+                {
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null).WithMany().HasForeignKey("ActorId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null).WithMany().HasForeignKey("TenantId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
                 {
                     b.Property<Guid>("TenantId")
