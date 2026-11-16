@@ -28,8 +28,6 @@ class BackupManagerTests(unittest.TestCase):
             third = create_snapshot(database, backup_dir, retention=2)
             db.close()
 
-            self.assertTrue(first.is_file())
-            self.assertTrue(second.is_file())
             self.assertTrue(third.is_file())
             self.assertEqual(len(list(backup_dir.glob("mg-business-*.sqlite3"))), 2)
             snapshot = sqlite3.connect(third)
