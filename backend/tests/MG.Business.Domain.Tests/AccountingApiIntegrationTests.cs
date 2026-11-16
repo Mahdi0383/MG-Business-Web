@@ -170,6 +170,36 @@ public sealed class AccountingApiIntegrationTests
         Assert.True(trial.IsBalanced);
     }
 
+
+    [Fact]
+    public async Task DefaultChartInitializationIsIdempotent()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"chart-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Chart Store",
+            slug = $"chart-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+
+        var first = await client.PostAsync("/api/accounting/accounts/initialize-default-chart", null);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var firstAccounts = await first.Content.ReadFromJsonAsync<AccountCreated[]>();
+        Assert.Equal(9, firstAccounts!.Length);
+
+        var second = await client.PostAsync("/api/accounting/accounts/initialize-default-chart", null);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var secondAccounts = await second.Content.ReadFromJsonAsync<AccountCreated[]>();
+
+        Assert.Equal(9, secondAccounts!.Length);
+        Assert.Equal(firstAccounts.Select(x => x.Id).OrderBy(x => x),
+            secondAccounts.Select(x => x.Id).OrderBy(x => x));
+    }
+
     private static async Task<AccountCreated> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
     {
         var response = await client.PostAsJsonAsync("/api/accounting/accounts", new { code, name, type });
