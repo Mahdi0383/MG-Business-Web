@@ -39,11 +39,12 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [ ] Run multi-node partition, clock-skew, stale-leader and recovery tests.
 
 ### Offline business transactions
-- [ ] Implement transactional local command handlers for every enabled business module.
-- [ ] Apply inbound operations to local projections; do not merely retain them in an inbox.
-- [ ] Add domain-specific conflict resolution and operator review workflows.
+- [x] Implement the first complete inventory movement slice: cached product/stock baseline, atomic IndexedDB movement + outbox write, stable local idempotency key, local weighted-average valuation, signed-lease epoch capture, server replay and stock-ledger idempotency.
+- [x] Apply inbound inventory journal operations to local stock projections transactionally; suppress originating-device echoes and stop on stale base-balance conflicts.
+- [ ] Implement equivalent transactional local command handlers and inbound projections for sales, accounting, purchasing, café and GameNet.
+- [ ] Add domain-specific conflict resolution and operator review workflows for inventory and all other business domains.
 - [ ] Add durable conflict/health alert history and an independent notification relay.
-- [ ] Verify that accounting, stock, sales, café and game-session operations remain balanced and consistent during offline replay.
+- [ ] Verify financial, stock, café and game-session consistency under multi-device offline replay and production database concurrency.
 
 ### Financial correctness and retry safety
 - [x] Add persisted idempotency keys and request fingerprints to payment collection.
