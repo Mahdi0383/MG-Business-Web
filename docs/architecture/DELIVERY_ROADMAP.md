@@ -101,6 +101,7 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Exact retries return the originally committed movement; reusing a key with changed request content returns HTTP 409. A provider-backed integration test verifies no duplicate stock is posted.
 - Added the PostgreSQL migration and updated the EF model snapshot; model-snapshot validation, API build and PostgreSQL migration-script generation passed. The latest SQLite integration/domain run passed after normalizing the fingerprint representation.
 - The key is still optional and is not yet persisted by every stock-writing client. Mandatory idempotency and end-to-end offline stock command handling remain release blockers.
+- Web CI, SQLite integration/domain tests and PostgreSQL migration + integration/domain CI all passed on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09`.
 
 ## Planning estimate
 
