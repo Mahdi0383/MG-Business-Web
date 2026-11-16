@@ -100,7 +100,7 @@ export class LocalOperationStore {
     return deviceId;
   }
 
-  async enqueue({ tenantId, branchId = null, operationType, payload, schemaVersion = 1, authorityEpoch = 0 }) {
+  async enqueue({ tenantId, branchId = null, actorId, operationType, payload, schemaVersion = 1, authorityEpoch = 0 }) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
@@ -118,10 +118,12 @@ export class LocalOperationStore {
       throw new TypeError("Offline operation payload must be JSON serializable.");
     if (new TextEncoder().encode(payloadJson).byteLength > 64 * 1024)
       throw new RangeError("Offline operation payload exceeds 64 KiB.");
+    if (typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("actorId is required to enqueue an authenticated offline operation.");
 
     const operation = {
       operationId: crypto.randomUUID(),
-      deviceId: await this.getDeviceId(),
+      deviceId: await this.getDeviceId(actorId),
       tenantId,
       branchId,
       operationType: operationType.trim(),
