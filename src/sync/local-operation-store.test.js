@@ -829,6 +829,56 @@ test("queues offline inventory movements atomically and advances the stock basel
   assert.equal(acknowledgedProjection[0].quantityOnHand, 7);
   assert.equal(acknowledgedProjection[0].inventoryValue, 14);
   assert.equal(acknowledgedProjection[0].pendingMovementCount, 0);
+
+  await store.storeIncomingPage(tenantId, [{
+    ...pending[0], sequence: 1, actorId, branchId, deviceId,
+    receivedAtUtc: new Date().toISOString()
+  }], 1, branchId);
+  const processor = new IncomingOperationProcessor({
+    store, adapter: store, classify: classifyIncomingOperation
+  });
+  const echoResult = await processor.processBatch(tenantId, 10, branchId, false);
+  assert.equal(echoResult.applied, 1);
+  assert.equal((await store.getInventoryStock(tenantId, branchId))[0].quantityOnHand, 7);
+});
+
+test("applies a remote inventory movement to the cached branch stock projection", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = `remote-stock-tenant-${crypto.randomUUID()}`;
+  const branchId = crypto.randomUUID();
+  const productId = crypto.randomUUID();
+  const operationId = crypto.randomUUID();
+  await store.cacheInventorySnapshot({
+    tenantId, branchId,
+    products: [{ id: productId, sku: "REMOTE-1", name: "Remote item", tracksInventory: true, isActive: true }],
+    stockRows: [{ productId, branchId, quantityOnHand: 10, inventoryValue: 20, rawInventoryValue: 20, averageUnitCost: 2 }]
+  });
+  const payloadJson = JSON.stringify({
+    productId, type: 2, quantity: 3, unitCost: null,
+    baseQuantityOnHand: 10, baseInventoryValue: 20, reference: "remote issue"
+  });
+  const operation = {
+    tenantId, sequence: 1, operationId,
+    actorId: `remote-actor-${crypto.randomUUID()}`,
+    deviceId: crypto.randomUUID(), branchId,
+    operationType: "inventory.stock.movement.created",
+    schemaVersion: 1, authorityEpoch: 0,
+    occurredAtUtc: new Date().toISOString(), receivedAtUtc: new Date().toISOString(),
+    payloadJson, payloadSha256: await (async () => {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payloadJson));
+      return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    })()
+  };
+  await store.storeIncomingPage(tenantId, [operation], 1, branchId);
+  const processor = new IncomingOperationProcessor({
+    store, adapter: store, classify: classifyIncomingOperation
+  });
+  const result = await processor.processBatch(tenantId, 10, branchId, false);
+  assert.equal(result.applied, 1);
+  const stock = await store.getInventoryStock(tenantId, branchId);
+  assert.equal(stock[0].quantityOnHand, 7);
+  assert.equal(stock[0].inventoryValue, 14);
+  assert.equal(stock[0].pendingMovementCount, 0);
 });
 
 test("does not trust a caller-controlled verified flag for authority lease epochs", async () => {
