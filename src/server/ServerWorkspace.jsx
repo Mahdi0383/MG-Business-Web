@@ -209,6 +209,25 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     setError("");
   };
 
+  const openStockMovement = product => {
+    if (!canCreateProduct || !product?.isActive || !product.tracksInventory) return;
+    if (!globalThis.crypto?.randomUUID) {
+      setError("مرورگر از تولید کلید امن درخواست پشتیبانی نمی‌کند؛ ثبت گردش انبار در این دستگاه ممکن نیست.");
+      return;
+    }
+    setForm({
+      productId: product.id,
+      productName: product.name,
+      type: "1",
+      quantity: "1",
+      unitCost: "",
+      reference: "",
+      idempotencyKey: crypto.randomUUID()
+    });
+    setModal("stockMovement");
+    setError("");
+  };
+
   const openEditCustomer = customer => {
     if (!canEditCustomer || customer.syncStatus === "pending") return;
     setForm({
@@ -360,6 +379,22 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     let successNotice = "";
     let paymentIntentStorageKey = null;
     try {
+      if (modal === "stockMovement") {
+        if (!form.idempotencyKey) throw new Error("کلید امن ثبت گردش موجود نیست؛ فرم را دوباره باز کنید.");
+        const type = Number(form.type);
+        const isInbound = type === 1 || type === 3 || type === 4;
+        const quantity = Number(form.quantity);
+        const unitCost = isInbound ? Number(form.unitCost) : null;
+        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("مقدار باید بیشتر از صفر باشد.");
+        if (isInbound && (!Number.isFinite(unitCost) || unitCost < 0)) throw new Error("بهای واحد معتبر برای ورود موجودی الزامی است.");
+        await client.post("/api/inventory/movements", {
+          productId: form.productId,
+          type,
+          quantity,
+          unitCost,
+          reference: form.reference.trim() || null
+        }, { headers: { "Idempotency-Key": form.idempotencyKey } });
+        successNotice = "گردش انبار با موفقیت ثبت شد.";
       if (modal === "product") {
         await client.post("/api/inventory/products", {
           sku: form.sku.trim(),
@@ -680,7 +715,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         </>}
 
         {page === "products" && <section className="mg-server-panel">
-          <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button>}</div>
+          <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <div className="mg-server-panel-actions"><button className="mg-secondary-btn" onClick={() => { const selected = products.find(product => product.isActive && product.tracksInventory); if (selected) openStockMovement(selected); else setError("ابتدا یک کالای فعالِ انبارگردانی‌شونده ثبت کنید."); }}>ثبت ورود / خروج</button><button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button></div>}</div>
           <div className="mg-server-panel-actions" style={{ marginBottom: 16 }}>
             <form onSubmit={event => { event.preventDefault(); setProductPage(1); setAppliedProductSearch(productSearch); }} className="mg-server-search">
               <input aria-label="جست‌وجوی کالا" placeholder="جست‌وجو بر اساس نام یا کد کالا" maxLength={100} value={productSearch} onChange={event => setProductSearch(event.target.value)} />
@@ -748,8 +783,17 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
     {modal && <div className="mg-server-overlay" onMouseDown={event => event.target === event.currentTarget && setModal("")}>
       <form className="mg-server-modal" onSubmit={save}>
-        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "customerEdit" ? "ویرایش مشتری" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "salePayment" ? "دریافت وجه فاکتور" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
+        <div className="mg-server-modal-head"><h2>{modal === "stockMovement" ? "ثبت گردش انبار" : modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "customerEdit" ? "ویرایش مشتری" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "salePayment" ? "دریافت وجه فاکتور" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
 
+        {modal === "stockMovement" && <>
+          <div className="mg-server-modal-hint">ثبت آنلاین و اتمیک گردش انبار. در صورت قطع ارتباط، فرم را نبندید و پس از اتصال دوباره با همین کلید تلاش کنید تا ثبت تکراری ایجاد نشود.</div>
+          <label>کالا<input readOnly value={form.productName || ""} /></label>
+          <label>نوع گردش<select required value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="1">ورود / خرید</option><option value="2">خروج / مصرف</option><option value="3">مرجوعی فروش</option><option value="4">افزایش تعدیلی</option><option value="5">کاهش تعدیلی</option></select></label>
+          <label>مقدار<input required type="number" min="0.001" step="0.001" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></label>
+          {[1,3,4].includes(Number(form.type)) && <label>بهای واحد (تومان)<input required type="number" min="0" step="0.01" value={form.unitCost} onChange={e => setForm({ ...form, unitCost: e.target.value })} /></label>}
+          <label>مرجع / توضیحات<input maxLength="200" value={form.reference} onChange={e => setForm({ ...form, reference: e.target.value })} /></label>
+        </>}
+        
         {modal === "product" && <>
           <label>کد کالا<input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></label>
           <label>نام کالا<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
@@ -843,7 +887,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         </>}
 
 
-        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "salePayment" ? "ثبت دریافت و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
+        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "stockMovement" ? "ثبت گردش انبار" : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "salePayment" ? "ثبت دریافت و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
       </form>
     </div>}
   </div>;
