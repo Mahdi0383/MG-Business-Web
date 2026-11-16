@@ -258,7 +258,10 @@ export class LocalOperationStore {
   }
 
   async storeIncomingPage(tenantId, operations, nextSequence, branchId = null) {
-    if (!tenantId) throw new TypeError("tenantId is required.");
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
     if (!Array.isArray(operations)) throw new TypeError("operations must be an array.");
     if (!Number.isSafeInteger(nextSequence) || nextSequence < 0)
       throw new TypeError("nextSequence must be a non-negative safe integer.");
@@ -270,9 +273,12 @@ export class LocalOperationStore {
     for (const operation of operations) {
       if (!Number.isSafeInteger(operation.sequence) || operation.sequence <= previousSequence
         || typeof operation.operationId !== "string" || !operation.operationId
+        || typeof operation.operationType !== "string" || !operation.operationType
         || typeof operation.payloadJson !== "string" || typeof operation.payloadSha256 !== "string"
         || !Number.isInteger(operation.schemaVersion) || operation.schemaVersion < 1)
         throw new TypeError("Incoming operation envelope is invalid.");
+      if (branchId !== null && operation.branchId != null && operation.branchId !== branchId)
+        throw new Error("Incoming operation does not belong to the active branch.");
       JSON.parse(operation.payloadJson);
       const actualHash = await sha256(operation.payloadJson);
       if (actualHash !== operation.payloadSha256.toUpperCase())
