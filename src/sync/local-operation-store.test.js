@@ -251,6 +251,8 @@ test("incoming inbox visibility is restricted to the selected branch unless mana
   assert.equal(isIncomingRowVisible(otherBranchRow, "branch-a", true), false);
   assert.equal(isIncomingRowVisible(tenantWideRow, null, false), false);
   assert.equal(isIncomingRowVisible(tenantWideRow, null, true), true);
+  assert.equal(isIncomingRowVisible(branchRow, null, true), false);
+  assert.equal(isIncomingRowVisible(otherBranchRow, null, true), false);
 });
 
 
