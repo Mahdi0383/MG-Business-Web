@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload } from "./local-operation-store.js";
+import { LocalOperationStore, isIncomingRowVisible, isPendingOperationVisible, isSameIncomingEnvelope, isJsonObjectPayload, normalizeLocalCustomer } from "./local-operation-store.js";
 
 
 
@@ -309,4 +309,25 @@ test("incoming payload validation accepts only JSON objects", () => {
   for (const payload of ['null', '[]', '42', '"text"', 'true', '', '{invalid']) {
     assert.equal(isJsonObjectPayload(payload), false, payload);
   }
+});
+
+
+test("normalizes and validates local customer command data", () => {
+  assert.deepEqual(normalizeLocalCustomer({
+    code: " c-001 ", name: "  MG Customer ", phone: " 09120000000 ",
+    email: " TEST@EXAMPLE.COM ", address: " Main Street ", notes: " VIP "
+  }), {
+    code: "C-001", name: "MG Customer", phone: "09120000000",
+    email: "test@example.com", address: "Main Street", notes: "VIP"
+  });
+});
+
+test("rejects invalid local customer fields before opening IndexedDB", () => {
+  for (const customer of [
+    null, [], { code: "", name: "Valid" },
+    { code: "C".repeat(41), name: "Valid" }, { code: "C-1", name: " " },
+    { code: "C-1", name: "N".repeat(161) },
+    { code: "C-1", name: "Valid", email: "not-an-email" },
+    { code: "C-1", name: "Valid", phone: 123 }
+  ]) assert.throws(() => normalizeLocalCustomer(customer));
 });
