@@ -45,6 +45,40 @@ public sealed class SyncApiIntegrationTests
 
 
     [Fact]
+    public async Task KitchenStaffCannotReadCustomerSyncJournal()
+    {
+        using var factory = CreateFactory();
+        using var owner = await RegisterAndLoginAsync(factory, $"sync-owner-{Guid.NewGuid():N}@mg.test");
+        var tenantResponse = await owner.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Sync Privacy Store",
+            slug = $"sync-privacy-{Guid.NewGuid():N}",
+            firstBranchName = "Main"
+        });
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.NotNull(tenant);
+        owner.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        owner.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var staffEmail = $"kitchen-{Guid.NewGuid():N}@mg.test";
+        using var kitchenStaff = await RegisterAndLoginAsync(factory, staffEmail);
+        var membership = await owner.PostAsJsonAsync("/api/memberships", new
+        {
+            email = staffEmail,
+            role = TenantRole.KitchenStaff,
+            branchId = tenant.BranchId
+        });
+        Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
+
+        kitchenStaff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
+        kitchenStaff.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+        var journal = await kitchenStaff.GetAsync("/api/sync/operations?afterSequence=0&limit=20");
+
+        Assert.Equal(HttpStatusCode.Forbidden, journal.StatusCode);
+    }
+
+    [Fact]
     public async Task CustomerCreationCommandProjectsAuthoritativeCustomerAtomicallyWithJournal()
     {
         using var factory = CreateFactory();
