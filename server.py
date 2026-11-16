@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
 DB_PATH = Path(os.environ.get("MG_DB_PATH", DATA_DIR / "mg-business.sqlite3")).resolve()
+if DATA_DIR == ROOT or ROOT in DATA_DIR.parents or DB_PATH == ROOT or ROOT in DB_PATH.parents:
+    raise RuntimeError("MG_DATA_DIR and MG_DB_PATH must be outside the public web root.")
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
 SESSION_SECONDS = 60 * 60 * 24 * 7
