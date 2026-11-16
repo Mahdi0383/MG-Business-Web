@@ -1529,13 +1529,25 @@ class Handler(SimpleHTTPRequestHandler):
                 if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
                 if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
                 iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
-                if type(amount) is not int or amount<=0 or method not in ("cash","card","online"): return self.send_json(400,{"error":"مبلغ یا روش پرداخت معتبر نیست."})
+                payid=str(data.get("id") or secrets.token_urlsafe(18))
+                if type(amount) is not int or amount<=0 or amount>9007199254740991 or method not in ("cash","card","online"):
+                    return self.send_json(400,{"error":"مبلغ یا روش پرداخت معتبر نیست."})
+                if not 1<=len(payid)<=100: return self.send_json(400,{"error":"شناسه پرداخت معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
                 inv=db.execute("SELECT * FROM purchase_invoices WHERE id=? AND tenant_id=?",(iid,user["tenant_id"])).fetchone()
                 if not inv: db.rollback(); return self.send_json(404,{"error":"فاکتور خرید پیدا نشد."})
+                existing=db.execute("SELECT invoice_id,amount,payment_method FROM supplier_payments WHERE id=? AND tenant_id=?",
+                                    (payid,user["tenant_id"])).fetchone()
+                if existing:
+                    if existing["invoice_id"]==iid and existing["amount"]==amount and existing["payment_method"]==method:
+                        db.commit()
+                        return self.send_json(200,{"paymentId":payid,"paidAmount":inv["paid_amount"],
+                            "remainingBalance":inv["total"]-inv["paid_amount"],"status":inv["status"],"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه پرداخت قبلاً برای اطلاعات متفاوت استفاده شده است."})
                 remaining=inv["total"]-inv["paid_amount"]
                 if amount>remaining: db.rollback(); return self.send_json(409,{"error":"پرداخت از مانده فاکتور بیشتر است."})
-                payid=secrets.token_urlsafe(18); now=int(time.time())
+                now=int(time.time())
                 db.execute("INSERT INTO supplier_payments(id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at) VALUES(?,?,?,?,?,?,?,?)",
                     (payid,user["tenant_id"],iid,inv["supplier_id"],user["id"],method,amount,now))
                 paid=inv["paid_amount"]+amount; status="paid" if paid==inv["total"] else "partial"
