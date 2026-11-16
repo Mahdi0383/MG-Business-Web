@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
@@ -77,45 +78,64 @@ public static class BranchEndpoints
         group.MapPatch("/{branchId:guid}/active", async (Guid branchId, SetBranchActiveRequest request,
             ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
-            var branch = await db.Branches.SingleOrDefaultAsync(x =>
-                x.TenantId == tenant.TenantId && x.Id == branchId, cancellationToken);
-            if (branch is null) return Results.NotFound();
-            if (branch.IsActive == request.IsActive)
-                return Results.Ok(ToResponse(branch));
-
-            if (!request.IsActive)
-            {
-                var activeBranchCount = await db.Branches.CountAsync(x =>
-                    x.TenantId == tenant.TenantId && x.IsActive, cancellationToken);
-                if (activeBranchCount <= 1)
-                    return Results.Conflict(new { message = "هر کسب‌وکار باید حداقل یک شعبه فعال داشته باشد." });
-
-                var hasActiveGameSessions = await db.GameSessions.AnyAsync(x =>
-                    x.TenantId == tenant.TenantId && x.BranchId == branchId && x.Status == GameSessionStatus.Active,
-                    cancellationToken);
-                var hasOpenKitchenTickets = await db.CafeKitchenTickets.AnyAsync(x =>
-                    x.TenantId == tenant.TenantId && x.BranchId == branchId
-                    && x.Status != KitchenTicketStatus.Completed && x.Status != KitchenTicketStatus.Cancelled,
-                    cancellationToken);
-
-                if (hasActiveGameSessions || hasOpenKitchenTickets)
-                    return Results.Conflict(new { message = "تا زمان بستن سانس‌های فعال و تکمیل یا لغو سفارش‌های آشپزخانه، غیرفعال‌سازی شعبه مجاز نیست." });
-            }
-
-            branch.SetActive(request.IsActive);
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
             {
+                var branch = await db.Branches.SingleOrDefaultAsync(x =>
+                    x.TenantId == tenant.TenantId && x.Id == branchId, cancellationToken);
+                if (branch is null)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return Results.NotFound();
+                }
+                if (branch.IsActive == request.IsActive)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return Results.Ok(ToResponse(branch));
+                }
+
+                if (!request.IsActive)
+                {
+                    // Keep the invariant check and write in one serializable transaction so
+                    // concurrent deactivations cannot leave a tenant without an active branch.
+                    var activeBranchCount = await db.Branches.CountAsync(x =>
+                        x.TenantId == tenant.TenantId && x.IsActive, cancellationToken);
+                    if (activeBranchCount <= 1)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return Results.Conflict(new { message = "هر کسب‌وکار باید حداقل یک شعبه فعال داشته باشد." });
+                    }
+
+                    var hasActiveGameSessions = await db.GameSessions.AnyAsync(x =>
+                        x.TenantId == tenant.TenantId && x.BranchId == branchId && x.Status == GameSessionStatus.Active,
+                        cancellationToken);
+                    var hasOpenKitchenTickets = await db.CafeKitchenTickets.AnyAsync(x =>
+                        x.TenantId == tenant.TenantId && x.BranchId == branchId
+                        && x.Status != KitchenTicketStatus.Completed && x.Status != KitchenTicketStatus.Cancelled,
+                        cancellationToken);
+
+                    if (hasActiveGameSessions || hasOpenKitchenTickets)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return Results.Conflict(new { message = "تا زمان بستن سانس‌های فعال و تکمیل یا لغو سفارش‌های آشپزخانه، غیرفعال‌سازی شعبه مجاز نیست." });
+                    }
+                }
+
+                branch.SetActive(request.IsActive);
                 await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return Results.Ok(ToResponse(branch));
             }
             catch (DbUpdateException)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 return Results.Conflict(new { message = "وضعیت شعبه به دلیل تعارض داده‌ها تغییر نکرد؛ اطلاعات را تازه‌سازی کنید." });
             }
             catch (DbException)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 return Results.Conflict(new { message = "پایگاه داده نتوانست وضعیت شعبه را با اطمینان تغییر دهد؛ وضعیت را دوباره بررسی کنید." });
             }
-            return Results.Ok(ToResponse(branch));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ManageRoles)));
 
         return endpoints;
