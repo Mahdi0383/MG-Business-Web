@@ -542,7 +542,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "null",
+                    payloadJson = System.Text.Json.JsonSerializer.Serialize(new { scope = "main" }),
                     payloadSha256 = (string?)null
                 }
             }
