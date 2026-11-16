@@ -21,6 +21,8 @@ jobs:
           dotnet-version: 10.0.x
       - name: Restore tools
         run: dotnet tool restore
+      - name: Restore backend projects
+        run: dotnet restore backend/src/MG.Business.Api/MG.Business.Api.csproj
       - name: Generate initial migration
         env:
           MG_DESIGN_CONNECTION: Host=localhost;Database=mg_business_design;Username=mg_design;Password=design-only
