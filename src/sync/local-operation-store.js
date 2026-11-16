@@ -50,6 +50,7 @@ const META_STORE = "metadata";
 const INBOX_STORE = "inbox";
 const CUSTOMERS_STORE = "customers";
 const CONFLICTS_STORE = "conflicts";
+const REQUIRE_AUTHORITY_LEASES = import.meta.env?.VITE_REQUIRE_AUTHORITY_LEASES === "true";
 
 let databasePromise;
 
@@ -201,6 +202,46 @@ export class LocalOperationStore {
     return deviceId;
   }
 
+  async setAuthorityLease({ tenantId, branchId = null, lease }) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required to store an authority lease.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
+    if (!lease || lease.verified !== true || lease.tenantId !== tenantId
+      || (lease.branchId || null) !== (branchId || null)
+      || !Number.isSafeInteger(lease.epoch) || lease.epoch < 1
+      || !Number.isFinite(Date.parse(lease.expiresAtUtc)) || Date.parse(lease.expiresAtUtc) <= Date.now())
+      throw new TypeError("Only a verified, active authority lease for the selected scope can be stored.");
+    const key = `authority-lease:${tenantId}:${branchId || "tenant-wide"}`;
+    const database = await openDatabase();
+    const transaction = database.transaction(META_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    transaction.objectStore(META_STORE).put({ key, value: lease });
+    await done;
+  }
+
+  async getAuthorityEpoch({ tenantId, branchId = null }) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required to read the authority lease.");
+    const key = `authority-lease:${tenantId}:${branchId || "tenant-wide"}`;
+    const database = await openDatabase();
+    const transaction = database.transaction(META_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const stored = await requestResult(transaction.objectStore(META_STORE).get(key));
+    await done;
+    const lease = stored?.value;
+    const valid = lease?.verified === true && lease.tenantId === tenantId
+      && (lease.branchId || null) === (branchId || null)
+      && Number.isSafeInteger(lease.epoch) && lease.epoch > 0
+      && Date.parse(lease.expiresAtUtc) > Date.now();
+    if (!valid) {
+      if (REQUIRE_AUTHORITY_LEASES)
+        throw new Error("A verified, unexpired authority lease is required before making offline business changes.");
+      return 0;
+    }
+    return lease.epoch;
+  }
+
   async enqueue({ tenantId, branchId = null, actorId, operationType, payload, schemaVersion = 1, authorityEpoch = 0 }) {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
@@ -208,7 +249,14 @@ export class LocalOperationStore {
     if (typeof operationType !== "string" || !operationType.trim() || operationType.trim().length > 100)
       throw new TypeError("operationType must be 1–100 characters.");
     if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError("schemaVersion must be a positive integer.");
-    if (authorityEpoch !== 0) throw new TypeError("Non-zero authority epochs require a verified signed lease; failover is not enabled yet.");
+    if (!Number.isSafeInteger(authorityEpoch) || authorityEpoch < 0)
+      throw new TypeError("authorityEpoch must be a non-negative safe integer.");
+    const verifiedEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
+    if (authorityEpoch !== 0 && authorityEpoch !== verifiedEpoch)
+      throw new TypeError("The operation authority epoch does not match the verified local lease.");
+    const effectiveAuthorityEpoch = verifiedEpoch || authorityEpoch;
+    if (REQUIRE_AUTHORITY_LEASES && effectiveAuthorityEpoch < 1)
+      throw new Error("A verified authority lease is required before queuing offline operations.");
     if (!payload || typeof payload !== "object" || Array.isArray(payload))
       throw new TypeError("Offline operation payload must be a JSON object.");
 
@@ -229,7 +277,7 @@ export class LocalOperationStore {
       branchId,
       operationType: operationType.trim(),
       schemaVersion,
-      authorityEpoch,
+      authorityEpoch: effectiveAuthorityEpoch,
       occurredAtUtc: new Date().toISOString(),
       payloadJson,
       payloadSha256: await sha256(payloadJson),
@@ -252,6 +300,7 @@ export class LocalOperationStore {
     if (typeof tenantId !== "string" || !tenantId.trim()) throw new TypeError("tenantId is required.");
     if (typeof branchId !== "string" || !branchId.trim()) throw new TypeError("branchId is required for a branch-originated customer command.");
     if (typeof actorId !== "string" || !actorId.trim()) throw new TypeError("actorId is required.");
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
     const normalized = normalizeLocalCustomer(customer);
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
@@ -261,7 +310,7 @@ export class LocalOperationStore {
       deviceId: await this.getDeviceId(actorId),
       tenantId, branchId,
       operationType: "customer.profile.created",
-      schemaVersion: 1, authorityEpoch: 0,
+      schemaVersion: 1, authorityEpoch,
       occurredAtUtc: now,
       payloadJson,
       payloadSha256: await sha256(payloadJson),
@@ -301,6 +350,7 @@ export class LocalOperationStore {
     if (!Number.isSafeInteger(initial.version) || initial.version < 1)
       throw new Error("Customer projection has no valid server-confirmed version.");
 
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
     const normalized = normalizeLocalCustomer({ ...initial, ...customer, code: initial.code });
     const baseVersion = initial.version;
     const payload = {
@@ -371,6 +421,7 @@ export class LocalOperationStore {
     if (!Number.isSafeInteger(initial.version) || initial.version < 1)
       throw new Error("Customer projection has no valid server-confirmed version.");
 
+    const authorityEpoch = await this.getAuthorityEpoch({ tenantId, branchId });
     const baseVersion = initial.version;
     const now = new Date().toISOString();
     const payloadJson = JSON.stringify({ customerId, baseVersion });
