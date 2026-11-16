@@ -170,6 +170,29 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.BadRequest, malformedHashPush.StatusCode);
 
+        foreach (var invalidPayload in new[] { "null", "[]", "42", "\\"text\\"" })
+        {
+            var invalidPayloadPush = await client.PostAsJsonAsync("/api/sync/operations", new
+            {
+                operations = new[]
+                {
+                    new
+                    {
+                        operationId = Guid.NewGuid(),
+                        deviceId,
+                        branchId = tenant.BranchId,
+                        operationType = "test.invalid-payload",
+                        schemaVersion = 1,
+                        authorityEpoch = 0,
+                        occurredAtUtc = DateTimeOffset.UtcNow,
+                        payloadJson = invalidPayload,
+                        payloadSha256 = (string?)null
+                    }
+                }
+            });
+            Assert.Equal(HttpStatusCode.BadRequest, invalidPayloadPush.StatusCode);
+        }
+
         var nullOperationPush = await client.PostAsJsonAsync("/api/sync/operations", new
         {
             operations = new object?[]
@@ -436,7 +459,7 @@ public sealed class SyncApiIntegrationTests
                     schemaVersion = 1,
                     authorityEpoch = 0,
                     occurredAtUtc = DateTimeOffset.UtcNow,
-                    payloadJson = "null",
+                    payloadJson = "{}",
                     payloadSha256 = (string?)null
                 }
             }
