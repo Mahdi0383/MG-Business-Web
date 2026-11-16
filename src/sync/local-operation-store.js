@@ -132,7 +132,7 @@ export class LocalOperationStore {
     const index = transaction.objectStore(OPERATIONS_STORE).index("byTenantStateCreatedAt");
     const range = IDBKeyRange.bound(
       [tenantId, "pending", ""],
-      [tenantId, "pending", "\\uffff"]
+      [tenantId, "pending", "\uffff"]
     );
     const rows = await requestResult(index.getAll(range, Math.max(1, Math.min(limit, 100))));
     await done;
