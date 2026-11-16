@@ -44,6 +44,10 @@ public static class SyncEndpoints
                 cursor = new SyncDeviceCursor(tenantId, request.DeviceId, actorId, request.Sequence, now);
                 db.SyncDeviceCursors.Add(cursor);
             }
+            else if (cursor.ActorId != actorId)
+            {
+                return Results.Forbid();
+            }
             else if (!cursor.Advance(actorId, request.Sequence, now))
             {
                 return Results.Ok(new { deviceId = request.DeviceId, sequence = cursor.LastAcknowledgedSequence, staleAcknowledgement = true });
@@ -59,6 +63,7 @@ public static class SyncEndpoints
                 var concurrent = await db.SyncDeviceCursors.SingleOrDefaultAsync(
                     x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
                 if (concurrent is null) throw;
+                if (concurrent.ActorId != actorId) return Results.Forbid();
                 if (!concurrent.Advance(actorId, request.Sequence, now))
                     return Results.Ok(new { deviceId = request.DeviceId, sequence = concurrent.LastAcknowledgedSequence, staleAcknowledgement = true });
                 await db.SaveChangesAsync(cancellationToken);
@@ -69,6 +74,7 @@ public static class SyncEndpoints
                 db.Entry(cursor!).State = EntityState.Detached;
                 var latest = await db.SyncDeviceCursors.SingleAsync(
                     x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
+                if (latest.ActorId != actorId) return Results.Forbid();
                 if (!latest.Advance(actorId, request.Sequence, now))
                     return Results.Ok(new { deviceId = request.DeviceId, sequence = latest.LastAcknowledgedSequence, staleAcknowledgement = true });
                 await db.SaveChangesAsync(cancellationToken);
