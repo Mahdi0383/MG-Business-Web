@@ -99,8 +99,8 @@ public static class AccountingEndpoints
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
                 return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
-            if (request.Lines is null || request.Lines.Count < 2)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["سند باید حداقل دو ردیف داشته باشد."] });
+            if (request.Lines is null || request.Lines.Count < 2 || request.Lines.Any(line => line is null))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["سند باید حداقل دو ردیف معتبر داشته باشد و ردیف خالی مجاز نیست."] });
 
             var accountIds = request.Lines.Select(x => x.AccountId).Distinct().ToArray();
             var validAccountCount = await db.Accounts.CountAsync(x =>
