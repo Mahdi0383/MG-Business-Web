@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backup_manager import create_snapshot
+from backup_manager import create_snapshot, restore_snapshot
 
 
 class BackupManagerTests(unittest.TestCase):
@@ -37,6 +37,31 @@ class BackupManagerTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(stat.S_IMODE(third.stat().st_mode), 0o600)
                 self.assertEqual(stat.S_IMODE(backup_dir.stat().st_mode), 0o700)
+
+    def test_restore_validates_snapshot_and_saves_current_database_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            backup_dir = root / "backups"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+            db.execute("INSERT INTO records(value) VALUES('before restore')")
+            db.commit()
+            db.close()
+            snapshot = create_snapshot(database, backup_dir, retention=5)
+
+            db = sqlite3.connect(database)
+            db.execute("INSERT INTO records(value) VALUES('after snapshot')")
+            db.commit()
+            db.close()
+
+            restored = restore_snapshot(snapshot, database, backup_dir)
+            self.assertEqual(restored, database.resolve())
+            db = sqlite3.connect(database)
+            values = [row[0] for row in db.execute("SELECT value FROM records ORDER BY id")]
+            self.assertEqual(values, ["before restore"])
+            db.close()
+            self.assertGreaterEqual(len(list(backup_dir.glob("mg-business-*.sqlite3"))), 2)
 
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
