@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Infrastructure.Persistence;
@@ -52,7 +53,11 @@ public static class CustomerEndpoints
             }
             catch (DbUpdateException)
             {
-                return Results.Conflict(new { message = "کد مشتری در این کسب‌وکار قبلاً استفاده شده است." });
+                return Results.Conflict(new { code = "customer_create_conflict", message = "کد مشتری در این کسب‌وکار قبلاً استفاده شده است یا ثبت با تعارض داده مواجه شد." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { code = "customer_create_provider_conflict", message = "پایگاه داده نتوانست مشتری را با اطمینان ثبت کند؛ دوباره تلاش کنید." });
             }
 
             return Results.Created($"/api/customers/{customer.Id}", ToResponse(customer));
@@ -88,6 +93,14 @@ public static class CustomerEndpoints
             catch (DbUpdateConcurrencyException)
             {
                 return Results.Conflict(new { code = "customer_version_conflict", message = "اطلاعات مشتری توسط کاربر دیگری تغییر کرده است؛ اطلاعات را دوباره دریافت کنید." });
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new { code = "customer_update_persistence_conflict", message = "ذخیره تغییرات مشتری با محدودیت یا تعارض داده مواجه شد." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { code = "customer_update_provider_conflict", message = "پایگاه داده نتوانست تغییرات مشتری را با اطمینان ثبت کند؛ وضعیت را تازه‌سازی کنید." });
             }
 
             return Results.Ok(ToResponse(customer));
