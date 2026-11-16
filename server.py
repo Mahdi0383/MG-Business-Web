@@ -379,6 +379,14 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("SELECT code,name,account_type AS accountType,normal_balance AS normalBalance FROM accounts WHERE tenant_id=? AND active=1 ORDER BY code",
                                   (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/reports/sales-by-product":
+                rows = db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
+                    SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue
+                    FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
+                    WHERE i.tenant_id=? AND o.status='paid'
+                    GROUP BY i.product_id,i.product_name ORDER BY revenue DESC LIMIT 100""",
+                    (user["tenant_id"],)).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/accounting/journal":
                 rows = db.execute("""SELECT e.id,e.entry_date AS entryDate,e.memo,e.source_type AS sourceType,
                     e.source_id AS sourceId,COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
