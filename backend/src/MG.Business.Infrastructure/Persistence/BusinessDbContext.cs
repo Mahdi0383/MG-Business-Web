@@ -236,6 +236,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Amount).HasPrecision(18, 2);
             entity.Property(x => x.Method).HasConversion<string>().HasMaxLength(24).IsRequired();
             entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            entity.Property(x => x.RequestFingerprint).HasMaxLength(64);
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.SalesOrderId });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
