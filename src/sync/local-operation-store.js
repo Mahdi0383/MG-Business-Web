@@ -157,6 +157,7 @@ export class LocalOperationStore {
       throw new TypeError("allowTenantWide must be a boolean.");
     if (typeof deviceId !== "string" || !deviceId.trim())
       throw new TypeError("deviceId is required to isolate the authenticated device outbox.");
+    if (branchId === null && !allowTenantWide) return [];
 
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
@@ -226,6 +227,7 @@ export class LocalOperationStore {
       throw new TypeError("branchId must be a non-empty string or null.");
     if (typeof allowTenantWide !== "boolean")
       throw new TypeError("allowTenantWide must be a boolean.");
+    if (branchId === null && !allowTenantWide) return 0;
     const database = await openDatabase();
     const transaction = database.transaction(OPERATIONS_STORE, "readonly");
     const done = transactionDone(transaction);
