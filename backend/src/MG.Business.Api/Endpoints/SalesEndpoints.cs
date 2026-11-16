@@ -21,12 +21,11 @@ public static class SalesEndpoints
         {
             var orders = await db.SalesOrders.AsNoTracking()
                 .Where(x => x.TenantId == tenant.TenantId)
-                .OrderByDescending(x => x.CreatedAtUtc)
                 .Take(100)
                 .Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
                     x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc))
                 .ToListAsync(cancellationToken);
-            return Results.Ok(orders);
+            return Results.Ok(orders.OrderByDescending(x => x.CreatedAtUtc));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
         group.MapPost("/orders", async (CreateSaleRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
