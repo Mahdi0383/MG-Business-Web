@@ -28,6 +28,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<DeviceEnrollmentChallenge> DeviceEnrollmentChallenges => Set<DeviceEnrollmentChallenge>();
     public DbSet<DeviceCredential> DeviceCredentials => Set<DeviceCredential>();
     public DbSet<DeviceRequestNonce> DeviceRequestNonces => Set<DeviceRequestNonce>();
+    public DbSet<DeviceAuthorityLease> DeviceAuthorityLeases => Set<DeviceAuthorityLease>();
     public DbSet<SyncDeviceCursor> SyncDeviceCursors => Set<SyncDeviceCursor>();
     public DbSet<SyncDeviceBranchCursor> SyncDeviceBranchCursors => Set<SyncDeviceBranchCursor>();
 
@@ -348,6 +349,24 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasKey(x => new { x.TenantId, x.DeviceId, x.Nonce });
             entity.Property(x => x.Nonce).HasMaxLength(36).IsRequired();
             entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.HasOne<DeviceCredential>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.DeviceId })
+                .HasPrincipalKey(x => new { x.TenantId, x.DeviceId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DeviceAuthorityLease>(entity =>
+        {
+            entity.ToTable("device_authority_leases");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ScopeKey).HasMaxLength(36).IsRequired();
+            entity.Property(x => x.Epoch).IsConcurrencyToken().IsRequired();
+            entity.Property(x => x.SignatureBase64).HasMaxLength(256).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.ScopeKey }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.DeviceId, x.ExpiresAtUtc });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<DeviceCredential>().WithMany()
                 .HasForeignKey(x => new { x.TenantId, x.DeviceId })
                 .HasPrincipalKey(x => new { x.TenantId, x.DeviceId })
