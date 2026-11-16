@@ -22,3 +22,9 @@ The current server pull endpoint exposes an append-only operation stream. Applyi
 - unknown operation types and missing version preconditions are never auto-applied.
 
 This classifier is an isolated policy primitive with unit tests. It is not yet wired to an inbound projection applier or business forms, so no incoming business operation is automatically applied by this change.
+
+## Incoming operation processor
+
+`incoming-operation-processor.js` reads a bounded ordered inbox batch, obtains the current conflict state, invokes the fail-closed classifier, and routes eligible commands through an adapter contract. The adapter's `applyAndAcknowledge` method is required to atomically commit the local projection mutation and inbox acknowledgement. Conflicts are recorded separately and are never silently discarded.
+
+The processor is infrastructure scaffolding only: no production business projection adapter is registered yet, so the current application does not automatically apply inbound sales, accounting, inventory, cafe or game-net commands. The adapter contract must be implemented against the chosen durable local database before enabling this in production.
