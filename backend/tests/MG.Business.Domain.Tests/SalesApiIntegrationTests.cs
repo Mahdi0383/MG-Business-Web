@@ -53,7 +53,8 @@ public sealed class SalesApiIntegrationTests
             sku = "COFFEE-01",
             name = "Coffee Beans",
             baseUnit = "kg",
-            tracksInventory = true
+            tracksInventory = true,
+            defaultSalePrice = 20m
         });
         var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
         Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
@@ -82,7 +83,7 @@ public sealed class SalesApiIntegrationTests
             paymentReference = "CASH-001",
             lines = new[]
             {
-                new { productId = product.Id, quantity = 2m, unitPrice = 20m, discount = 0m }
+                new { productId = product.Id, quantity = 2m, discount = 0m }
             }
         });
 
@@ -203,7 +204,7 @@ public sealed class SalesApiIntegrationTests
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
     private sealed record AccountResponse(Guid Id, string Code, string Name, string Type, bool IsActive);
     private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
-    private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, bool IsActive);
+    private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
     private sealed record SaleResponse(Guid Id, string Number, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, decimal CostOfGoodsSold, decimal GrossProfit, string Status, DateTimeOffset CreatedAtUtc);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
     private sealed record TrialBalanceResponse(TrialAccount[] Accounts, decimal TotalDebit, decimal TotalCredit, bool IsBalanced);
