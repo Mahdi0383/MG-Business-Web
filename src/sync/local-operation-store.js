@@ -333,11 +333,13 @@ export class LocalOperationStore {
     const existing = await Promise.all(acknowledgements.map(item => requestResult(readStore.get(item.operationId))));
     await readDone;
 
-    const writeTransaction = database.transaction(OPERATIONS_STORE, "readwrite");
+    const writeTransaction = database.transaction([OPERATIONS_STORE, CUSTOMERS_STORE], "readwrite");
     const writeDone = transactionDone(writeTransaction);
     const writeStore = writeTransaction.objectStore(OPERATIONS_STORE);
-    existing.forEach((operation, index) => {
-      if (!operation) return;
+    const customerStore = writeTransaction.objectStore(CUSTOMERS_STORE);
+    for (let index = 0; index < existing.length; index += 1) {
+      const operation = existing[index];
+      if (!operation) continue;
       const acknowledgement = acknowledgements[index];
       if (!Number.isSafeInteger(acknowledgement.sequence) || acknowledgement.sequence < 1)
         throw new TypeError("Server acknowledgement sequence is invalid.");
@@ -345,7 +347,23 @@ export class LocalOperationStore {
       operation.serverSequence = acknowledgement.sequence;
       operation.acknowledgedAtUtc = new Date().toISOString();
       writeStore.put(operation);
-    });
+
+      if (operation.operationType === "customer.profile.created") {
+        let payload;
+        try { payload = JSON.parse(operation.payloadJson); } catch { payload = null; }
+        if (typeof payload?.customerId === "string") {
+          const customerRequest = customerStore.get([operation.tenantId, payload.customerId]);
+          customerRequest.onsuccess = () => {
+            const customer = customerRequest.result;
+            if (!customer) return;
+            customer.syncStatus = "synced";
+            customer.serverSequence = acknowledgement.sequence;
+            customer.updatedAtUtc = new Date().toISOString();
+            customerStore.put(customer);
+          };
+        }
+      }
+    }
     await writeDone;
   }
 
