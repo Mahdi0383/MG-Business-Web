@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MG Business local-first HTTP application and SQLite API (stdlib only)."""
 from __future__ import annotations
-import hashlib, hmac, json, os, secrets, sqlite3, time
+import hashlib, hmac, json, os, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +14,8 @@ PORT = int(os.environ.get("MG_PORT", "8080"))
 SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 1024 * 1024
+LOGIN_FAILURES = {}
+LOGIN_LOCK = threading.Lock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
@@ -114,6 +116,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
         super().end_headers()
 
     def send_json(self, status, payload):
@@ -243,9 +246,20 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.create_session(db, user_id)
             if path == "/api/login":
                 username, password = str(data.get("username", "")).strip(), data.get("password", "")
+                key = (self.client_address[0], username.casefold())
+                now = time.time()
+                with LOGIN_LOCK:
+                    attempts = [stamp for stamp in LOGIN_FAILURES.get(key, []) if now - stamp < 900]
+                    LOGIN_FAILURES[key] = attempts
+                    if len(attempts) >= 8:
+                        return self.send_json(429, {"error": "تلاش‌های ورود بیش از حد است؛ ۱۵ دقیقه بعد دوباره امتحان کنید."})
                 user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
                 if not user or not isinstance(password, str) or not verify_password(password, user["password_hash"]):
+                    with LOGIN_LOCK:
+                        LOGIN_FAILURES.setdefault(key, []).append(now)
                     return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
+                with LOGIN_LOCK:
+                    LOGIN_FAILURES.pop(key, None)
                 return self.create_session(db, user["id"])
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
