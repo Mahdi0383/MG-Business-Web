@@ -22,7 +22,6 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
             entity.HasIndex(x => x.Slug).IsUnique();
-            entity.HasAlternateKey(x => new { x.Id });
         });
 
         modelBuilder.Entity<Branch>(entity =>
