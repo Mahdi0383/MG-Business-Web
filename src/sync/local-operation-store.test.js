@@ -633,3 +633,88 @@ test("caches authoritative server customers for offline access without overwriti
   const deviceId = await store.getDeviceId(actorId);
   assert.equal((await store.getPending(tenantId, 10, branchId, false, deviceId)).length, 1);
 });
+
+
+test("queues and acknowledges offline customer deactivation with a versioned local projection", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-deactivate-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId, customer: { code: "C-DEACT-1", name: "To deactivate" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+
+  const deactivated = await store.deactivateCustomer({
+    tenantId, branchId, actorId, customerId: created.id
+  });
+  assert.equal(deactivated.isActive, false);
+  assert.equal(deactivated.syncStatus, "pending");
+
+  const deviceId = await store.getDeviceId(actorId);
+  const pending = await store.getPending(tenantId, 10, branchId, false, deviceId);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].operationType, "customer.profile.deactivated");
+  assert.deepEqual(JSON.parse(pending[0].payloadJson), {
+    customerId: created.id, baseVersion: 1
+  });
+
+  await store.acknowledge([{ operationId: pending[0].operationId, sequence: 2 }]);
+  const rows = await store.getCustomers(tenantId);
+  const customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.isActive, false);
+  assert.equal(customer.version, 2);
+  assert.equal(customer.syncStatus, "synced");
+  assert.equal(customer.serverSequence, 2);
+  assert.equal((await store.getPending(tenantId, 10, branchId, false, deviceId)).length, 0);
+});
+
+test("applies a remote customer deactivation atomically and keeps stale versions blocked", async () => {
+  const store = new LocalOperationStore();
+  const tenantId = "tenant-" + crypto.randomUUID();
+  const branchId = "branch-" + crypto.randomUUID();
+  const actorId = "actor-remote-deactivate-" + crypto.randomUUID();
+  const created = await store.createCustomer({
+    tenantId, branchId, actorId, customer: { code: "C-DEACT-REMOTE", name: "Remote target" }
+  });
+  await store.acknowledge([{ operationId: created.originOperationId, sequence: 1 }]);
+
+  const makeRow = async (sequence, operationId, baseVersion) => {
+    const payloadJson = JSON.stringify({ customerId: created.id, baseVersion });
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payloadJson));
+    const payloadSha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+    return {
+      tenantId, sequence, operationId, actorId: "actor-remote",
+      deviceId: "device-remote", branchId,
+      operationType: "customer.profile.deactivated", schemaVersion: 1,
+      authorityEpoch: 0, occurredAtUtc: new Date().toISOString(),
+      receivedAtUtc: new Date().toISOString(), payloadJson, payloadSha256
+    };
+  };
+  const processor = new IncomingOperationProcessor({
+    store, adapter: store, classify: classifyIncomingOperation
+  });
+
+  const remote = await makeRow(2, "remote-deactivation-1", 1);
+  await store.storeIncomingPage(tenantId, [remote], 2, branchId);
+  const applied = await processor.processBatch(tenantId, 10, branchId, false);
+  assert.equal(applied.applied, 1);
+  let rows = await store.getCustomers(tenantId);
+  let customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.isActive, false);
+  assert.equal(customer.version, 2);
+  assert.equal(customer.lastOperationId, "remote-deactivation-1");
+
+  const stale = await makeRow(3, "remote-deactivation-stale", 1);
+  await store.storeIncomingPage(tenantId, [stale], 3, branchId);
+  const blocked = await processor.processBatch(tenantId, 10, branchId, false);
+  assert.equal(blocked.blockedByConflict, true);
+  assert.equal(blocked.applied, 0);
+  const conflicts = await store.getOpenConflicts(tenantId, branchId, false);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].reason, "customer-already-deactivated");
+  rows = await store.getCustomers(tenantId);
+  customer = rows.find(row => row.id === created.id);
+  assert.equal(customer.isActive, false);
+  assert.equal(customer.version, 2);
+});
