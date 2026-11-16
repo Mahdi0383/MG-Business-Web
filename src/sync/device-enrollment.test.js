@@ -53,6 +53,7 @@ test("refuses to sign a non-sync or missing actor request", async () => {
     method: "GET", path: "/api/customers", tenantId: "t", actorId: "a"
   }), /sync API path/);
   await assert.rejects(enrollment.ensureEnrolled({ tenantId: "t", actorId: "" }), /Tenant and actor/);
+});
 
 test("recovers a lost enrollment response with the same persisted private key", async () => {
   const actorId = "actor-recovery";
