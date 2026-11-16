@@ -324,8 +324,8 @@ def require_any_module(db, tenant_id, *module_keys):
 
 def verify_license_code(code):
     secret = os.environ.get("MG_LICENSE_SECRET")
-    if not secret:
-        raise ValueError("کلید صادرکننده لایسنس روی سرور تنظیم نشده است.")
+    if not secret or len(secret) < 32:
+        raise ValueError("کلید صادرکننده لایسنس باید حداقل ۳۲ نویسه و روی سرور تنظیم شده باشد.")
     if not isinstance(code,str) or len(code) > 4096:
         raise ValueError("کد لایسنس معتبر نیست.")
     parts = code.split(".")
@@ -333,10 +333,14 @@ def verify_license_code(code):
         raise ValueError("ساختار کد لایسنس معتبر نیست.")
     signed = (parts[0]+"."+parts[1]).encode()
     expected = base64.urlsafe_b64encode(hmac.new(secret.encode(),signed,hashlib.sha256).digest()).decode().rstrip("=")
-    if not hmac.compare_digest(expected,parts[2]):
+    try:
+        signature_ok = hmac.compare_digest(expected,parts[2])
+    except TypeError:
+        signature_ok = False
+    if not signature_ok:
         raise ValueError("امضای کد لایسنس معتبر نیست.")
     try:
-        payload = json.loads(base64.urlsafe_b64decode(parts[1]+"==="))
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
     except (ValueError, json.JSONDecodeError):
         raise ValueError("محتوای کد لایسنس معتبر نیست.")
     if not isinstance(payload,dict):
