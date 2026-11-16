@@ -376,7 +376,7 @@ export class LocalOperationStore {
           resolve(matching);
           return;
         }
-        if (cursor.value.branchId == null || cursor.value.branchId === branchId)
+        if ((allowTenantWide && cursor.value.branchId == null) || cursor.value.branchId === branchId)
           matching += 1;
         cursor.continue();
       };
@@ -417,7 +417,7 @@ export class LocalOperationStore {
           return;
         }
         const row = cursor.value;
-        if (row.branchId == null || row.branchId === branchId)
+        if ((allowTenantWide && row.branchId == null) || row.branchId === branchId)
           matching.push(row);
         cursor.continue();
       };
