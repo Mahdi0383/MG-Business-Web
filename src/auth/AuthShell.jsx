@@ -236,9 +236,19 @@ function AuthShell({ apiBaseUrl }) {
         }
 
         if (active) setSyncStatus("syncing");
-        await syncAgentRef.current.pullIncoming(tenantId);
+        let pullResult = null;
+        for (let page = 0; page < 5; page += 1) {
+          pullResult = await syncAgentRef.current.pullIncoming(tenantId);
+          if (pullResult.status !== "more-available") break;
+        }
         const result = await syncAgentRef.current.pushPending(tenantId);
-        if (active) setSyncStatus(result.status);
+        if (active) {
+          setSyncStatus(pullResult?.status === "offline" && result.status === "idle"
+            ? "offline"
+            : result.status === "synced" && pullResult?.status === "more-available"
+              ? "syncing"
+              : result.status);
+        }
       } catch {
         if (active) setSyncStatus("error");
       } finally {
