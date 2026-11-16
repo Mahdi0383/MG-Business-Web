@@ -45,7 +45,7 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, disconnectedDevices = [], tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [stockRows, setStockRows] = useState([]);
