@@ -249,7 +249,7 @@ export class LocalOperationStore {
     const lease = stored?.value;
     let valid = false;
     try {
-      const deviceId = await this.getDeviceId(actorId);
+      const deviceId = await this.getDeviceId(actorId, tenantId, branchId);
       const now = Date.now();
       const issuedAt = Date.parse(lease?.issuedAtUtc);
       const expiresAt = Date.parse(lease?.expiresAtUtc);
@@ -360,7 +360,7 @@ export class LocalOperationStore {
     const payloadJson = JSON.stringify({ customerId: id, ...normalized, baseVersion: 0 });
     const operation = {
       operationId: crypto.randomUUID(),
-      deviceId: await this.getDeviceId(actorId),
+      deviceId: await this.getDeviceId(actorId, tenantId, branchId),
       tenantId, branchId,
       operationType: "customer.profile.created",
       schemaVersion: 1, authorityEpoch,
@@ -415,7 +415,7 @@ export class LocalOperationStore {
     const payloadJson = JSON.stringify(payload);
     const operation = {
       operationId: crypto.randomUUID(),
-      deviceId: await this.getDeviceId(actorId),
+      deviceId: await this.getDeviceId(actorId, tenantId, branchId),
       tenantId, branchId,
       operationType: "customer.profile.updated",
       schemaVersion: 1, authorityEpoch,
@@ -480,7 +480,7 @@ export class LocalOperationStore {
     const payloadJson = JSON.stringify({ customerId, baseVersion });
     const operation = {
       operationId: crypto.randomUUID(),
-      deviceId: await this.getDeviceId(actorId),
+      deviceId: await this.getDeviceId(actorId, tenantId, branchId),
       tenantId, branchId,
       operationType: "customer.profile.deactivated",
       schemaVersion: 1, authorityEpoch,
