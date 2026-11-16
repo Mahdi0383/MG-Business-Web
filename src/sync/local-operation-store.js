@@ -980,6 +980,8 @@ export class LocalOperationStore {
     if (!operation || typeof operation !== "object" || !operation.payload)
       throw new TypeError("A validated incoming operation is required.");
     const payload = operation.payload;
+    if (operation.operationType === "inventory.stock.movement.created")
+      return this.applyInventoryAndAcknowledge({ tenantId, sequence, operation, payload });
     const isCreate = operation.operationType === "customer.profile.created";
     const isUpdate = operation.operationType === "customer.profile.updated";
     const isDeactivate = operation.operationType === "customer.profile.deactivated";
@@ -1250,6 +1252,132 @@ export class LocalOperationStore {
     });
     await done;
     return matching;
+  }
+
+  async applyInventoryAndAcknowledge({ tenantId, sequence, operation, payload }) {
+    if (typeof operation.branchId !== "string" || !operation.branchId.trim())
+      throw new TypeError("Inventory journal operations must include a branch.");
+    if (typeof payload.productId !== "string" || !payload.productId.trim()
+      || !Number.isInteger(Number(payload.type)) || Number(payload.type) < 1 || Number(payload.type) > 7
+      || !Number.isFinite(Number(payload.quantity)) || Number(payload.quantity) <= 0
+      || !Number.isFinite(Number(payload.baseQuantityOnHand)) || Number(payload.baseQuantityOnHand) < 0
+      || !Number.isFinite(Number(payload.baseInventoryValue)) || Number(payload.baseInventoryValue) < 0)
+      throw new TypeError("Incoming inventory movement payload is invalid.");
+    const type = Number(payload.type);
+    const inbound = [1, 5, 6].includes(type);
+    if (inbound && (!Number.isFinite(Number(payload.unitCost)) || Number(payload.unitCost) < 0))
+      throw new TypeError("Incoming inventory receipt requires a valid unit cost.");
+
+    const database = await openDatabase();
+    const transaction = database.transaction(
+      [INBOX_STORE, INVENTORY_BASELINES_STORE, STOCK_MOVEMENTS_STORE, OPERATIONS_STORE],
+      "readwrite"
+    );
+    const done = transactionDone(transaction);
+    const inboxStore = transaction.objectStore(INBOX_STORE);
+    const baselineStore = transaction.objectStore(INVENTORY_BASELINES_STORE);
+    const stockMovementStore = transaction.objectStore(STOCK_MOVEMENTS_STORE);
+    const operationsStore = transaction.objectStore(OPERATIONS_STORE);
+    const inboxRequest = inboxStore.get([tenantId, sequence]);
+    const baselineRequest = baselineStore.get([tenantId, operation.branchId, payload.productId]);
+    const localMovementRequest = stockMovementStore.get([
+      tenantId, operation.branchId, operation.operationId
+    ]);
+    const localOperationRequest = operationsStore.get(operation.operationId);
+    let inboxRow;
+    let baseline;
+    let localMovement;
+    let localOperation;
+    let ready = 0;
+    let integrityError = null;
+    const commit = () => {
+      if (++ready !== 4) return;
+      if (!inboxRow) {
+        integrityError = new Error("Incoming inventory inbox row disappeared before projection commit.");
+        transaction.abort();
+        return;
+      }
+      if (!baseline) {
+        integrityError = new Error("Inventory baseline is not cached for this branch; refresh stock before applying inbound movements.");
+        transaction.abort();
+        return;
+      }
+      const baseQuantity = Number(payload.baseQuantityOnHand);
+      const baseValue = roundInventoryValue(Number(payload.baseInventoryValue));
+      const now = new Date().toISOString();
+
+      if (localMovement && localMovement.state === "acknowledged") {
+        // The originating device already advanced its baseline when the push was
+        // acknowledged. Its journal echo only advances the inbox cursor.
+      } else {
+        if (Number(baseline.quantityOnHand) !== baseQuantity
+          || Number(baseline.inventoryValue) !== baseValue) {
+          integrityError = new Error("Inventory baseline changed before inbound movement projection; operator reconciliation is required.");
+          transaction.abort();
+          return;
+        }
+
+        const balance = {
+          quantity: Number(baseline.quantityOnHand),
+          value: Number(baseline.rawInventoryValue ?? baseline.inventoryValue)
+        };
+        const effectiveUnitCost = inbound
+          ? Number(payload.unitCost)
+          : (baseQuantity === 0 ? 0 : roundInventoryAverage(baseValue / baseQuantity));
+        applyLocalStockMovement(balance, {
+          type, quantity: Number(payload.quantity), unitCost: effectiveUnitCost
+        });
+        const resultInventoryValue = roundInventoryValue(balance.value);
+
+        if (localMovement) {
+          localMovement.state = "acknowledged";
+          localMovement.serverSequence = sequence;
+          localMovement.acknowledgedAtUtc = now;
+          localMovement.resultQuantityOnHand = balance.quantity;
+          localMovement.resultInventoryValue = resultInventoryValue;
+          localMovement.resultRawInventoryValue = balance.value;
+          stockMovementStore.put(localMovement);
+        } else {
+          stockMovementStore.add({
+            tenantId, branchId: operation.branchId, productId: payload.productId,
+            operationId: operation.operationId, type, quantity: Number(payload.quantity),
+            unitCost: effectiveUnitCost, reference: payload.reference || null,
+            baseQuantityOnHand: baseQuantity, baseInventoryValue: baseValue,
+            resultQuantityOnHand: balance.quantity, resultInventoryValue,
+            resultRawInventoryValue: balance.value,
+            state: "acknowledged", createdAtUtc: operation.occurredAtUtc || now,
+            acknowledgedAtUtc: now, serverSequence: sequence
+          });
+        }
+
+        baseline.quantityOnHand = balance.quantity;
+        baseline.inventoryValue = resultInventoryValue;
+        baseline.rawInventoryValue = balance.value;
+        baseline.averageUnitCost = balance.quantity === 0
+          ? 0 : roundInventoryAverage(resultInventoryValue / balance.quantity);
+        baseline.cachedAtUtc = now;
+        baselineStore.put(baseline);
+      }
+
+      if (localOperation && localOperation.state !== "acknowledged") {
+        localOperation.state = "acknowledged";
+        localOperation.serverSequence = sequence;
+        localOperation.acknowledgedAtUtc = now;
+        operationsStore.put(localOperation);
+      }
+      inboxRow.applied = true;
+      inboxRow.appliedIndex = 1;
+      inboxRow.appliedAtUtc = now;
+      inboxStore.put(inboxRow);
+    };
+    inboxRequest.onsuccess = () => { inboxRow = inboxRequest.result; commit(); };
+    baselineRequest.onsuccess = () => { baseline = baselineRequest.result; commit(); };
+    localMovementRequest.onsuccess = () => { localMovement = localMovementRequest.result; commit(); };
+    localOperationRequest.onsuccess = () => { localOperation = localOperationRequest.result; commit(); };
+    try { await done; }
+    catch (error) { if (integrityError) throw integrityError; throw error; }
+    if (typeof window !== "undefined")
+      window.dispatchEvent(new Event("mg-inventory-sync-updated"));
   }
 
   async storeIncomingPage(tenantId, operations, nextSequence, branchId = null) {
