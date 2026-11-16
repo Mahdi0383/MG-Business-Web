@@ -259,6 +259,8 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           throw new Error("مبلغ پرداختی باید بین صفر و مبلغ قابل پرداخت باشد.");
         if (amountPaid < latestQuote.totalAmount && !form.customerId)
           throw new Error("برای تسویه ناقص یا نسیه، سانس باید به نام مشتری ثبت شده باشد.");
+        if (amountPaid > 0 && !form.paymentAccountId)
+          throw new Error("حساب دریافت وجه را انتخاب کنید.");
         if (amountPaid < latestQuote.totalAmount && !form.receivableAccountId)
           throw new Error("حساب دریافتنی را انتخاب کنید.");
         await client.post(`/api/gamenet/sessions/${form.sessionId}/close`, {
@@ -510,7 +512,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <label>مبلغ پرداختی (خالی = تسویه کامل)<input type="number" min="0" step="0.01" value={form.amountPaid} onChange={e => setForm({ ...form, amountPaid: e.target.value })} /></label>
           <label>روش پرداخت<select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}><option value="1">نقدی</option><option value="2">کارت‌خوان</option><option value="3">انتقال بانکی</option><option value="4">کیف پول</option></select></label>
           <label>حساب درآمد<select required value={form.revenueAccountId} onChange={e => setForm({ ...form, revenueAccountId: e.target.value })}>{accounts.filter(account => account.type === "Revenue").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
-          <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{accounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          {(form.amountPaid === "" || Number(form.amountPaid) > 0) && <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{accounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>}
           <label>حساب دریافتنی (برای تسویه ناقص)<select value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}><option value="">انتخاب کنید</option>{accounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
           <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
         </>}
