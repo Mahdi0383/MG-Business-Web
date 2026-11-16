@@ -24,6 +24,18 @@ public sealed class DeviceCredential
         LastRotatedAtUtc = CreatedAtUtc;
     }
 
+    public void RotateCredential(string credentialSha256, DateTimeOffset nowUtc)
+    {
+        if (RevokedAtUtc is not null)
+            throw new InvalidOperationException("A revoked device credential cannot be rotated.");
+        if (string.IsNullOrWhiteSpace(credentialSha256) || credentialSha256.Length != 64
+            || !credentialSha256.All(Uri.IsHexDigit))
+            throw new ArgumentException("A SHA-256 credential digest is required.", nameof(credentialSha256));
+        CredentialSha256 = credentialSha256.ToLowerInvariant();
+        KeyVersion = checked(KeyVersion + 1);
+        LastRotatedAtUtc = nowUtc.ToUniversalTime();
+    }
+
     public void Revoke(DateTimeOffset nowUtc)
     {
         if (RevokedAtUtc is null)
