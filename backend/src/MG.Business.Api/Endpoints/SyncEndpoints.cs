@@ -23,7 +23,7 @@ public static class SyncEndpoints
             BusinessDbContext db,
             CancellationToken cancellationToken) =>
         {
-            if (tenant.TenantId is not Guid tenantId)
+            if (tenant.TenantId is not Guid tenantId || tenant.UserId is not Guid actorId)
                 return Results.Forbid();
             if (request.Operations is null || request.Operations.Count is < 1 or > MaxBatchSize)
                 return Results.ValidationProblem(new Dictionary<string, string[]>
@@ -88,19 +88,25 @@ public static class SyncEndpoints
                 .Where(x => x.TenantId == tenantId && operationIds.Contains(x.OperationId))
                 .ToDictionaryAsync(x => x.OperationId, cancellationToken);
 
-            var accepted = new List<SyncOperationAck>();
+            var acknowledgements = new Dictionary<Guid, SyncOperationAck>();
             var inserted = new List<SyncOperation>();
             foreach (var item in prepared)
             {
                 if (existing.TryGetValue(item.Request.OperationId, out var prior))
                 {
-                    if (!string.Equals(prior.PayloadSha256, item.Hash, StringComparison.Ordinal))
+                    if (!string.Equals(prior.PayloadSha256, item.Hash, StringComparison.Ordinal)
+                        || prior.DeviceId != item.Request.DeviceId
+                        || prior.BranchId != item.Request.BranchId
+                        || prior.OperationType != item.Request.OperationType
+                        || prior.SchemaVersion != item.Request.SchemaVersion
+                        || prior.AuthorityEpoch != item.Request.AuthorityEpoch
+                        || prior.OccurredAtUtc != item.Request.OccurredAtUtc)
                         return Results.Conflict(new { operationId = item.Request.OperationId, message = "Operation ID was previously used with a different payload." });
-                    accepted.Add(new SyncOperationAck(prior.OperationId, prior.Sequence, true));
+                    acknowledgements.Add(prior.OperationId, new SyncOperationAck(prior.OperationId, prior.Sequence, true));
                     continue;
                 }
 
-                var operation = new SyncOperation(tenantId, item.Request.DeviceId,
+                var operation = new SyncOperation(tenantId, actorId, item.Request.DeviceId,
                     item.Request.BranchId, item.Request.OperationId, item.Request.OperationType,
                     item.Request.SchemaVersion, item.Request.AuthorityEpoch, item.Request.OccurredAtUtc,
                     item.Request.PayloadJson, item.Hash);
@@ -117,7 +123,9 @@ public static class SyncEndpoints
                 return Results.Conflict(new { message = "A concurrent sync request used an operation ID. Retry the batch; the endpoint is idempotent." });
             }
 
-            accepted.AddRange(inserted.Select(x => new SyncOperationAck(x.OperationId, x.Sequence, false)));
+            foreach (var operation in inserted)
+                acknowledgements.Add(operation.OperationId, new SyncOperationAck(operation.OperationId, operation.Sequence, false));
+            var accepted = prepared.Select(x => acknowledgements[x.Request.OperationId]).ToArray();
             return Results.Accepted("/api/sync/operations", new { accepted });
         });
 
