@@ -147,12 +147,33 @@ public static class DeviceEnrollmentEndpoints
 
             var existing = await db.DeviceCredentials.SingleOrDefaultAsync(
                 x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
-            if (existing is not null)
-                return Results.Conflict(new { code = "DEVICE_CREDENTIAL_EXISTS", message = "This device ID has already been enrolled. Use credential rotation or a new device identity." });
+            if (existing is not null
+                && (!existing.IsActive || existing.ActorId != actorId
+                    || !string.Equals(existing.PublicKeySpkiBase64, request.PublicKeySpkiBase64, StringComparison.Ordinal)))
+                return Results.Conflict(new { code = "DEVICE_CREDENTIAL_EXISTS", message = "This device ID belongs to another key or actor, or has been revoked." });
 
+            // A client persists its non-extractable key before completing enrollment.
+            // If the response is lost after commit, the same proof-of-possession key
+            // can safely rotate the one-time credential and recover without lockout.
             var credentialBytes = RandomNumberGenerator.GetBytes(32);
             var credential = Convert.ToBase64String(credentialBytes);
             var credentialDigest = Convert.ToHexString(SHA256.HashData(credentialBytes)).ToLowerInvariant();
+            if (existing is not null)
+            {
+                existing.RotateCredential(credentialDigest, now);
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return Results.Ok(new
+                {
+                    deviceId = request.DeviceId,
+                    keyVersion = existing.KeyVersion,
+                    credential,
+                    enrolledAtUtc = existing.CreatedAtUtc,
+                    credentialStorage = "one-time-return; server-stores-sha256-digest",
+                    recovered = true
+                });
+            }
+
             db.DeviceCredentials.Add(new DeviceCredential(
                 tenantId, actorId, null, request.DeviceId, request.PublicKeySpkiBase64,
                 credentialDigest, now));
@@ -165,7 +186,8 @@ public static class DeviceEnrollmentEndpoints
                 keyVersion = 1,
                 credential,
                 enrolledAtUtc = now,
-                credentialStorage = "one-time-return; server-stores-sha256-digest"
+                credentialStorage = "one-time-return; server-stores-sha256-digest",
+                recovered = false
             });
         });
 
