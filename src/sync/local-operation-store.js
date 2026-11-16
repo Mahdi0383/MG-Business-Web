@@ -1,7 +1,8 @@
 const DATABASE_NAME = "mg-business-local";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const OPERATIONS_STORE = "operations";
 const META_STORE = "metadata";
+const INBOX_STORE = "inbox";
 
 let databasePromise;
 
@@ -21,6 +22,10 @@ function openDatabase() {
         }
         if (!database.objectStoreNames.contains(META_STORE))
           database.createObjectStore(META_STORE, { keyPath: "key" });
+        if (!database.objectStoreNames.contains(INBOX_STORE)) {
+          const inbox = database.createObjectStore(INBOX_STORE, { keyPath: ["tenantId", "sequence"] });
+          inbox.createIndex("byTenantApplied", ["tenantId", "appliedAtUtc"]);
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("Could not open local MG database."));
