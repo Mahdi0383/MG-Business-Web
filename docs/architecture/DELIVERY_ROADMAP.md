@@ -28,6 +28,7 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [ ] Local durable database and operation journal on every supported client.
 - [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation only; not yet applied to business domain projections).
 - [x] Per-device, per-branch server acknowledgement watermarks; tenant-wide manager acknowledgement remains separately scoped.
+- [x] Atomic IndexedDB customer creation: local customer projection and branch-originated outbox command commit in one transaction; server replay/reconciliation remains pending.
 - [ ] Transactional local business command handlers, incoming operation application and per-domain conflict resolution.
 - [x] Revalidate persisted inbox payload SHA-256 immediately before replay; missing, malformed or tampered hashes fail closed.
 - [x] Enforce branch/tenant/manager visibility in local inbox reads and processing, including unassigned tenant-wide context.
@@ -77,6 +78,7 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 - Corrected tenant-wide inbox reads for unassigned manager context so branch-scoped rows are not exposed.
 - Corrected per-device backlog telemetry to count only journal rows visible to that device's active membership and branch.
 - Replaced the misleading single per-device acknowledgement watermark with durable branch-specific cursors; switching branches no longer suppresses another branch's older pending operations.
+- Added the first local business projection store for customers with validated input and an atomic projection-plus-outbox write; this does not yet enable offline customer reconciliation on the server.
 - Added a regression integration test that acknowledges a later operation in Branch A, switches the same device to Branch B, and verifies Branch B's earlier operation remains pending.
 - Hardened sales settlement validation so overpayments and partial payments without a customer return validation errors rather than surfacing domain exceptions as server errors.
 - Added regression tests for the above. This remains transport/security hardening: no claim is made that business projections are offline-wired.
