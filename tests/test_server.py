@@ -531,6 +531,12 @@ class ApiIntegrationTests(unittest.TestCase):
             "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
         }, token)
         self.assertEqual(status,201)
+        status, retry_reservation = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-01","deviceId":"pc-free","customerId":"customer-1",
+            "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
+        }, token)
+        self.assertEqual(status,200)
+        self.assertTrue(retry_reservation["duplicate"])
         status, conflict = self.request("POST", "/api/gamenet/reservations", {
             "id":"reservation-02","deviceId":"pc-free","customerId":"customer-1",
             "startsAt":start_at,"endsAt":end_at,"playersCount":1
