@@ -476,6 +476,7 @@ public sealed class SalesApiIntegrationTests
         Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
         var product = await productResponse.Content.ReadFromJsonAsync<ProductResponse>();
 
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "overdraw-receipt-01");
         using var receipt = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product!.Id,
@@ -486,6 +487,8 @@ public sealed class SalesApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Created, receipt.StatusCode);
 
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Add("Idempotency-Key", "overdraw-issue-01");
         using var overdraw = await client.PostAsJsonAsync("/api/inventory/movements", new
         {
             productId = product.Id,
