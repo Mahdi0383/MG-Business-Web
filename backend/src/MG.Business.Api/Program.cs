@@ -172,6 +172,7 @@ app.MapBranchEndpoints();
 app.MapMembershipEndpoints();
 app.MapSyncEndpoints();
 app.MapDeviceEnrollmentEndpoints();
+app.MapDeviceAuthorityEndpoints();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = "mg-business-api" }))
    .WithName("Liveness");
