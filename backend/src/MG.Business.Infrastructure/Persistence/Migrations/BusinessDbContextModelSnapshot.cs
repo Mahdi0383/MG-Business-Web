@@ -1228,6 +1228,42 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                 {
                     b.Navigation("Lines");
                 });
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceBranchCursor", b =>
+                {
+                    b.Property<Guid>("TenantId").HasColumnType("uuid");
+                    b.Property<Guid>("DeviceId").HasColumnType("uuid");
+                    b.Property<Guid>("BranchId").HasColumnType("uuid");
+                    b.Property<Guid>("ActorId").HasColumnType("uuid");
+                    b.Property<long>("LastAcknowledgedSequence").IsConcurrencyToken().HasColumnType("bigint");
+                    b.Property<DateTimeOffset>("UpdatedAtUtc").HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TenantId", "DeviceId", "BranchId");
+                    b.HasIndex("ActorId");
+                    b.HasIndex("TenantId", "BranchId", "LastAcknowledgedSequence");
+                    b.ToTable("sync_device_branch_cursors", (string)null);
+                });
+
+            modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceBranchCursor", b =>
+                {
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MG.Business.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("MG.Business.Domain.Entities.SyncDeviceCursor", b =>
                 {
                     b.Property<Guid>("TenantId").HasColumnType("uuid");
