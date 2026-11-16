@@ -88,6 +88,14 @@ public static class CafeEndpoints
             {
                 return Results.Conflict(new { message = exception.Message });
             }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Results.Conflict(new { message = "وضعیت تیکت هم‌زمان توسط کاربر دیگری تغییر کرده است؛ تیکت را دوباره بارگذاری کنید." });
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new { message = "ذخیره وضعیت تیکت با تعارض داده‌ها مواجه شد؛ تیکت را دوباره بررسی کنید." });
+            }
 
             return Results.Ok(ToResponse(ticket));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(KitchenRoles)));
