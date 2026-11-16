@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using MG.Business.Api.Endpoints;
 using MG.Business.Domain.Entities;
 using MG.Business.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -102,7 +103,7 @@ public sealed class SyncApiIntegrationTests
 
         var customerResponse = await client.GetAsync($"/api/customers/{customerId}");
         Assert.Equal(HttpStatusCode.OK, customerResponse.StatusCode);
-        var customer = await customerResponse.Content.ReadFromJsonAsync<CustomerResponse>();
+        var customer = await customerResponse.Content.ReadFromJsonAsync<CustomerEndpoints.CustomerResponse>();
         Assert.NotNull(customer);
         Assert.Equal(customerId, customer!.Id);
         Assert.Equal("C-LOCAL-001", customer.Code);
