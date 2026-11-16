@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("MG_DATA_DIR", ROOT / "data")).resolve()
+DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
 DB_PATH = Path(os.environ.get("MG_DB_PATH", DATA_DIR / "mg-business.sqlite3")).resolve()
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
@@ -138,6 +138,9 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if path == "/api/health":
                 return self.send_json(200, {"ok": True, "service": "mg-business", "database": "sqlite"})
+            if path == "/api/setup-status":
+                configured = db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+                return self.send_json(200, {"configured": configured})
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
             if path == "/api/me":
@@ -149,6 +152,28 @@ class Handler(SimpleHTTPRequestHandler):
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
+        finally: db.close()
+
+    def do_DELETE(self):
+        path = self.route()
+        db = connect()
+        try:
+            user = self.authenticate(db)
+            if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if not path.startswith("/api/transactions/"):
+                return self.send_json(404, {"error": "مسیر API پیدا نشد."})
+            tx_id = path.rsplit("/", 1)[-1]
+            if user["role"] not in ("owner", "manager"):
+                return self.send_json(403, {"error": "فقط مدیر می‌تواند تراکنش را حذف کند."})
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id FROM transactions WHERE id=? AND tenant_id=?", (tx_id,user["tenant_id"])).fetchone()
+            if not row:
+                db.rollback()
+                return self.send_json(404, {"error": "تراکنش پیدا نشد."})
+            db.execute("DELETE FROM transactions WHERE id=? AND tenant_id=?", (tx_id,user["tenant_id"]))
+            audit(db,user["tenant_id"],user["id"],"transaction.deleted","transaction",tx_id)
+            db.commit()
+            return self.send_json(200, {"ok": True})
         finally: db.close()
 
     def do_POST(self):
