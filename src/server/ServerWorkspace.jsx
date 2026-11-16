@@ -165,6 +165,14 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => {
+    const refreshCustomerProjection = () => {
+      if (page === "customers" || page === "dashboard") loadData();
+    };
+    window.addEventListener("mg-customer-sync-updated", refreshCustomerProjection);
+    return () => window.removeEventListener("mg-customer-sync-updated", refreshCustomerProjection);
+  }, [page, loadData]);
+
   const openCreate = type => {
     const initial = type === "product"
       ? { sku: "", name: "", baseUnit: "عدد", tracksInventory: true, defaultSalePrice: "" }
