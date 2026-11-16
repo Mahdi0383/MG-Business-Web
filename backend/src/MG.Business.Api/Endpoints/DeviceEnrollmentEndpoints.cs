@@ -148,7 +148,7 @@ public static class DeviceEnrollmentEndpoints
             var existing = await db.DeviceCredentials.SingleOrDefaultAsync(
                 x => x.TenantId == tenantId && x.DeviceId == request.DeviceId, cancellationToken);
             if (existing is not null
-                && (!existing.IsActive || existing.ActorId != actorId
+                && (!existing.IsActive || existing.ActorId != actorId || existing.BranchId != tenant.BranchId
                     || !string.Equals(existing.PublicKeySpkiBase64, request.PublicKeySpkiBase64, StringComparison.Ordinal)))
                 return Results.Conflict(new { code = "DEVICE_CREDENTIAL_EXISTS", message = "This device ID belongs to another key or actor, or has been revoked." });
 
@@ -175,7 +175,7 @@ public static class DeviceEnrollmentEndpoints
             }
 
             db.DeviceCredentials.Add(new DeviceCredential(
-                tenantId, actorId, null, request.DeviceId, request.PublicKeySpkiBase64,
+                tenantId, actorId, tenant.BranchId, request.DeviceId, request.PublicKeySpkiBase64,
                 credentialDigest, now));
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
