@@ -250,6 +250,28 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           name: form.name.trim(),
           type: Number(form.type)
         });
+      } else if (modal === "gameStart") {
+        await client.post("/api/gamenet/sessions", {
+          deviceId: form.deviceId,
+          customerId: form.customerId || null
+        });
+      } else if (modal === "gameClose") {
+        const latestQuote = await client.get(`/api/gamenet/sessions/${form.sessionId}/quote`);
+        const amountPaid = form.amountPaid === "" ? latestQuote.totalAmount : Number(form.amountPaid);
+        if (amountPaid < 0 || amountPaid > latestQuote.totalAmount)
+          throw new Error("مبلغ پرداختی باید بین صفر و مبلغ قابل پرداخت باشد.");
+        if (amountPaid < latestQuote.totalAmount && !form.customerId)
+          throw new Error("برای تسویه ناقص یا نسیه، سانس باید به نام مشتری ثبت شده باشد.");
+        if (amountPaid < latestQuote.totalAmount && !form.receivableAccountId)
+          throw new Error("حساب دریافتنی را انتخاب کنید.");
+        await client.post(`/api/gamenet/sessions/${form.sessionId}/close`, {
+          amountPaid,
+          paymentMethod: amountPaid === 0 ? 5 : Number(form.paymentMethod || 1),
+          revenueAccountId: form.revenueAccountId,
+          paymentAccountId: amountPaid > 0 ? form.paymentAccountId : null,
+          receivableAccountId: amountPaid < latestQuote.totalAmount ? form.receivableAccountId : null,
+          paymentReference: form.paymentReference.trim() || null
+        });
       } else if (modal === "sale") {
         const lines = form.lines.filter(line => line.productId).map(line => ({
           productId: line.productId,
@@ -301,14 +323,49 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     }
   };
 
-  const startGameSession = async deviceId => {
+  const openStartGame = async deviceId => {
     setSaving(true);
     setError("");
     try {
-      await client.post("/api/gamenet/sessions", { deviceId, customerId: null });
-      await loadData();
+      const customerRows = await client.get("/api/customers");
+      setCustomers(customerRows || []);
+      setForm({ deviceId, customerId: "" });
+      setModal("gameStart");
     } catch (startError) {
       setError(formatApiError(startError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openCloseGame = async session => {
+    setSaving(true);
+    setError("");
+    try {
+      const [quote, settlementAccounts] = await Promise.all([
+        client.get(`/api/gamenet/sessions/${session.id}/quote`),
+        client.get("/api/gamenet/settlement-accounts")
+      ]);
+      const assets = settlementAccounts.filter(account => account.type === "Asset");
+      const revenues = settlementAccounts.filter(account => account.type === "Revenue");
+      const revenue = revenues.find(account => account.code === "4000") || revenues[0];
+      const cash = assets.find(account => account.code === "1000") || assets[0];
+      const receivable = assets.find(account => account.code === "1100") || assets[0];
+      if (!revenue || !cash) throw new Error("حساب درآمد و حساب دریافت وجه تعریف نشده است. ابتدا سرفصل‌های پایه را در حسابداری ایجاد کنید.");
+      setForm({
+        sessionId: session.id,
+        customerId: session.customerId || "",
+        quote,
+        amountPaid: "",
+        paymentMethod: "1",
+        revenueAccountId: revenue.id,
+        paymentAccountId: cash.id,
+        receivableAccountId: receivable?.id || "",
+        paymentReference: ""
+      });
+      setModal("gameClose");
+    } catch (closeError) {
+      setError(formatApiError(closeError));
     } finally {
       setSaving(false);
     }
@@ -393,10 +450,9 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         {page === "gamenet" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>دستگاه‌ها و سانس‌های فعال</h2><p>{count(activeSessions.length)} سانس در حال اجرا</p></div><button className="mg-secondary-btn" onClick={loadData}>↻ بروزرسانی</button></div>
           <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>دستگاه</th><th>نرخ ساعتی</th><th>بازه محاسبه</th><th>وضعیت</th><th>عملیات</th></tr></thead>
-            <tbody>{devices.map(device => <tr key={device.id}><td>{device.code}</td><td>{device.name}</td><td>{money(device.hourlyRate)}</td><td>{count(device.billingIntervalMinutes)} دقیقه</td><td>{device.hasActiveSession ? "در حال استفاده" : "آزاد"}</td><td>{canStartGame && !device.hasActiveSession && <button className="mg-mini-btn" disabled={saving} onClick={() => startGameSession(device.id)}>شروع سانس</button>}</td></tr>)}</tbody>
+            <tbody>{devices.map(device => <tr key={device.id}><td>{device.code}</td><td>{device.name}</td><td>{money(device.hourlyRate)}</td><td>{count(device.billingIntervalMinutes)} دقیقه</td><td>{device.hasActiveSession ? "در حال استفاده" : "آزاد"}</td><td>{canStartGame && !device.hasActiveSession && <button className="mg-mini-btn" disabled={saving} onClick={() => openStartGame(device.id)}>شروع سانس</button>}</td></tr>)}</tbody>
           </table>{!devices.length && <div className="mg-server-empty">دستگاهی برای این شعبه ثبت نشده است.</div>}</div>
-          <div className="mg-server-active-sessions"><h3>سانس‌های در حال اجرا</h3>{activeSessions.map(session => <div key={session.id}><b>{session.deviceName}</b><span>شروع: {dateTime(session.startedAtUtc)}</span><span>نرخ: {money(session.hourlyRate)} / ساعت</span></div>)}{!activeSessions.length && <p>در حال حاضر سانس فعالی وجود ندارد.</p>}</div>
-          <div className="mg-server-note">شروع سانس به API متصل است. بستن سانس همراه با ثبت پرداخت و سند مالی در گام بعدی رابط کاربری تکمیل می‌شود.</div>
+          <div className="mg-server-active-sessions"><h3>سانس‌های در حال اجرا</h3>{activeSessions.map(session => <div key={session.id}><b>{session.deviceName}</b><span>شروع: {dateTime(session.startedAtUtc)}</span><span>نرخ: {money(session.hourlyRate)} / ساعت</span>{canStartGame && <button className="mg-mini-btn" disabled={saving} onClick={() => openCloseGame(session)}>بستن سانس و تسویه</button>}</div>)}{!activeSessions.length && <p>در حال حاضر سانس فعالی وجود ندارد.</p>}</div>
         </section>}
       </section>
       <footer className="mg-server-footer">MG BUSINESS · داده‌های زنده · {tenant.name} / {branch.name}</footer>
@@ -404,7 +460,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
 
     {modal && <div className="mg-server-overlay" onMouseDown={event => event.target === event.currentTarget && setModal("")}>
       <form className="mg-server-modal" onSubmit={save}>
-        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "account" ? "ثبت حساب جدید" : "ثبت فاکتور فروش"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
+        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
 
         {modal === "product" && <>
           <label>کد کالا<input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></label>
@@ -426,6 +482,26 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <label>کد حساب<input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
           <label>عنوان حساب<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
           <label>نوع حساب<select required value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="1">دارایی</option><option value="2">بدهی</option><option value="3">حقوق مالکانه</option><option value="4">درآمد</option><option value="5">هزینه</option></select></label>
+        </>}
+
+        {modal === "gameStart" && <>
+          <p className="mg-server-modal-hint">دستگاه انتخاب‌شده آماده شروع سانس است. اتصال به مشتری اختیاری است اما برای تسویه نسیه بعداً الزامی خواهد بود.</p>
+          <label>مشتری<select value={form.customerId} onChange={e => setForm({ ...form, customerId: e.target.value })}><option value="">سانس آزاد / بدون مشتری</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name} — {customer.code}</option>)}</select></label>
+        </>}
+
+        {modal === "gameClose" && <>
+          <div className="mg-game-quote">
+            <span>زمان محاسبه: {dateTime(form.quote?.quotedAtUtc)}</span>
+            <b>{count(form.quote?.billedMinutes)} دقیقه</b>
+            <strong>{money(form.quote?.totalAmount)}</strong>
+          </div>
+          <p className="mg-server-modal-hint">مبلغ خالی یعنی تسویه کامل؛ پیش از ثبت، مبلغ بر اساس زمان واقعی سرور دوباره محاسبه می‌شود.</p>
+          <label>مبلغ پرداختی (خالی = تسویه کامل)<input type="number" min="0" step="0.01" value={form.amountPaid} onChange={e => setForm({ ...form, amountPaid: e.target.value })} /></label>
+          <label>روش پرداخت<select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}><option value="1">نقدی</option><option value="2">کارت‌خوان</option><option value="3">انتقال بانکی</option><option value="4">کیف پول</option></select></label>
+          <label>حساب درآمد<select required value={form.revenueAccountId} onChange={e => setForm({ ...form, revenueAccountId: e.target.value })}>{accounts.filter(account => account.type === "Revenue").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{accounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>حساب دریافتنی (برای تسویه ناقص)<select value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}><option value="">انتخاب کنید</option>{accounts.filter(account => account.type === "Asset").map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
         </>}
 
         {modal === "sale" && <>
@@ -452,7 +528,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
         </>}
 
-        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : "ذخیره در سرور"}</button></div>
+        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
       </form>
     </div>}
   </div>;
