@@ -90,6 +90,9 @@ class ApiIntegrationTests(unittest.TestCase):
                 db.commit()
             finally:
                 db.close()
+            # Keep the process-wide public-order rate limiter isolated between tests.
+            with server.LOGIN_LOCK:
+                server.PUBLIC_ORDER_FAILURES.pop("127.0.0.1", None)
 
     def test_setup_auth_transaction_audit_and_isolation(self):
         status, result = self.request("GET", "/api/setup-status")
