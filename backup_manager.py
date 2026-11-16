@@ -69,6 +69,17 @@ def create_snapshot(db_path: str | Path, backup_dir: str | Path, retention: int 
 
 
 
+def _validate_mg_database(connection: sqlite3.Connection) -> None:
+    integrity = connection.execute("PRAGMA integrity_check").fetchone()
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    tables = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    required = {"schema_migrations", "tenants", "users"}
+    if not integrity or integrity[0] != "ok" or violations or not required.issubset(tables):
+        raise sqlite3.DatabaseError("Selected file is not a valid MG Business database snapshot.")
+
+
 def restore_snapshot(snapshot_path: str | Path, db_path: str | Path, safety_backup_dir: str | Path | None = None) -> Path:
     snapshot = Path(snapshot_path).expanduser().resolve()
     target = Path(db_path).expanduser().resolve()
@@ -79,10 +90,7 @@ def restore_snapshot(snapshot_path: str | Path, db_path: str | Path, safety_back
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     check = sqlite3.connect(str(snapshot), timeout=30)
     try:
-        integrity = check.execute("PRAGMA integrity_check").fetchone()
-        violations = check.execute("PRAGMA foreign_key_check").fetchall()
-        if not integrity or integrity[0] != "ok" or violations:
-            raise sqlite3.DatabaseError("Selected snapshot failed database integrity validation.")
+        _validate_mg_database(check)
     finally:
         check.close()
 
@@ -96,10 +104,7 @@ def restore_snapshot(snapshot_path: str | Path, db_path: str | Path, safety_back
         source = sqlite3.connect(str(snapshot), timeout=30)
         destination = sqlite3.connect(str(temp_path), timeout=30)
         source.backup(destination, pages=256, sleep=0.05)
-        integrity = destination.execute("PRAGMA integrity_check").fetchone()
-        violations = destination.execute("PRAGMA foreign_key_check").fetchall()
-        if not integrity or integrity[0] != "ok" or violations:
-            raise sqlite3.DatabaseError("Restored database failed integrity validation.")
+        _validate_mg_database(destination)
         destination.close()
         destination = None
         try:
