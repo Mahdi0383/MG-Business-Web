@@ -23,7 +23,7 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = "mg-business-api" }))
    .WithName("Liveness");
-app.MapGet("/health/ready", async (BusinessDbContext db, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (BusinessDbContext db, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
     try
     {
@@ -32,8 +32,9 @@ app.MapGet("/health/ready", async (BusinessDbContext db, CancellationToken cance
             ? Results.Ok(new { status = "ready", database = "connected" })
             : Results.Problem(title: "Database unavailable", statusCode: StatusCodes.Status503ServiceUnavailable);
     }
-    catch
+    catch (Exception exception)
     {
+        logger.LogError(exception, "Database readiness check failed.");
         return Results.Problem(title: "Database unavailable", statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 }).WithName("Readiness");
