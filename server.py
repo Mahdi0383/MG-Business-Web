@@ -5,12 +5,23 @@ import base64, hashlib, hmac, json, os, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from backup_manager import create_snapshot
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
 DB_PATH = Path(os.environ.get("MG_DB_PATH", DATA_DIR / "mg-business.sqlite3")).resolve()
+BACKUP_DIR = Path(os.environ.get("MG_BACKUP_DIR", DATA_DIR / "backups")).expanduser().resolve()
 if DATA_DIR == ROOT or ROOT in DATA_DIR.parents or DB_PATH == ROOT or ROOT in DB_PATH.parents:
     raise RuntimeError("MG_DATA_DIR and MG_DB_PATH must be outside the public web root.")
+if BACKUP_DIR == ROOT or ROOT in BACKUP_DIR.parents or BACKUP_DIR == DB_PATH:
+    raise RuntimeError("MG_BACKUP_DIR must be outside the public web root and separate from the database file.")
+try:
+    BACKUP_INTERVAL_SECONDS = int(os.environ.get("MG_BACKUP_INTERVAL_HOURS", "24")) * 3600
+    BACKUP_RETENTION = int(os.environ.get("MG_BACKUP_RETENTION", "14"))
+except ValueError as exc:
+    raise RuntimeError("Backup interval and retention settings must be integers.") from exc
+if not 3600 <= BACKUP_INTERVAL_SECONDS <= 168 * 3600 or not 1 <= BACKUP_RETENTION <= 365:
+    raise RuntimeError("Backup interval must be 1-168 hours and retention 1-365 snapshots.")
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
 SESSION_SECONDS = 60 * 60 * 24 * 7
@@ -1791,8 +1802,19 @@ class Handler(SimpleHTTPRequestHandler):
         rendered = message % args if args else message
         print(rendered, flush=True)
 
+def backup_scheduler():
+    while True:
+        try:
+            snapshot = create_snapshot(DB_PATH, BACKUP_DIR, BACKUP_RETENTION)
+            print("MG scheduled backup created: %s" % snapshot, flush=True)
+        except Exception as exc:
+            print("MG scheduled backup failed: %s" % exc, flush=True)
+        time.sleep(BACKUP_INTERVAL_SECONDS)
+
+
 def main():
     connect().close()
+    threading.Thread(target=backup_scheduler, name="mg-backup-scheduler", daemon=True).start()
     print("MG Business listening on http://%s:%s (database: %s)" % (HOST, PORT, DB_PATH), flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
