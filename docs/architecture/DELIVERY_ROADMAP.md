@@ -20,7 +20,8 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [ ] Separate creator identity realm and Control Center.
 - [ ] Creator MFA and privileged-action audit.
 - [ ] Customer owner bootstrap, password reset, MFA and session/device revocation.
-- [ ] One-time CCS claim, recovery/rebinding and cryptographic device enrollment. The WebCrypto P-256 challenge/signature protocol and mandatory negative-test matrix are specified in `offline-first-ha-protocol.md`; implementation remains a release blocker.
+- [x] Cryptographic browser device enrollment, tenant/branch/actor binding, signed sync requests, key rotation, same-key recovery and revocation APIs are implemented; final security review and operational lost-device runbook remain open.
+- [ ] One-time CCS claim, recovery/rebinding and creator-side Control Center device lifecycle.
 - [ ] Signed subscription/module entitlements and 30-day maximum offline validation grace.
 - [ ] Suspension/expiry that preserves data and provides recovery/export paths.
 
@@ -42,7 +43,8 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [x] Initial tenant device heartbeat, Owner/Manager connectivity inventory and stale-heartbeat alerts in the open workspace.
 - [ ] Independent CCS heartbeat service, peer health monitoring, durable alert queue and MG Master relay.
 - [ ] Optional tenant-isolated MG Master failover data plane.
-- [ ] Fencing epochs, failover lease, split-brain prevention and tested failback.
+- [x] Short-lived signed authority leases, serializable acquisition, monotonic fencing epochs and stale-device/branch push rejection are implemented as the first HA authority foundation.
+- [ ] MG Master/CCS distributed lease coordination, multi-node split-brain prevention and tested failback.
 - [ ] LAN-only, WAN-only, total partition and recovery test suites.
 
 ### D. Business modules
