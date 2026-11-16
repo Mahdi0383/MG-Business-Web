@@ -59,26 +59,37 @@ class ApiIntegrationTests(unittest.TestCase):
             return error.code, json.loads(error.read())
 
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
+        tenant_ids = ("tenant-public-a", "tenant-public-b")
         db = server.connect()
         try:
             now = int(time.time())
-            db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", ("tenant-public-a","Public A",now))
-            db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", ("tenant-public-b","Public B",now+1))
+            db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", (tenant_ids[0],"Public A",now))
+            db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", (tenant_ids[1],"Public B",now+1))
             db.commit()
         finally:
             db.close()
 
-        status, result = self.request("GET", "/api/public/menu")
-        self.assertEqual(status, 409)
-        self.assertIn("دامنه اختصاصی", result["error"])
+        try:
+            status, result = self.request("GET", "/api/public/menu")
+            self.assertEqual(status, 409)
+            self.assertIn("دامنه اختصاصی", result["error"])
 
-        status, result = self.request("POST", "/api/public/orders", {
-            "customerName": "Test Customer",
-            "phone": "+49123456789",
-            "items": [{"productId": "unknown-product", "quantity": 1}]
-        })
-        self.assertEqual(status, 409)
-        self.assertIn("دامنه اختصاصی", result["error"])
+            status, result = self.request("POST", "/api/public/orders", {
+                "customerName": "Test Customer",
+                "phone": "+49123456789",
+                "items": [{"productId": "unknown-product", "quantity": 1}]
+            })
+            self.assertEqual(status, 409)
+            self.assertIn("دامنه اختصاصی", result["error"])
+        finally:
+            # The integration server shares one temporary database across tests.
+            # Remove only fixtures created here so test order cannot affect setup.
+            db = server.connect()
+            try:
+                db.execute("DELETE FROM tenants WHERE id IN (?,?)", tenant_ids)
+                db.commit()
+            finally:
+                db.close()
 
     def test_setup_auth_transaction_audit_and_isolation(self):
         status, result = self.request("GET", "/api/setup-status")
