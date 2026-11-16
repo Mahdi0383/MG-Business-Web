@@ -308,6 +308,18 @@ public static class SalesEndpoints
             catch (DbException)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+                var committedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                if (committedPayment is not null)
+                {
+                    if (!string.Equals(committedPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                        return Results.Conflict(new { message = "کلید Idempotency-Key هم‌زمان برای درخواست متفاوتی استفاده شده است." });
+                    var committedOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Id == committedPayment.SalesOrderId, cancellationToken);
+                    if (committedOrder is not null)
+                        return Results.Ok(new { committedOrder.Id, committedOrder.Number, committedOrder.Total, committedOrder.PaidAmount, committedOrder.BalanceDue, paymentId = committedPayment.Id, replayed = true });
+                }
                 return Results.Conflict(new { message = "تغییر هم‌زمان اطلاعات رخ داد؛ مانده فاکتور را دوباره بررسی کنید." });
             }
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
