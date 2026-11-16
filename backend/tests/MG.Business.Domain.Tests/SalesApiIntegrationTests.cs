@@ -589,6 +589,13 @@ public sealed class SalesApiIntegrationTests
         Assert.True(trial!.IsBalanced);
         Assert.Equal(200m, trial.TotalDebit);
         Assert.Equal(200m, trial.TotalCredit);
+
+        var paymentHistory = await client.GetFromJsonAsync<SalesPaymentResponse[]>($"/api/sales/orders/{sale.Id}/payments");
+        Assert.NotNull(paymentHistory);
+        Assert.Equal(2, paymentHistory!.Length);
+        Assert.Equal(new[] { 40m, 60m }, paymentHistory.Select(x => x.Amount).ToArray());
+        Assert.Equal(new[] { "Cash", "Card" }, paymentHistory.Select(x => x.Method).ToArray());
+        Assert.Equal(new[] { "PAY-40", "PAY-60" }, paymentHistory.Select(x => x.Reference).ToArray());
     }
 
     private static async Task<AccountResponse> CreateAccountAsync(HttpClient client, string code, string name, AccountType type)
@@ -639,6 +646,7 @@ public sealed class SalesApiIntegrationTests
     private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
     private sealed record ProductResponse(Guid Id, string Sku, string Name, string BaseUnit, bool TracksInventory, decimal DefaultSalePrice, bool IsActive);
     private sealed record PaymentBalanceResponse(Guid Id, string Number, decimal Total, decimal PaidAmount, decimal BalanceDue);
+    private sealed record SalesPaymentResponse(Guid Id, decimal Amount, string Method, string? Reference, DateTimeOffset CreatedAtUtc);
     private sealed record SaleResponse(Guid Id, string Number, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, decimal CostOfGoodsSold, decimal GrossProfit, string Status, DateTimeOffset CreatedAtUtc);
     private sealed record StockResponse(Guid ProductId, Guid BranchId, decimal QuantityOnHand, decimal AverageUnitCost, decimal InventoryValue, int MovementCount);
     private sealed record TrialBalanceResponse(TrialAccount[] Accounts, decimal TotalDebit, decimal TotalCredit, bool IsBalanced);
