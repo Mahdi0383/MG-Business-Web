@@ -24,7 +24,7 @@ function openDatabase() {
           database.createObjectStore(META_STORE, { keyPath: "key" });
         if (!database.objectStoreNames.contains(INBOX_STORE)) {
           const inbox = database.createObjectStore(INBOX_STORE, { keyPath: ["tenantId", "sequence"] });
-          inbox.createIndex("byTenantApplied", ["tenantId", "appliedAtUtc"]);
+          inbox.createIndex("byTenantApplied", ["tenantId", "applied"]);
         }
       };
       request.onsuccess = () => resolve(request.result);
