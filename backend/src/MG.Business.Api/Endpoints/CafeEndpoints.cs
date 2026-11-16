@@ -59,7 +59,15 @@ public static class CafeEndpoints
             }
 
             db.CafeKitchenTickets.Add(ticket);
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new { message = "برای این فاکتور تیکت آشپزخانه ثبت شده یا وضعیت فاکتور تغییر کرده است." });
+            }
+
             return Results.Created($"/api/cafe/kitchen/tickets/{ticket.Id}", ToResponse(ticket));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(CreateRoles)));
 
