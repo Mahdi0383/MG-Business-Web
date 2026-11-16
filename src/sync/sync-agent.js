@@ -11,11 +11,13 @@ export class SyncAgent {
     this.running = false;
   }
 
-  async pullIncoming(tenantId, { pageSize = 100, branchId = null } = {}) {
+  async pullIncoming(tenantId, { pageSize = 100, branchId = null, actorId } = {}) {
     if (typeof tenantId !== "string" || !tenantId.trim())
       throw new TypeError("tenantId is required for sync pull.");
     if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
       throw new TypeError("branchId must be a non-empty string or null.");
+    if (typeof actorId !== "string" || !actorId.trim())
+      throw new TypeError("actorId is required for sync pull.");
     const boundedPageSize = Number.isInteger(pageSize) ? Math.max(1, Math.min(pageSize, 200)) : 100;
     if (this.running) return { status: "already-running", received: 0 };
     this.running = true;
@@ -55,7 +57,7 @@ export class SyncAgent {
       if (response.nextSequence < previousSequence)
         throw new Error("MG Sync API cursor precedes the last returned operation.");
       await this.operationStore.storeIncomingPage(tenantId, response.operations, response.nextSequence, branchId);
-      const deviceId = await this.operationStore.getDeviceId();
+      const deviceId = await this.operationStore.getDeviceId(actorId);
       await this.apiClient.post("/api/sync/acknowledgements", {
         deviceId,
         sequence: response.nextSequence
