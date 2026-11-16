@@ -86,6 +86,27 @@ public sealed class GameNetApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.BadRequest, invalidOnAccount.StatusCode);
 
+        using var negativePayment = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = -1m,
+            paymentMethod = PaymentMethod.Cash,
+            revenueAccountId = revenue.Id,
+            paymentAccountId = cash.Id,
+            receivableAccountId = (Guid?)null,
+            paymentReference = "GAME-NEGATIVE"
+        });
+        using var excessivePrecisionPayment = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = 1.001m,
+            paymentMethod = PaymentMethod.Cash,
+            revenueAccountId = revenue.Id,
+            paymentAccountId = cash.Id,
+            receivableAccountId = (Guid?)null,
+            paymentReference = "GAME-PRECISION"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, negativePayment.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, excessivePrecisionPayment.StatusCode);
+
         var disableBranch = await client.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.Conflict, disableBranch.StatusCode);
 
@@ -103,6 +124,21 @@ public sealed class GameNetApiIntegrationTests
         Assert.Equal(15, result!.BilledMinutes);
         Assert.Equal(15m, result.TotalAmount);
         Assert.NotEqual(Guid.Empty, result.SalesOrderId);
+
+        using var repeatedClose = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = 15m,
+            paymentMethod = PaymentMethod.Cash,
+            revenueAccountId = revenue.Id,
+            paymentAccountId = cash.Id,
+            receivableAccountId = (Guid?)null,
+            paymentReference = "GAME-CASH-RETRY"
+        });
+        Assert.Equal(HttpStatusCode.NotFound, repeatedClose.StatusCode);
+
+        var orders = await client.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
+        Assert.Single(orders!);
+        Assert.Equal(result.SalesOrderId, orders[0].Id);
 
         var trial = await client.GetFromJsonAsync<TrialBalanceResponse>("/api/accounting/trial-balance");
         Assert.Equal(15m, trial!.TotalDebit);
@@ -159,6 +195,7 @@ public sealed class GameNetApiIntegrationTests
     private sealed record ClosedSession(Guid Id, Guid DeviceId, DateTimeOffset StartedAtUtc, DateTimeOffset EndedAtUtc, int BilledMinutes, decimal HourlyRate, decimal TotalAmount, Guid SalesOrderId, decimal PaidAmount, decimal BalanceDue);
     private sealed record SessionQuote(Guid SessionId, Guid? CustomerId, DateTimeOffset QuotedAtUtc, int BilledMinutes, decimal TotalAmount);
     private sealed record SettlementAccountResponse(Guid Id, string Code, string Name, string Type);
+    private sealed record SalesOrderResponse(Guid Id, string Number, Guid? CustomerId, decimal Subtotal, decimal LineDiscountTotal, decimal Discount, decimal Total, decimal PaidAmount, decimal BalanceDue, string Status, DateTimeOffset CreatedAtUtc);
     private sealed record TrialBalanceResponse(TrialAccount[] Accounts, decimal TotalDebit, decimal TotalCredit, bool IsBalanced);
     private sealed record TrialAccount(Guid Id, string Code, string Name, string Type, decimal Debit, decimal Credit, decimal NetDebit, decimal NetCredit);
 }
