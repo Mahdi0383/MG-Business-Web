@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace MG.Business.Api.Security;
 
-public sealed class TenantResolvedRequirement : IAuthorizationRequirement;
+public sealed class TenantResolvedRequirement : IAuthorizationRequirement { }
 
 public sealed class TenantResolvedHandler(ITenantContext tenantContext) : AuthorizationHandler<TenantResolvedRequirement>
 {
