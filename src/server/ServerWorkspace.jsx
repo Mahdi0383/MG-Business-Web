@@ -406,6 +406,32 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     }
   };
 
+  const resolveInventoryConflict = async conflict => {
+    setSaving(true);
+    setError("");
+    try {
+      const productId = conflict.details?.productId;
+      if (!productId) throw new Error("شناسه کالای تعارض‌یافته در اطلاعات تعارض موجود نیست.");
+      const currentStock = await client.get("/api/inventory/stock");
+      const stockRow = (currentStock || []).find(row =>
+        row.productId === productId && row.branchId === branch.id
+      );
+      if (!stockRow) throw new Error("موجودی فعلی کالا در سرور پیدا نشد.");
+      await operationStore.resolveInventoryConflictFromServer({
+        tenantId: tenant.id,
+        branchId: branch.id,
+        sequence: conflict.sequence,
+        stockRow
+      });
+      await loadData();
+      setError("تعارض با دریافت موجودی مرجع سرور تعیین تکلیف شد؛ پردازش همگام‌سازی از همان توالی ادامه می‌یابد.");
+    } catch (resolveError) {
+      setError(formatApiError(resolveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const save = async event => {
     event.preventDefault();
     setSaving(true);
@@ -742,7 +768,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           {syncConflicts.length === 0
             ? <div className="mg-server-empty">در این شعبه تعارض بازی ثبت نشده است.</div>
             : <div className="mg-server-table-wrap"><table><thead><tr><th>شماره توالی</th><th>نوع عملیات</th><th>نتیجه بررسی</th><th>علت</th><th>زمان ثبت</th><th>جزئیات</th></tr></thead><tbody>{syncConflicts.map(conflict => <tr key={conflict.sequence}>
-              <td>{count(conflict.sequence)}</td><td dir="ltr">{conflict.operationType || "—"}</td><td>{conflict.disposition === "conflict" ? "تعارض داده" : "بررسی دستی"}</td><td>{conflict.reason}</td><td>{dateTime(conflict.createdAtUtc)}</td><td><details><summary>مشاهده داده</summary><pre className="mg-sync-conflict-details">{JSON.stringify({ operationId: conflict.operationId, branchId: conflict.branchId, details: conflict.details }, null, 2)}</pre></details></td>
+              <td>{count(conflict.sequence)}</td><td dir="ltr">{conflict.operationType || "—"}</td><td>{conflict.disposition === "conflict" ? "تعارض داده" : "بررسی دستی"}</td><td>{conflict.reason}</td><td>{dateTime(conflict.createdAtUtc)}</td><td><details><summary>مشاهده داده</summary><pre className="mg-sync-conflict-details">{JSON.stringify({ operationId: conflict.operationId, branchId: conflict.branchId, details: conflict.details }, null, 2)}</pre></details>{conflict.operationType === "inventory.stock.movement.created" && conflict.reason === "stale-inventory-base-balance" && <button className="mg-secondary-btn" disabled={saving} onClick={() => resolveInventoryConflict(conflict)}>تطبیق با موجودی مرجع سرور</button>}</td>
             </tr>)}</tbody></table></div>}
           <p className="mg-server-modal-hint">برای جلوگیری از تغییر ناخواسته اطلاعات مالی و موجودی، این صفحه فقط جزئیات را نمایش می‌دهد؛ حل تعارض‌های حساس باید با سیاست تطبیق و تأیید صریح انجام شود.</p>
         </section>}
