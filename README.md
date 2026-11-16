@@ -4,14 +4,14 @@
 
 ## اجرای نسخه فعلی در Termux یا رایانه
 
-این نسخه فعلی رابط استاتیک HTML/CSS/JavaScript است و برای اجرای پوسته فعلی به Node.js یا npm نیاز ندارد.
+سرور یکپارچه Python و SQLite رابط وب و API محلی را اجرا می‌کند؛ به Node.js یا npm نیاز نیست.
 
 ```sh
 pkg update -y
 pkg install git python -y
 git clone https://github.com/Mahdi0383/MG-Business-Web.git
 cd MG-Business-Web
-python -m http.server 8080 --bind 0.0.0.0
+python server.py
 ```
 
 مرورگر همان دستگاه: http://127.0.0.1:8080
