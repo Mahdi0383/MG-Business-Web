@@ -113,3 +113,37 @@ test("does not persist a non-monotonic pull page", async () => {
   await assert.rejects(new SyncAgent(api, store).pullIncoming("tenant-1"), /non-monotonic/);
   assert.equal(persisted, false);
 });
+
+test("uses an independent pull cursor for each selected branch", async () => {
+  const cursorReads = [];
+  const saved = [];
+  const api = {
+    async get() {
+      return { operations: [], nextSequence: 12, hasMore: false };
+    },
+    async post() { return {}; }
+  };
+  const store = {
+    async getCursor(tenantId, branchId) {
+      cursorReads.push({ tenantId, branchId });
+      return branchId === "branch-a" ? 4 : 9;
+    },
+    async getDeviceId() { return "device-1"; },
+    async storeIncomingPage(tenantId, operations, sequence, branchId) {
+      saved.push({ tenantId, sequence, branchId });
+    }
+  };
+
+  const agent = new SyncAgent(api, store);
+  await agent.pullIncoming("tenant-1", { branchId: "branch-a" });
+  await agent.pullIncoming("tenant-1", { branchId: "branch-b" });
+
+  assert.deepEqual(cursorReads, [
+    { tenantId: "tenant-1", branchId: "branch-a" },
+    { tenantId: "tenant-1", branchId: "branch-b" }
+  ]);
+  assert.deepEqual(saved, [
+    { tenantId: "tenant-1", sequence: 12, branchId: "branch-a" },
+    { tenantId: "tenant-1", sequence: 12, branchId: "branch-b" }
+  ]);
+});
