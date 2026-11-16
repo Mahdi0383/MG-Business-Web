@@ -461,7 +461,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             return str(ROOT / "__blocked_resource__")
         blocked = any(part.startswith(".") or part in ("data","__pycache__",".venv","tests",".github") for part in parts)
-        blocked = blocked or resolved.name in ("server.py","license_tool.py","README.md")
+        blocked = blocked or resolved.name in ("server.py","license_tool.py","backup_manager.py","README.md")
         blocked = blocked or resolved.suffix.lower() in (".sqlite",".sqlite3",".db",".env")
         return str(ROOT / "__blocked_resource__") if blocked else str(resolved)
 
