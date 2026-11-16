@@ -1638,13 +1638,16 @@ public sealed class SyncApiIntegrationTests
             Convert.ToBase64String(new byte[] { 1, 2, 3 }), new string('d', 64), now);
 
         Assert.True(credential.IsActive);
-        credential.Revoke(now.AddSeconds(1));
-        var revokedAt = credential.RevokedAtUtc;
+        credential.RotateCredential(new string('e', 64), now.AddSeconds(1));
+        Assert.Equal(2, credential.KeyVersion);
+        Assert.Equal(new string('e', 64), credential.CredentialSha256);
         credential.Revoke(now.AddSeconds(2));
+        var revokedAt = credential.RevokedAtUtc;
+        credential.Revoke(now.AddSeconds(3));
 
         Assert.False(credential.IsActive);
         Assert.Equal(revokedAt, credential.RevokedAtUtc);
-        Assert.Equal(1, credential.KeyVersion);
+        Assert.Equal(2, credential.KeyVersion);
     }
 
     [Fact]
@@ -1712,6 +1715,44 @@ public sealed class SyncApiIntegrationTests
 
         var replay = await client.PostAsJsonAsync("/api/sync/enrollment/complete", completionRequest);
         Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
+
+        // A new single-use challenge plus the same persisted key recovers a
+        // lost one-time credential response by rotating the server-side digest.
+        var recoveryChallengeResponse = await client.PostAsJsonAsync(
+            "/api/sync/enrollment/challenges", new { deviceId });
+        Assert.Equal(HttpStatusCode.OK, recoveryChallengeResponse.StatusCode);
+        var recoveryChallenge = await recoveryChallengeResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallengeResponse>();
+        Assert.NotNull(recoveryChallenge);
+        var recoveryMessage = string.Join("\n",
+            "MG-DEVICE-ENROLLMENT-V1",
+            tenant.TenantId.ToString("D"),
+            tenant.BranchId.ToString("D"),
+            recoveryChallenge!.ActorId.ToString("D"),
+            deviceId.ToString("D"),
+            recoveryChallenge.ChallengeId.ToString("D"),
+            recoveryChallenge.Challenge);
+        var recoverySignature = Convert.ToBase64String(key.SignData(
+            Encoding.UTF8.GetBytes(recoveryMessage),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+        var recoveredResponse = await client.PostAsJsonAsync("/api/sync/enrollment/complete", new
+        {
+            challengeId = recoveryChallenge.ChallengeId,
+            deviceId,
+            challenge = recoveryChallenge.Challenge,
+            publicKeySpkiBase64 = publicKey,
+            signatureBase64 = recoverySignature
+        });
+        Assert.Equal(HttpStatusCode.OK, recoveredResponse.StatusCode);
+        var recovered = await recoveredResponse.Content.ReadFromJsonAsync<DeviceEnrollmentResult>();
+        Assert.NotNull(recovered);
+        Assert.Equal(2, recovered!.KeyVersion);
+        Assert.NotEqual(result.Credential, recovered.Credential);
+        var rotated = await db.DeviceCredentials.SingleAsync(
+            x => x.TenantId == tenant.TenantId && x.DeviceId == deviceId);
+        Assert.Equal(2, rotated.KeyVersion);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(recovered.Credential))).ToLowerInvariant(),
+            rotated.CredentialSha256);
     }
 
     [Fact]
