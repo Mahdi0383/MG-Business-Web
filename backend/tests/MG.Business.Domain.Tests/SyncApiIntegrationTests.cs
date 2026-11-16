@@ -488,6 +488,7 @@ public sealed class SyncApiIntegrationTests
         Assert.Equal(HttpStatusCode.Accepted, globalPush.StatusCode);
 
         var staffEmail = $"branch-sync-staff-{Guid.NewGuid():N}@mg.test";
+        using var staff = await RegisterAndLoginAsync(factory, staffEmail);
         var membership = await owner.PostAsJsonAsync("/api/memberships", new
         {
             email = staffEmail,
@@ -496,7 +497,6 @@ public sealed class SyncApiIntegrationTests
         });
         Assert.Equal(HttpStatusCode.Created, membership.StatusCode);
 
-        using var staff = await RegisterAndLoginAsync(factory, staffEmail);
         staff.DefaultRequestHeaders.Add("X-MG-Tenant", tenant.TenantId.ToString());
         staff.DefaultRequestHeaders.Add("X-MG-Branch", secondary.Id.ToString());
         var staffDeviceId = Guid.NewGuid();
