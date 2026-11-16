@@ -250,6 +250,11 @@ class ApiIntegrationTests(unittest.TestCase):
         })
         self.assertEqual(status, 201)
         self.assertTrue(result["orderNumber"].startswith("MG-ON-"))
+        for _ in range(4):
+            status, result = self.request("POST", "/api/public/orders", {})
+            self.assertEqual(status, 400)
+        status, result = self.request("POST", "/api/public/orders", {})
+        self.assertEqual(status, 429)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(result["items"][0]["quantity"], 11)
 
