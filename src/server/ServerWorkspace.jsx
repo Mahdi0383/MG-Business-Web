@@ -300,7 +300,6 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         paymentAccountId: cash.id,
         receivableAccountId: receivable.id,
         paymentReference: "",
-        idempotencyKey: crypto.randomUUID(),
         paymentHistory: paymentRows || []
       });
       setModal("salePayment");
@@ -430,13 +429,32 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           throw new Error("مبلغ دریافت باید بیشتر از صفر و حداکثر برابر مانده فاکتور باشد.");
         if (!form.paymentAccountId || !form.receivableAccountId)
           throw new Error("حساب دریافت وجه و حساب دریافتنی را انتخاب کنید.");
-        await client.post(`/api/sales/orders/${form.orderId}/payments`, {
+        const paymentPayload = {
           amount,
           paymentMethod: Number(form.paymentMethod),
           paymentAccountId: form.paymentAccountId,
           receivableAccountId: form.receivableAccountId,
           paymentReference: form.paymentReference.trim() || null
-        }, { headers: { "Idempotency-Key": form.idempotencyKey } });
+        };
+        const intentFingerprint = JSON.stringify({ orderId: form.orderId, ...paymentPayload });
+        const intentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${form.orderId}`;
+        let storedIntent;
+        try {
+          storedIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
+          if (!storedIntent || storedIntent.fingerprint !== intentFingerprint || typeof storedIntent.key !== "string") {
+            storedIntent = { fingerprint: intentFingerprint, key: crypto.randomUUID() };
+            window.localStorage.setItem(intentStorageKey, JSON.stringify(storedIntent));
+          }
+        } catch {
+          throw new Error("ذخیره امن کلید تکرارناپذیری پرداخت در این مرورگر ممکن نیست؛ تنظیمات ذخیره‌سازی مرورگر را بررسی کنید.");
+        }
+        await client.post(`/api/sales/orders/${form.orderId}/payments`, paymentPayload, {
+          headers: { "Idempotency-Key": storedIntent.key }
+        });
+        try {
+          const currentIntent = JSON.parse(window.localStorage.getItem(intentStorageKey) || "null");
+          if (currentIntent?.key === storedIntent.key) window.localStorage.removeItem(intentStorageKey);
+        } catch { /* A completed payment remains protected by the server-side idempotency key. */ }
         successNotice = `دریافت وجه فاکتور ${form.orderNumber} با موفقیت ثبت شد.`;
       } else if (modal === "sale") {
         const lines = form.lines.filter(line => line.productId).map(line => ({
