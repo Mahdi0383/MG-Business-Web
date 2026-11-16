@@ -505,6 +505,7 @@ export class LocalOperationStore {
     return current ? {
       id: current.id,
       version: current.version,
+      isActive: current.isActive !== false,
       originOperationId: current.originOperationId || null,
       lastOperationId: current.lastOperationId || null
     } : null;
