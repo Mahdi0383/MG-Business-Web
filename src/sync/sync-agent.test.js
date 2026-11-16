@@ -77,7 +77,7 @@ test("pulls remote operations and persists the page with its cursor", async () =
   };
   const store = {
     async getCursor(tenantId) { assert.equal(tenantId, "tenant-1"); return 3; },
-    async getDeviceId() { return "device-1"; },
+    async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
     async storeIncomingPage(tenantId, operations, cursor) { saved.push({ tenantId, operations, cursor }); }
   };
 
@@ -131,7 +131,7 @@ test("uses an independent pull cursor for each selected branch", async () => {
       cursorReads.push({ tenantId, branchId });
       return branchId === "branch-a" ? 4 : 9;
     },
-    async getDeviceId() { return "device-1"; },
+    async getDeviceId(actorId) { assert.equal(actorId, "actor-1"); return "device-1"; },
     async storeIncomingPage(tenantId, operations, sequence, branchId) {
       saved.push({ tenantId, sequence, branchId });
     }
