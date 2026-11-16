@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { formatApiError } from "../api/client.js";
+import { formatApiError, isNetworkUnavailable } from "../api/client.js";
 
 const money = value => new Intl.NumberFormat("fa-IR").format(Number(value || 0)) + " تومان";
 const count = value => new Intl.NumberFormat("fa-IR").format(Number(value || 0));
@@ -102,7 +102,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       return [...merged.values()].sort((left, right) =>
         String(right.updatedAtUtc || right.createdAtUtc || "").localeCompare(String(left.updatedAtUtc || left.createdAtUtc || "")));
     } catch (loadError) {
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return localRows;
+      if (isNetworkUnavailable(loadError)) return localRows;
       throw loadError;
     }
   };
