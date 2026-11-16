@@ -1405,10 +1405,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if type(sell_price) is not int or sell_price < 0 or type(cost_price) is not int or cost_price < 0:
                     return self.send_json(400, {"error": "قیمت فروش و خرید باید عدد صحیح و غیرمنفی باشند."})
                 product_id, now = str(data.get("id") or secrets.token_urlsafe(18)), int(time.time())
-                if len(product_id) > 100: return self.send_json(400, {"error": "شناسه کالا معتبر نیست."})
+                if not 1<=len(product_id)<=100: return self.send_json(400, {"error": "شناسه کالا معتبر نیست."})
+                normalized_sku=sku.strip() if sku and sku.strip() else None
                 db.execute("BEGIN IMMEDIATE")
+                if normalized_sku and db.execute("SELECT 1 FROM products WHERE tenant_id=? AND sku=?",
+                                                 (user["tenant_id"],normalized_sku)).fetchone():
+                    db.rollback()
+                    return self.send_json(409, {"error":"این کد کالا قبلاً ثبت شده است."})
                 db.execute("""INSERT INTO products(id,tenant_id,name,sku,category,sell_price,cost_price,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?)""", (product_id,user["tenant_id"],name.strip(),sku.strip() if sku else None,category.strip() or "عمومی",sell_price,cost_price,now,now))
+                    VALUES(?,?,?,?,?,?,?,?,?)""", (product_id,user["tenant_id"],name.strip(),normalized_sku,category.strip() or "عمومی",sell_price,cost_price,now,now))
                 audit(db,user["tenant_id"],user["id"],"product.created","product",product_id,{"sellPrice":sell_price})
                 db.commit()
                 return self.send_json(201, {"id": product_id, "ok": True})
