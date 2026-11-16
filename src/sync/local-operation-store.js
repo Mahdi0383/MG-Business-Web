@@ -344,14 +344,40 @@ export class LocalOperationStore {
     return count;
   }
 
-  async getUnappliedIncoming(tenantId, limit = 100) {
+  async getUnappliedIncoming(tenantId, limit = 100, branchId = null) {
+    if (typeof tenantId !== "string" || !tenantId.trim())
+      throw new TypeError("tenantId is required.");
+    if (branchId !== null && (typeof branchId !== "string" || !branchId.trim()))
+      throw new TypeError("branchId must be a non-empty string or null.");
+    const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 200)) : 100;
     const database = await openDatabase();
     const transaction = database.transaction(INBOX_STORE, "readonly");
     const done = transactionDone(transaction);
-    const rows = await requestResult(
-      transaction.objectStore(INBOX_STORE).index("byTenantApplied")
-        .getAll(IDBKeyRange.only([tenantId, false]), Math.max(1, Math.min(limit, 200)))
-    );
+    const index = transaction.objectStore(INBOX_STORE).index("byTenantApplied");
+    const range = IDBKeyRange.only([tenantId, false]);
+
+    if (branchId === null) {
+      const rows = await requestResult(index.getAll(range, boundedLimit));
+      await done;
+      return rows.sort((a, b) => a.sequence - b.sequence);
+    }
+
+    const rows = await new Promise((resolve, reject) => {
+      const matching = [];
+      const request = index.openCursor(range);
+      request.onerror = () => reject(request.error || new Error("Could not read unapplied incoming operations."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || matching.length >= boundedLimit) {
+          resolve(matching);
+          return;
+        }
+        const row = cursor.value;
+        if (row.branchId == null || row.branchId === branchId)
+          matching.push(row);
+        cursor.continue();
+      };
+    });
     await done;
     return rows.sort((a, b) => a.sequence - b.sequence);
   }
