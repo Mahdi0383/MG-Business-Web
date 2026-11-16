@@ -229,6 +229,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId").HasColumnType("uuid");
                     b.Property<Guid>("DeviceId").HasColumnType("uuid");
                     b.Property<Guid>("ActorId").HasColumnType("uuid");
+                    b.Property<Guid?>("BranchId").HasColumnType("uuid");
                     b.Property<string>("CredentialSha256").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
                     b.Property<DateTimeOffset>("CreatedAtUtc").HasColumnType("timestamp with time zone");
                     b.Property<DateTimeOffset?>("LastUsedAtUtc").HasColumnType("timestamp with time zone");
@@ -239,6 +240,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "DeviceId");
                     b.HasIndex("ActorId");
                     b.HasIndex("TenantId", "ActorId");
+                    b.HasIndex("TenantId", "BranchId");
                     b.ToTable("device_credentials", (string)null);
                 });
 
@@ -253,6 +255,7 @@ namespace MG.Business.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("MG.Business.Infrastructure.Identity.ApplicationUser", null).WithMany().HasForeignKey("ActorId").OnDelete(DeleteBehavior.Cascade).IsRequired();
                     b.HasOne("MG.Business.Domain.Entities.Tenant", null).WithMany().HasForeignKey("TenantId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.HasOne("MG.Business.Domain.Entities.Branch", null).WithMany().HasForeignKey("TenantId", "BranchId").HasPrincipalKey("TenantId", "Id").OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("MG.Business.Domain.Entities.DevicePresence", b =>
