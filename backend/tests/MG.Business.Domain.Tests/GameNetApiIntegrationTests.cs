@@ -31,6 +31,8 @@ public sealed class GameNetApiIntegrationTests
 
         var revenue = await CreateAccountAsync(client, "4000", "Game Revenue", AccountType.Revenue);
         var cash = await CreateAccountAsync(client, "1000", "Cash", AccountType.Asset);
+        var alternateRevenue = await CreateAccountAsync(client, "4010", "Other Revenue", AccountType.Revenue);
+        var alternateCash = await CreateAccountAsync(client, "1010", "Other Cash", AccountType.Asset);
 
         var productResponse = await client.PostAsJsonAsync("/api/inventory/products", new
         {
@@ -162,6 +164,17 @@ public sealed class GameNetApiIntegrationTests
             paymentReference = "GAME-CASH"
         });
         Assert.Equal(HttpStatusCode.Conflict, changedClose.StatusCode);
+
+        using var changedAccounts = await client.PostAsJsonAsync($"/api/gamenet/sessions/{session.Id}/close", new
+        {
+            amountPaid = 15m,
+            paymentMethod = PaymentMethod.Cash,
+            revenueAccountId = alternateRevenue.Id,
+            paymentAccountId = alternateCash.Id,
+            receivableAccountId = (Guid?)null,
+            paymentReference = "GAME-CASH"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, changedAccounts.StatusCode);
 
         var orders = await client.GetFromJsonAsync<SalesOrderResponse[]>("/api/sales/orders");
         Assert.Single(orders!);
