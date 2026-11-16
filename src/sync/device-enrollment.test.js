@@ -53,4 +53,37 @@ test("refuses to sign a non-sync or missing actor request", async () => {
     method: "GET", path: "/api/customers", tenantId: "t", actorId: "a"
   }), /sync API path/);
   await assert.rejects(enrollment.ensureEnrolled({ tenantId: "t", actorId: "" }), /Tenant and actor/);
+
+test("recovers a lost enrollment response with the same persisted private key", async () => {
+  const actorId = "actor-recovery";
+  const tenantId = "tenant-recovery";
+  const deviceId = "device-recovery";
+  let challengeCount = 0;
+  let completionCount = 0;
+  const api = {
+    async post(path) {
+      if (path.endsWith("/challenges")) {
+        challengeCount += 1;
+        return {
+          challengeId: `challenge-${challengeCount}`,
+          challenge: Buffer.alloc(32, challengeCount).toString("base64"),
+          deviceId,
+          actorId
+        };
+      }
+      completionCount += 1;
+      if (completionCount === 1) throw new Error("simulated lost response after server commit");
+      return { deviceId, keyVersion: 2, credential: Buffer.alloc(32, 8).toString("base64") };
+    }
+  };
+  const store = { async getDeviceId() { return deviceId; } };
+  const enrollment = new DeviceEnrollmentClient(api, store);
+  await assert.rejects(enrollment.ensureEnrolled({ tenantId, actorId }), /lost response/);
+  const recovered = await enrollment.ensureEnrolled({ tenantId, actorId });
+  assert.equal(challengeCount, 2);
+  assert.equal(completionCount, 2);
+  assert.equal(recovered.keyVersion, 2);
+  assert.equal(recovered.privateKey.extractable, false);
+  assert.ok(recovered.publicKeySpkiBase64);
+});
 });
