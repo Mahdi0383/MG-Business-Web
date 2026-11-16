@@ -105,5 +105,7 @@ Passing CI demonstrates that the current automated test/build gates pass; it doe
 
 
 ## Current branch validation
-- Frontend CI passed on intermediate development head `9c337aee8e91ed81e927abbaa312cd432bef699c`.
-- Current branch head at this documentation update: `0bfe5d64880c88fb43b94696b60d557efb9693a6`. Frontend/backend/API CI and PostgreSQL migration validation must all pass on the final candidate before release review.
+- [x] Frontend CI passed on `a9f75acfbbf847d7cb1e4470a57acc2012e96144` (run `43975593992`).
+- [x] SQLite-backed backend build, EF model-snapshot verification and integration/domain tests passed on `a9f75acfbbf847d7cb1e4470a57acc2012e96144` (run `43975594085`).
+- [x] PostgreSQL API CI, migration script generation/application and domain/integration tests passed on `bb6637d6bd151b1b156a60862c27b97b5604f2d5` (run `43974869812`); backend source has not changed since this run.
+- [ ] Re-run all three CI gates on the final release candidate after any further backend changes.
