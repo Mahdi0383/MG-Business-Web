@@ -218,6 +218,27 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(result["items"][0]["quantity"], 13)
 
+        status, result = self.request("POST", "/api/orders", {
+            "id": "order-credit-1", "customerId": "customer-1", "discount": 0,
+            "paymentMethod": "credit",
+            "items": [{"productId": "product-1", "quantity": 1}]
+        }, token)
+        self.assertEqual(status, 201)
+        self.assertEqual(result["total"], 85000)
+        status, result = self.request("GET", "/api/customers", token=token)
+        self.assertEqual(result["items"][0]["balance"], 85000)
+        status, result = self.request("POST", "/api/customers/customer-1/payments", {
+            "amount": 50000, "paymentMethod": "card"
+        }, token)
+        self.assertEqual(status, 201)
+        self.assertEqual(result["remainingBalance"], 35000)
+        status, result = self.request("POST", "/api/customers/customer-1/payments", {
+            "amount": 40000, "paymentMethod": "cash"
+        }, token)
+        self.assertEqual(status, 409)
+        status, result = self.request("GET", "/api/customers", token=token)
+        self.assertEqual(result["items"][0]["balance"], 35000)
+
         status, result = self.request("DELETE", "/api/products/product-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/products", token=token)
@@ -226,11 +247,11 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("DELETE", "/api/orders/order-test-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/orders", token=token)
-        self.assertEqual(result["items"][0]["status"], "cancelled")
+        self.assertEqual(next(x for x in result["items"] if x["id"] == "order-test-1")["status"], "cancelled")
         db = server.connect()
         try:
             restored = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE product_id='product-1'").fetchone()[0]
-            self.assertEqual(restored, 15)
+            self.assertEqual(restored, 14)
         finally:
             db.close()
 
@@ -238,11 +259,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/transactions", token=token)
         self.assertEqual(len(result["items"]), 1)
-        self.assertEqual(result["items"][0]["id"], "order-order-test-1")
+        self.assertEqual(result["items"][0]["id"], "order-order-credit-1")
         status, result = self.request("GET", "/api/accounting/profit-loss", token=token)
-        self.assertEqual(result["netProfit"], -150000)
+        self.assertEqual(result["netProfit"], -95000)
         status, result = self.request("GET", "/api/accounting/journal", token=token)
-        self.assertEqual(len(result["items"]), 8)
+        self.assertEqual(len(result["items"]), 11)
         self.assertTrue(all(item["debit"] == item["credit"] for item in result["items"]))
 
         db = server.connect()
