@@ -35,3 +35,5 @@
 .module-table-head.customer-ledger,.module-table-row.customer-ledger{grid-template-columns:1.8fr .8fr .8fr 1fr}.customer-ledger-panel{margin:20px 0}.customer-ledger-panel .ledger-head{margin-top:18px}@media(max-width:700px){.module-table-head.customers,.module-table-row.customers{grid-template-columns:1.1fr 1fr .8fr auto auto;font-size:9px;gap:5px;padding:9px 7px}.module-table-head.customer-ledger,.module-table-row.customer-ledger{grid-template-columns:1.3fr .7fr .7fr 1fr;font-size:9px;gap:5px;padding:9px 7px}}
 
 .userPasswordForm{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.userPasswordForm input{min-width:145px;max-width:190px;padding:7px 8px;background:#0c1727;color:#eef3fa;border:1px solid #30425c;border-radius:7px;font:inherit;font-size:10px}.userPasswordForm button{padding:6px 8px;font-size:10px}
+
+.offline-card{max-width:470px}.offline-card p{line-height:1.9}.offline-card button{width:100%;margin-top:12px}
