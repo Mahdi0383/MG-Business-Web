@@ -260,6 +260,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Quantity).HasColumnName("quantity").HasPrecision(18, 3);
             entity.Property(x => x.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
             entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            entity.Property(x => x.RequestFingerprint).HasMaxLength(64);
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.BranchId, x.CreatedAtUtc });
             entity.HasIndex(x => new { x.TenantId, x.ProductId, x.CreatedAtUtc });
             entity.HasOne<Product>().WithMany().HasForeignKey(x => new { x.TenantId, x.ProductId })
