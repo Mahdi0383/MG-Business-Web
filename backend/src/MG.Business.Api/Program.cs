@@ -79,6 +79,9 @@ if (builder.Environment.IsProduction())
 
     if (trustedProxyAddresses.Length == 0 || trustedProxyAddresses.Any(address => !IPAddress.TryParse(address, out _)))
         throw new InvalidOperationException("Production deployments must configure the exact trusted reverse-proxy IP addresses in ForwardedHeaders:KnownProxies.");
+
+    if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures"))
+        throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireDeviceSignatures.");
 }
 
 builder.Services.AddDbContext<BusinessDbContext>(options =>
@@ -149,6 +152,7 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseMiddleware<TenantResolutionMiddleware>();
 app.UseAuthorization();
+app.UseMiddleware<DeviceRequestSignatureMiddleware>();
 
 app.MapGroup("/auth").RequireRateLimiting("auth").MapIdentityApi<ApplicationUser>();
 app.MapTenantContextEndpoints();
