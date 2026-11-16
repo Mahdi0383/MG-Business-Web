@@ -1643,8 +1643,19 @@ class Handler(SimpleHTTPRequestHandler):
                 except ValueError: return self.send_json(400, {"error": "تاریخ تراکنش معتبر نیست."})
                 tx_id = str(data.get("id") or secrets.token_urlsafe(18))
                 if len(tx_id) > 100: return self.send_json(400, {"error": "شناسه تراکنش معتبر نیست."})
+                if not 1<=len(tx_id)<=100: return self.send_json(400, {"error": "شناسه تراکنش معتبر نیست."})
                 now = int(time.time())
                 db.execute("BEGIN IMMEDIATE")
+                existing=db.execute("SELECT title,amount,kind,category,occurred_at,status FROM transactions WHERE id=? AND tenant_id=?",
+                                    (tx_id,user["tenant_id"])).fetchone()
+                if existing:
+                    if (existing["title"]==title.strip() and existing["amount"]==amount and existing["kind"]==kind and
+                        existing["category"]==(category.strip() or "عمومی") and existing["occurred_at"]==occurred_at and
+                        existing["status"]=="posted"):
+                        db.commit()
+                        return self.send_json(200,{"id":tx_id,"ok":True,"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه تراکنش قبلاً برای اطلاعات متفاوت یا برگشت‌خورده استفاده شده است."})
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (tx_id,user["tenant_id"],user["id"],title.strip(),amount,kind,category.strip() or "عمومی",occurred_at,now))
                 post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title.strip(),amount,kind,occurred_at)
