@@ -143,6 +143,10 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         setProducts(catalog?.items || []);
         setProductCatalog({ page: catalog?.page || productPage, pageSize: catalog?.pageSize || 25, totalCount: catalog?.totalCount || 0, totalPages: catalog?.totalPages || 0 });
         setStockRows(currentStock || []);
+        await operationStore.cacheInventorySnapshot({
+          tenantId: tenant.id, branchId: branch.id,
+          products: catalog?.items || [], stockRows: currentStock || []
+        });
       }
       else if (page === "customers") setCustomers(await loadCustomers());
       else if (page === "sales") setSales(await client.get("/api/sales/orders"));
@@ -171,6 +175,12 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         ]);
         setProducts(productRows || []);
         setStockRows(currentStock || []);
+        if (canViewProducts) {
+          await operationStore.cacheInventorySnapshot({
+            tenantId: tenant.id, branchId: branch.id,
+            products: productRows || [], stockRows: currentStock || []
+          });
+        }
         if (canViewAccountingReports) {
           try { setTrialBalance(await client.get("/api/accounting/trial-balance")); }
           catch { setTrialBalance(null); }
@@ -182,7 +192,27 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
         setActiveSessions(sessionRows || []);
       }
     } catch (loadError) {
-      setError(formatApiError(loadError));
+      if (isNetworkUnavailable(loadError) && canViewProducts
+        && (page === "products" || page === "dashboard")) {
+        try {
+          const [cachedProducts, cachedStock] = await Promise.all([
+            operationStore.getInventoryProducts(tenant.id),
+            operationStore.getInventoryStock(tenant.id, branch.id)
+          ]);
+          const visibleProducts = page === "products"
+            ? cachedProducts.filter(product => !appliedProductSearch.trim()
+              || product.name?.toLowerCase().includes(appliedProductSearch.trim().toLowerCase())
+              || product.sku?.toLowerCase().includes(appliedProductSearch.trim().toLowerCase()))
+            : cachedProducts;
+          setProducts(visibleProducts);
+          setStockRows(cachedStock || []);
+          setError("ارتباط با سرور برقرار نیست؛ اطلاعات ذخیره‌شده کالا و موجودی به‌صورت آفلاین نمایش داده می‌شود.");
+        } catch {
+          setError(formatApiError(loadError));
+        }
+      } else {
+        setError(formatApiError(loadError));
+      }
     } finally {
       setLoading(false);
     }
@@ -195,7 +225,11 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
       if (page === "customers" || page === "dashboard") loadData();
     };
     window.addEventListener("mg-customer-sync-updated", refreshCustomerProjection);
-    return () => window.removeEventListener("mg-customer-sync-updated", refreshCustomerProjection);
+    window.addEventListener("mg-inventory-sync-updated", refreshCustomerProjection);
+    return () => {
+      window.removeEventListener("mg-customer-sync-updated", refreshCustomerProjection);
+      window.removeEventListener("mg-inventory-sync-updated", refreshCustomerProjection);
+    };
   }, [page, loadData]);
 
   const openCreate = type => {
