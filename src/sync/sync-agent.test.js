@@ -56,3 +56,54 @@ test("rejects acknowledgements that do not match the submitted batch", async () 
     /acknowledgement does not match/
   );
 });
+
+test("pulls remote operations and persists the page with its cursor", async () => {
+  const saved = [];
+  const requests = [];
+  const api = {
+    async get(path) {
+      requests.push(path);
+      return {
+        operations: [
+          { sequence: 4, operationId: "remote-4", operationType: "test.created" },
+          { sequence: 5, operationId: "remote-5", operationType: "test.updated" }
+        ],
+        nextSequence: 5,
+        hasMore: false
+      };
+    }
+  };
+  const store = {
+    async getCursor(tenantId) { assert.equal(tenantId, "tenant-1"); return 3; },
+    async storeIncomingPage(tenantId, operations, cursor) { saved.push({ tenantId, operations, cursor }); }
+  };
+
+  const result = await new SyncAgent(api, store).pullIncoming("tenant-1");
+
+  assert.equal(result.status, "pulled");
+  assert.equal(result.received, 2);
+  assert.equal(result.nextSequence, 5);
+  assert.equal(requests[0], "/api/sync/operations?afterSequence=3&limit=100");
+  assert.equal(saved[0].cursor, 5);
+  assert.equal(saved[0].operations.length, 2);
+});
+
+test("does not persist a non-monotonic pull page", async () => {
+  let persisted = false;
+  const api = {
+    async get() {
+      return {
+        operations: [{ sequence: 7, operationId: "seven" }, { sequence: 6, operationId: "six" }],
+        nextSequence: 6,
+        hasMore: false
+      };
+    }
+  };
+  const store = {
+    async getCursor() { return 5; },
+    async storeIncomingPage() { persisted = true; }
+  };
+
+  await assert.rejects(new SyncAgent(api, store).pullIncoming("tenant-1"), /non-monotonic/);
+  assert.equal(persisted, false);
+});
