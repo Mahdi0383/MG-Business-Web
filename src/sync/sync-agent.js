@@ -32,7 +32,8 @@ export class SyncAgent {
         || response.operations.length > boundedPageSize
         || !Number.isSafeInteger(response?.nextSequence)
         || response.nextSequence < afterSequence
-        || typeof response.hasMore !== "boolean")
+        || typeof response.hasMore !== "boolean"
+        || (response.hasMore && response.nextSequence <= afterSequence))
         throw new Error("MG Sync API returned an invalid pull page.");
       let previousSequence = afterSequence;
       for (const operation of response.operations) {
