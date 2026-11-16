@@ -299,6 +299,109 @@ public sealed class SyncApiIntegrationTests
 
 
     [Fact]
+    public async Task BranchAcknowledgementsRemainIndependentWhenOneDeviceSwitchesBranches()
+    {
+        using var factory = CreateFactory();
+        using var client = await RegisterAndLoginAsync(factory, $"branch-cursor-{Guid.NewGuid():N}@mg.test");
+
+        var tenantResponse = await client.PostAsJsonAsync("/api/tenants", new
+        {
+            name = "Branch Cursor Store",
+            slug = $"branch-cursor-{Guid.NewGuid():N}",
+            firstBranchName = "Branch A"
+        });
+        var tenant = await tenantResponse.Content.ReadFromJsonAsync<TenantCreated>();
+        Assert.Equal(HttpStatusCode.Created, tenantResponse.StatusCode);
+        client.DefaultRequestHeaders.Add("X-MG-Tenant", tenant!.TenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+
+        var secondBranchResponse = await client.PostAsJsonAsync("/api/branches/", new
+        {
+            name = "Branch B",
+            code = "B" + Guid.NewGuid().ToString("N")[..9]
+        });
+        Assert.Equal(HttpStatusCode.Created, secondBranchResponse.StatusCode);
+        var secondBranch = await secondBranchResponse.Content.ReadFromJsonAsync<BranchCreated>();
+        Assert.NotNull(secondBranch);
+
+        var deviceId = Guid.NewGuid();
+        var heartbeatA = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Switching Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeatA.StatusCode);
+
+        client.DefaultRequestHeaders.Remove("X-MG-Branch");
+        client.DefaultRequestHeaders.Add("X-MG-Branch", secondBranch!.Id.ToString());
+        var branchBPush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = secondBranch.Id,
+                    operationType = "test.branch-b", schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow, payloadJson = "{\"branch\":\"B\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Accepted, branchBPush.StatusCode);
+        var branchBAck = await branchBPush.Content.ReadFromJsonAsync<SyncPushResponse>();
+        var branchBSequence = branchBAck!.Accepted.Single().Sequence;
+
+        client.DefaultRequestHeaders.Remove("X-MG-Branch");
+        client.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
+        var branchAPush = await client.PostAsJsonAsync("/api/sync/operations", new
+        {
+            operations = new[]
+            {
+                new
+                {
+                    operationId = Guid.NewGuid(), deviceId, branchId = tenant.BranchId,
+                    operationType = "test.branch-a", schemaVersion = 1, authorityEpoch = 0,
+                    occurredAtUtc = DateTimeOffset.UtcNow, payloadJson = "{\"branch\":\"A\"}",
+                    payloadSha256 = (string?)null
+                }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Accepted, branchAPush.StatusCode);
+        var branchAAck = await branchAPush.Content.ReadFromJsonAsync<SyncPushResponse>();
+        var branchASequence = branchAAck!.Accepted.Single().Sequence;
+        Assert.True(branchASequence > branchBSequence);
+
+        var ackA = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId, branchId = tenant.BranchId, sequence = branchASequence
+        });
+        Assert.Equal(HttpStatusCode.OK, ackA.StatusCode);
+
+        client.DefaultRequestHeaders.Remove("X-MG-Branch");
+        client.DefaultRequestHeaders.Add("X-MG-Branch", secondBranch.Id.ToString());
+        var heartbeatB = await client.PostAsJsonAsync("/api/sync/heartbeat", new
+        {
+            deviceId, deviceName = "Switching Device", platform = "Test", clientVersion = "0.1.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, heartbeatB.StatusCode);
+
+        var inventory = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
+        var device = inventory!.Single(x => x.DeviceId == deviceId);
+        Assert.Equal(secondBranch.Id, device.BranchId);
+        Assert.Equal(0, device.LastAcknowledgedSequence);
+        Assert.Equal(1, device.PendingOperationCount);
+
+        var ackB = await client.PostAsJsonAsync("/api/sync/acknowledgements", new
+        {
+            deviceId, branchId = secondBranch.Id, sequence = branchBSequence
+        });
+        Assert.Equal(HttpStatusCode.OK, ackB.StatusCode);
+        inventory = await client.GetFromJsonAsync<DevicePresenceResponse[]>("/api/sync/devices");
+        device = inventory!.Single(x => x.DeviceId == deviceId);
+        Assert.Equal(branchBSequence, device.LastAcknowledgedSequence);
+        Assert.Equal(0, device.PendingOperationCount);
+    }
+
+    [Fact]
     public async Task HeartbeatRegistersDeviceAndOwnerCanReadConnectivity()
     {
         using var factory = CreateFactory();
