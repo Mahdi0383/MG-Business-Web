@@ -2408,6 +2408,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "جهت تعداد با نوع گردش انبار سازگار نیست."})
                 if type(unit_cost) is not int or not 0 <= unit_cost <= 9007199254740991:
                     return self.send_json(400, {"error": "بهای واحد معتبر نیست."})
+                if abs(delta) * unit_cost > 9007199254740991:
+                    return self.send_json(400, {"error": "ارزش کل گردش انبار از محدوده مجاز بیشتر است."})
                 if not isinstance(note,str) or len(note) > 300:
                     return self.send_json(400, {"error": "یادداشت بیش از حد طولانی است."})
                 movement_id=str(data.get("id") or secrets.token_urlsafe(18))
