@@ -282,7 +282,7 @@ class ApiIntegrationTests(unittest.TestCase):
             db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
             journal_id = db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='inventory_movement' AND source_id=?""",
-                (setup["user"]["tenantId"],"move-in-1")).fetchone()["id"]
+                (db.execute("SELECT tenant_id FROM users WHERE username=?", ("owner",)).fetchone()["tenant_id"],"move-in-1")).fetchone()["id"]
             db.execute("DELETE FROM journal_lines WHERE entry_id=?", (journal_id,))
             db.commit()
         finally:
