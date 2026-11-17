@@ -74,29 +74,48 @@ def remember_public_order_attempt(ip, now):
         PUBLIC_ORDER_FAILURES.pop(next(iter(PUBLIC_ORDER_FAILURES)))
     return True
 
-def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normalized_lines):
-    existing=db.execute("""SELECT id,order_number,total,customer_id,status FROM orders
+def public_order_fingerprint(customer_name, phone, normalized_lines):
+    payload = {
+        "customerName": customer_name,
+        "phone": phone,
+        "items": [
+            {"productId": product_id, "addons": list(addon_ids), "quantity": quantity}
+            for (product_id, addon_ids), quantity in sorted(normalized_lines.items())
+        ],
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normalized_lines,
+                           request_fingerprint=None):
+    existing=db.execute("""SELECT id,order_number,total,customer_id,status,request_fingerprint FROM orders
         WHERE id=? AND tenant_id=?""",(order_id,tenant_id)).fetchone()
     if not existing:
         return None
     if existing["status"] != "paid":
         return False
-    customer=db.execute("SELECT full_name,phone FROM customers WHERE id=? AND tenant_id=?",
-                        (existing["customer_id"],tenant_id)).fetchone()
-    if not customer or customer["full_name"] != customer_name or customer["phone"] != phone:
-        return False
-    old_items={}
-    for row in db.execute("SELECT product_id,quantity,addons_json FROM order_items WHERE tenant_id=? AND order_id=?",
-                          (tenant_id,order_id)).fetchall():
-        try:
-            saved=json.loads(row["addons_json"] or "[]")
-            addon_ids=tuple(sorted(item["id"] for item in saved if isinstance(item,dict) and isinstance(item.get("id"),str)))
-        except (TypeError,ValueError):
-            addon_ids=()
-        key=(row["product_id"],addon_ids)
-        old_items[key]=old_items.get(key,0)+row["quantity"]
-    if old_items != normalized_lines:
-        return False
+    if existing["request_fingerprint"]:
+        if not request_fingerprint or not hmac.compare_digest(existing["request_fingerprint"], request_fingerprint):
+            return False
+    else:
+        # Compatibility for orders created before fingerprint migration 13.
+        customer=db.execute("SELECT full_name,phone FROM customers WHERE id=? AND tenant_id=?",
+                            (existing["customer_id"],tenant_id)).fetchone()
+        if not customer or customer["full_name"] != customer_name or customer["phone"] != phone:
+            return False
+        old_items={}
+        for row in db.execute("SELECT product_id,quantity,addons_json FROM order_items WHERE tenant_id=? AND order_id=?",
+                              (tenant_id,order_id)).fetchall():
+            try:
+                saved=json.loads(row["addons_json"] or "[]")
+                addon_ids=tuple(sorted(item["id"] for item in saved if isinstance(item,dict) and isinstance(item.get("id"),str)))
+            except (TypeError,ValueError):
+                addon_ids=()
+            key=(row["product_id"],addon_ids)
+            old_items[key]=old_items.get(key,0)+row["quantity"]
+        if old_items != normalized_lines:
+            return False
     return {"orderNumber":existing["order_number"],"total":existing["total"]}
 
 SCHEMA = """
@@ -419,6 +438,11 @@ def connect():
                     db.execute("UPDATE order_items SET discount_amount=? WHERE id=?",
                         (allocated,item["id"]))
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(12,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=13").fetchone():
+        order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)").fetchall()}
+        if "request_fingerprint" not in order_columns:
+            db.execute("ALTER TABLE orders ADD COLUMN request_fingerprint TEXT")
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(13,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -1436,8 +1460,9 @@ class Handler(SimpleHTTPRequestHandler):
                 client_order_id = data.get("clientOrderId")
                 if client_order_id is not None and (not isinstance(client_order_id,str) or not 8 <= len(client_order_id) <= 100):
                     return self.send_json(400, {"error": "شناسه سفارش آنلاین معتبر نیست."})
+                request_fingerprint = public_order_fingerprint(name.strip(), phone.strip(), normalized_lines)
                 if client_order_id:
-                    duplicate=public_order_duplicate(db,"public-"+client_order_id,tenant_id,name.strip(),phone.strip(),normalized_lines)
+                    duplicate=public_order_duplicate(db,"public-"+client_order_id,tenant_id,name.strip(),phone.strip(),normalized_lines,request_fingerprint)
                     if duplicate is False:
                         return self.send_json(409,{"error":"شناسه سفارش آنلاین قبلاً با اطلاعات متفاوتی استفاده شده است."})
                     if duplicate:
@@ -1449,7 +1474,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("BEGIN IMMEDIATE")
                 # Recheck idempotency under the write lock to serialize concurrent retries.
                 if client_order_id:
-                    duplicate=public_order_duplicate(db,"public-"+client_order_id,tenant_id,name.strip(),phone.strip(),normalized_lines)
+                    duplicate=public_order_duplicate(db,"public-"+client_order_id,tenant_id,name.strip(),phone.strip(),normalized_lines,request_fingerprint)
                     if duplicate is False:
                         db.rollback()
                         return self.send_json(409,{"error":"شناسه سفارش آنلاین قبلاً با اطلاعات متفاوتی استفاده شده است."})
@@ -1506,8 +1531,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "مبلغ سفارش معتبر نیست."})
                 order_id, created = ("public-"+client_order_id) if client_order_id else secrets.token_urlsafe(18), int(now)
                 order_number = "MG-ON-%s-%s" % (time.strftime("%Y%m%d"),secrets.token_hex(3).upper())
-                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
-                    VALUES(?,?,?,?,?,'paid',?,0,?,'credit',?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created))
+                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at,request_fingerprint)
+                    VALUES(?,?,?,?,?,'paid',?,0,?,'credit',?,?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created,request_fingerprint if client_order_id else None))
                 db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                     VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),tenant_id,customer_id,actor["id"],"order",order_id,subtotal,"سفارش آنلاین "+order_number,created))
                 for product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot in order_lines:
