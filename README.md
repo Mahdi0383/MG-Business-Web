@@ -183,6 +183,7 @@ MG_ENV=production python deployment_preflight.py --production
 Backend باید فقط روی `127.0.0.1:8080` گوش دهد. پورت ۸۰/۴۴۳ را در فایروال برای Nginx باز کنید و پورت ۸۰۸۰ را عمومی نکنید. فقط IP/CIDR مربوط به reverse proxy واقعی را در `MG_TRUSTED_PROXIES` وارد کنید؛ اعتماد به هدرهای forwarding از کلاینت‌های عمومی ناامن است.
 
 این نمونه‌ها برای Linux با systemd و Nginx هستند؛ نصب واقعی همچنان نیازمند صدور گواهی TLS معتبر، تنظیم DNS، فایروال، مدیریت امن رازها و آزمون بازیابی پشتیبان است.
+راهنمای کامل نصب گام‌به‌گام، صدور TLS، فعال‌سازی systemd، بررسی پشتیبان رمزنگاری‌شده، تمرین بازیابی، ارتقا و واکنش به رخداد در [deploy/PRODUCTION_RUNBOOK.md](deploy/PRODUCTION_RUNBOOK.md) قرار دارد.
 
 ## اجرای آزمون‌ها
 
