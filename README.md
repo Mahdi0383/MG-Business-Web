@@ -52,7 +52,7 @@ git pull --ff-only
 - `GET/POST /api/product-addons`، `POST /api/product-addons/{id}` و `DELETE /api/product-addons/{id}` برای مدیریت افزودنی کالا
 - `GET /api/public/menu` و `POST /api/public/orders` برای منوی عمومی و سفارش QR همراه با افزودنی‌ها
 - `GET /api/reports/sales-by-product` و `GET /api/reports/best-selling-today` برای رتبه‌بندی کالاها بر اساس فروش خالص پس از تخصیص دقیق تخفیف فاکتور به ردیف‌ها؛ گزارش پرفروش روز تعداد فروش، مبلغ خالص و تعداد سفارش را بر اساس تاریخ محلی سرور نمایش می‌دهد
-- `GET /api/backup` و `POST /api/backup/restore` برای پشتیبان کامل و بازیابی اتمیک همان فضای کاری
+- `GET /api/backup` و `POST /api/backup/restore` برای پشتیبان کامل و بازیابی اتمیک همان فضای کاری; بازیابی داده‌های کسب‌وکار، کاربران موجود را از نظر نام کاربری، رمز عبور، نقش و فعال/غیرفعال بودن تغییر نمی‌دهد تا دسترسی فعلی مدیران و نشست‌ها ناخواسته از بین نرود
 - `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger` و `POST /api/customers/{id}/payments`، `GET /api/customers/{id}/loyalty` برای مانده و گردش امتیازهای باشگاه
 - `GET /api/inventory` و `POST /api/inventory/movements`
