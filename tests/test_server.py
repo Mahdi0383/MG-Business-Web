@@ -691,13 +691,31 @@ class ApiIntegrationTests(unittest.TestCase):
 
     def test_backup_export_rejects_oversized_workspace_before_fetching_rows(self):
         original_limit = server.BACKUP_MAX_ROWS
+        token = "backup-export-limit-test-token"
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        db = server.connect()
+        try:
+            owner = db.execute("SELECT id FROM users WHERE role='owner' ORDER BY created_at LIMIT 1").fetchone()
+            self.assertIsNotNone(owner)
+            now = int(time.time())
+            db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
+                       (token_hash,owner["id"],now+600,now))
+            db.commit()
+        finally:
+            db.close()
         try:
             server.BACKUP_MAX_ROWS = 1
-            status, result = self.request("GET", "/api/backup", token=self.owner_token)
+            status, result = self.request("GET", "/api/backup", token=token)
             self.assertEqual(status, 413)
             self.assertIn("پشتیبان", result["error"])
         finally:
             server.BACKUP_MAX_ROWS = original_limit
+            db = server.connect()
+            try:
+                db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
+                db.commit()
+            finally:
+                db.close()
 
     def test_public_static_server_hides_source_and_development_files(self):
         with urllib.request.urlopen(self.base + "/", timeout=5) as response:
