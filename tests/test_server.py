@@ -547,6 +547,27 @@ class ApiIntegrationTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
+        db=server.connect()
+        try:
+            movement_rows=[dict(row) for row in db.execute("""SELECT * FROM inventory_movements
+                WHERE tenant_id=? AND movement_type='sale' AND note=?""",
+                (tenant_id,"سفارش "+result["orderNumber"])).fetchall()]
+            self.assertTrue(movement_rows)
+            db.execute("DELETE FROM inventory_movements WHERE tenant_id=? AND movement_type='sale' AND note=?",
+                (tenant_id,"سفارش "+result["orderNumber"]))
+            db.commit()
+        finally:
+            db.close()
+        status, damaged_stock_retry=self.request("POST","/api/orders",retry_payload,token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(movement_rows[0]); placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO inventory_movements("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(row[column] for column in columns) for row in movement_rows])
+            db.commit()
+        finally:
+            db.close()
         status, duplicate_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
         self.assertEqual(duplicate_loyalty["balance"],2)
         self.assertEqual(len(duplicate_loyalty["items"]),1)
