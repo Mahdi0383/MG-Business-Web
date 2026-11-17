@@ -2661,8 +2661,21 @@ class Handler(SimpleHTTPRequestHandler):
                     if (existing["title"]==title.strip() and existing["amount"]==amount and existing["kind"]==kind and
                         existing["category"]==(category.strip() or "عمومی") and existing["occurred_at"]==occurred_at and
                         existing["status"]=="posted"):
-                        db.commit()
-                        return self.send_json(200,{"id":tx_id,"ok":True,"duplicate":True})
+                        journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                            JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?""",
+                            (user["tenant_id"],tx_id)).fetchall()
+                        expected_rows=(
+                            [("1000",amount,0),("4000",0,amount)] if kind=="income"
+                            else [("5000",amount,0),("1000",0,amount)]
+                        )
+                        actual_rows=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                        if len(journal_rows)==2 and actual_rows==sorted(expected_rows):
+                            db.commit()
+                            return self.send_json(200,{"id":tx_id,"ok":True,"duplicate":True})
+                        db.rollback()
+                        return self.send_json(409,{"error":"سند حسابداری تراکنش ناقص یا نامتوازن است؛ تکرار عملیات پذیرفته نشد."})
                     db.rollback()
                     return self.send_json(409,{"error":"شناسه تراکنش قبلاً برای اطلاعات متفاوت یا برگشت‌خورده استفاده شده است."})
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
