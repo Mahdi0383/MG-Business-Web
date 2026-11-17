@@ -224,6 +224,10 @@ if 'if path.startswith("/api/cash-register/shifts/") and path.endswith("/close")
     raise SystemExit("Cash register shift close and reconciliation API are missing")
 if 'cash_register_shifts' not in server[server.find('snapshot = {"schema":"mg-business-server-backup"'):]:
     raise SystemExit("Cash register shifts must be included in workspace backups")
+if 'SELECT rowid AS __rowid,* FROM journal_entries' not in server or 'record["rowid"]=record.pop("__rowid")' not in server:
+    raise SystemExit("Version 4 backups must preserve journal rowids for active shift reconciliation")
+if 'backup_version<4' not in server or 'record["journal_cursor"]=-1' not in server:
+    raise SystemExit("Version 3 cash shifts must retain their timestamp-based restore compatibility")
 if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
     raise SystemExit("Cash register opening and reconciliation UI is missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
