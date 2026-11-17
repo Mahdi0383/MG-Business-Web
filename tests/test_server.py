@@ -894,13 +894,15 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["schema"], "mg-business-server-backup")
-        self.assertEqual(result["version"], 2)
+        self.assertEqual(result["version"], 3)
         self.assertIn("transactions", result["tables"])
         self.assertIn("suppliers", result["tables"])
         self.assertIn("purchase_invoices", result["tables"])
         self.assertIn("supplier_payments", result["tables"])
         self.assertIn("gamenet_reservations", result["tables"])
         self.assertIn("game_session_segments", result["tables"])
+        self.assertIn("accounting_periods", result["tables"])
+        self.assertIn("cash_register_shifts", result["tables"])
         self.assertNotIn("password_hash", result["tables"]["users"][0])
 
         status, result = self.request("POST", "/api/gamenet/devices", {
@@ -2805,6 +2807,7 @@ class ApiIntegrationTests(unittest.TestCase):
             legacy_snapshot=json.loads(json.dumps(snapshot))
             legacy_snapshot["version"]=1
             legacy_snapshot["tables"].pop("accounting_periods")
+            legacy_snapshot["tables"].pop("cash_register_shifts")
             status,legacy_restored=self.request("POST","/api/backup/restore",legacy_snapshot,owner)
             self.assertEqual(status,200)
             status,periods_after_legacy_restore=self.request("GET","/api/accounting/periods",token=owner)
