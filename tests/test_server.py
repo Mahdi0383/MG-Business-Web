@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import http.client
 import os
 import tempfile
 import threading
@@ -60,10 +61,18 @@ class ApiIntegrationTests(unittest.TestCase):
             return error.code, json.loads(error.read())
 
     def test_request_body_limit_is_small_except_for_backup_restore(self):
-        oversized = {"padding": "x" * (server.MAX_BODY + 1)}
-        status, result = self.request("POST", "/api/login", oversized)
-        self.assertEqual(status, 400)
-        self.assertIn("حجم درخواست", result["error"])
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+        try:
+            connection.putrequest("POST", "/api/login")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", str(server.MAX_BODY + 1))
+            connection.endheaders()
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertIn("حجم درخواست", payload["error"])
+        finally:
+            connection.close()
 
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
         tenant_ids = ("tenant-public-a", "tenant-public-b")
