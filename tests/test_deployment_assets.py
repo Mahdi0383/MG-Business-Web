@@ -38,6 +38,20 @@ class ProductionDeploymentAssetTests(unittest.TestCase):
         self.assertLess(startup.index("deployment_preflight.py --production"),
                         startup.index("exec /usr/bin/python3 server.py"))
 
+    def test_production_runbook_covers_tls_backup_restore_and_release_gates(self):
+        runbook = (ROOT / "deploy/PRODUCTION_RUNBOOK.md").read_text(encoding="utf-8")
+        for required in (
+            "MG_TRUSTED_PROXIES",
+            "MG_BACKUP_ENCRYPTION_KEY",
+            "certbot renew --dry-run",
+            "/api/ready",
+            "backup_manager.py --verify",
+            "restore drills",
+            "independent security review",
+            "penetration test",
+        ):
+            self.assertIn(required, runbook)
+
     def test_production_environment_template_keeps_backend_private(self):
         env = (ROOT / "deploy/systemd/mg-business.env.example").read_text(encoding="utf-8")
         self.assertIn("MG_ENV=production", env)
