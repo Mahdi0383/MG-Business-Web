@@ -214,7 +214,7 @@ if 'if backup_version >= 2:' not in server or 'accounting_periods' not in server
     raise SystemExit("Legacy backup restore must preserve accounting period locks")
 if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
     raise SystemExit("Accounting period close form is missing")
-if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 16' not in server:
+if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 17' not in server:
     raise SystemExit("Cash register shift schema migration is missing")
 if 'cash_register_expected_cash' not in server or 'a.code=\'1000\'' not in server:
     raise SystemExit("Cash register reconciliation must use posted cash-account journal movements")
@@ -230,4 +230,10 @@ if 'backup_version<4' not in server or 'record["journal_cursor"]=-1' not in serv
     raise SystemExit("Version 3 cash shifts must retain their timestamp-based restore compatibility")
 if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
     raise SystemExit("Cash register opening and reconciliation UI is missing")
+if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'SCHEMA_VERSION = 17' not in server:
+    raise SystemExit("Cafe kitchen fulfillment migration is missing")
+if 'if path.startswith("/api/orders/") and path.endswith("/fulfillment"):' not in server or 'cafe.order.fulfillment.updated' not in server:
+    raise SystemExit("Audited kitchen order fulfillment API is missing")
+if 'renderKitchenQueue' not in app or 'data-order-fulfillment' not in app:
+    raise SystemExit("Cafe kitchen queue UI is missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
