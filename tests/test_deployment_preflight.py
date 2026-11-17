@@ -15,6 +15,25 @@ class DeploymentPreflightTests(unittest.TestCase):
         errors = validate_config({"MG_ENV": "production"}, ROOT)
         self.assertTrue(any("MG_LICENSE_SECRET" in error for error in errors))
         self.assertTrue(any("https://" in error for error in errors))
+        self.assertTrue(any("MG_BACKUP_ENCRYPTION_KEY" in error for error in errors))
+
+    def test_production_requires_a_valid_backup_encryption_key(self):
+        base = {
+            "MG_ENV": "production",
+            "MG_LICENSE_SECRET": "production-secret-with-more-than-32-characters",
+            "MG_PUBLIC_URL": "https://business.example.com",
+            "MG_HOST": "127.0.0.1",
+            "MG_TRUSTED_PROXIES": "127.0.0.1/32",
+            "MG_BACKUP_ENCRYPTION_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        }
+        self.assertFalse(any("MG_BACKUP_ENCRYPTION_KEY" in error for error in validate_config(base, ROOT)))
+        for invalid in ("replace-with-a-key", "short", "!!!!"):
+            with self.subTest(key=invalid):
+                env = dict(base, MG_BACKUP_ENCRYPTION_KEY=invalid)
+                self.assertTrue(any("MG_BACKUP_ENCRYPTION_KEY" in error for error in validate_config(env, ROOT)))
+        missing = dict(base)
+        del missing["MG_BACKUP_ENCRYPTION_KEY"]
+        self.assertTrue(any("MG_BACKUP_ENCRYPTION_KEY" in error for error in validate_config(missing, ROOT)))
 
     def test_production_rejects_template_license_secret(self):
         errors = validate_config({
@@ -52,6 +71,7 @@ class DeploymentPreflightTests(unittest.TestCase):
         env = {
             "MG_ENV": "production",
             "MG_LICENSE_SECRET": "production-secret-with-more-than-32-characters",
+            "MG_BACKUP_ENCRYPTION_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "MG_HOST": "0.0.0.0",
             "MG_PUBLIC_URL": "https://business.example.com",
             "MG_DATA_DIR": "/var/lib/mg-business",
