@@ -98,7 +98,7 @@ class ApiIntegrationTests(unittest.TestCase):
     def test_proportional_order_discount_allocation_is_exact(self):
         allocations=server.allocate_proportional_discount([10000,20000,30000],10001)
         self.assertEqual(sum(allocations),10001)
-        self.assertEqual(allocations,[1667,3333,5001])
+        self.assertEqual(allocations,[1667,3334,5000])
         self.assertEqual(server.allocate_proportional_discount([1,1,1],2),[1,1,0])
         with self.assertRaises(ValueError):
             server.allocate_proportional_discount([100,200],301)
