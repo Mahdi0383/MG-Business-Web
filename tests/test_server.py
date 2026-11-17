@@ -334,6 +334,12 @@ class ApiIntegrationTests(unittest.TestCase):
         status, expense_report=self.request("GET","/api/accounting/profit-loss",token=token)
         self.assertEqual(status,200)
         self.assertEqual(expense_report["expenses"],25000)
+        status, expense_trial=self.request("GET","/api/accounting/trial-balance",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(expense_trial["totalDebit"],expense_trial["totalCredit"])
+        status, expense_balance=self.request("GET","/api/accounting/balance-sheet",token=token)
+        self.assertEqual(status,200)
+        self.assertTrue(expense_balance["balanced"])
 
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-bad", "title": "Invalid amount", "amount": True,
