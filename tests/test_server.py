@@ -2803,6 +2803,43 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_accounting_period_close_rejects_unbalanced_journal_entries(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"unbalanced-period.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Unbalanced Period","username":"balance-owner",
+                "password":"balance-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            today=date.today().isoformat()
+            status,transaction=self.request("POST","/api/transactions",{
+                "id":"period-unbalanced-entry","title":"سند آزمایشی","amount":15000,
+                "kind":"income","category":"test","createdAt":today+"T12:00:00Z"},owner)
+            self.assertEqual(status,201)
+            db=server.connect()
+            try:
+                entry=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                    AND source_type='transaction' AND source_id=?""",
+                    (setup["user"]["tenantId"],transaction["id"])).fetchone()
+                self.assertIsNotNone(entry)
+                line=db.execute("SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=? LIMIT 1",
+                    (setup["user"]["tenantId"],entry["id"])).fetchone()
+                self.assertIsNotNone(line)
+                db.execute("DELETE FROM journal_lines WHERE id=?",(line["id"],))
+                db.commit()
+            finally:
+                db.close()
+            status,result=self.request("POST","/api/accounting/periods/close",
+                {"startDate":today,"endDate":today},owner)
+            self.assertEqual(status,409)
+            self.assertIn("نامتوازن",result["error"])
+            status,periods=self.request("GET","/api/accounting/periods",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(periods["items"],[])
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_custom_chart_of_accounts_is_owner_manager_only_and_tenant_scoped(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"custom-chart.sqlite3"
