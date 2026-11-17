@@ -86,7 +86,7 @@ try {
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
 
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, login, dashboard, accounting, custom account creation, and transaction posting.");
+  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, and cafe POS order.");
 } finally {
   await browser.close();
 }
