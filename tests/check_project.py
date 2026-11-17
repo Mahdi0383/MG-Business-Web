@@ -35,9 +35,11 @@ if "confirmOverlay" not in parser.ids or "toastRegion" not in parser.ids:
     raise SystemExit("branded feedback dialogs are missing")
 if "window.alert=showToast" not in js or "confirm(" in js:
     raise SystemExit("native dialogs must be replaced by branded feedback UI")
+server = (root / "server.py").read_text(encoding="utf-8")
 if "data-game-segments" not in js or "/api/gamenet/sessions/" not in js:
     raise SystemExit("GameNet billing segment history UI is missing")
-server = (root / "server.py").read_text(encoding="utf-8")
+if "game-payment-method" not in js or "paymentMethod" not in server:
+    raise SystemExit("GameNet settlement payment-method UI/API is missing")
 if "def log_error(self, message, *args):" not in server:
     raise SystemExit("HTTP handler must safely format standard-library error log arguments")
 if 'resolved.name in ("server.py","license_tool.py","backup_manager.py","README.md")' not in server:

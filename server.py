@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS game_sessions(
  rate_per_hour INTEGER NOT NULL CHECK(rate_per_hour>=0),
  is_free INTEGER NOT NULL CHECK(is_free IN (0,1)),
  amount_due INTEGER NOT NULL DEFAULT 0 CHECK(amount_due>=0),
+ payment_method TEXT NOT NULL DEFAULT 'cash' CHECK(payment_method IN ('cash','card','online','credit')),
  created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_game_sessions_tenant_start ON game_sessions(tenant_id,started_at DESC);
@@ -376,6 +377,13 @@ def connect():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(9,?)", (int(time.time()),))
     if not db.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(10,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=11").fetchone():
+        session_columns={row["name"] for row in db.execute("PRAGMA table_info(game_sessions)").fetchall()}
+        if "payment_method" not in session_columns:
+            db.execute("ALTER TABLE game_sessions ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'cash' CHECK(payment_method IN ('cash','card','online','credit'))")
+            db.execute("""UPDATE game_sessions SET payment_method='credit'
+                WHERE status='ended' AND customer_id IS NOT NULL AND amount_due>0""")
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(11,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -1001,7 +1009,8 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT s.id,s.device_id AS deviceId,d.name AS deviceName,
                     s.customer_id AS customerId,c.full_name AS customerName,s.started_at AS startedAt,
                     s.ended_at AS endedAt,s.status,s.players_count AS playersCount,
-                    s.rate_per_hour AS ratePerHour,s.is_free AS isFree,s.amount_due AS amountDue
+                    s.rate_per_hour AS ratePerHour,s.is_free AS isFree,s.amount_due AS amountDue,
+                    s.payment_method AS paymentMethod
                     FROM game_sessions s JOIN game_devices d ON d.id=s.device_id
                     LEFT JOIN customers c ON c.id=s.customer_id
                     WHERE s.tenant_id=? ORDER BY s.started_at DESC LIMIT 500""", (user["tenant_id"],)).fetchall()
@@ -1535,6 +1544,10 @@ class Handler(SimpleHTTPRequestHandler):
                     # Older JSON backups predate segmented GameNet billing. Reconstruct
                     # one historical segment per session so restored running sessions
                     # remain adjustable and ended sessions retain their original rates.
+                    if any("payment_method" not in row for row in tables.get("game_sessions",[])):
+                        db.execute("""UPDATE game_sessions SET payment_method='credit'
+                            WHERE tenant_id=? AND status='ended' AND customer_id IS NOT NULL AND amount_due>0
+                            AND payment_method='cash'""",(tenant_id,))
                     db.execute("""INSERT INTO game_session_segments
                         (id,tenant_id,session_id,device_id,started_at,ended_at,players_count,rate_per_hour,is_free)
                         SELECT 'restore-'||s.id,s.tenant_id,s.id,s.device_id,s.started_at,s.ended_at,
@@ -1823,10 +1836,17 @@ class Handler(SimpleHTTPRequestHandler):
                     elapsed=max(0,int(session["ended_at"] or session["started_at"])-session["started_at"])
                     db.commit()
                     return self.send_json(200,{"ok":True,"amountDue":session["amount_due"],
-                        "elapsedSeconds":elapsed,"duplicate":True})
+                        "elapsedSeconds":elapsed,"paymentMethod":session["payment_method"],"duplicate":True})
                 if session["status"]!="running":
                     db.rollback()
                     return self.send_json(409,{"error":"این نشست قابل پایان‌دادن نیست."})
+                payment_method=data.get("paymentMethod","credit" if session["customer_id"] else "cash")
+                if payment_method not in ("cash","card","online","credit"):
+                    db.rollback()
+                    return self.send_json(400,{"error":"روش تسویه نشست معتبر نیست."})
+                if payment_method=="credit" and not session["customer_id"]:
+                    db.rollback()
+                    return self.send_json(400,{"error":"برای تسویه اعتباری باید مشتری نشست مشخص باشد."})
                 now = int(time.time())
                 elapsed = max(0,now-session["started_at"])
                 db.execute("""UPDATE game_session_segments SET ended_at=?
@@ -1844,25 +1864,26 @@ class Handler(SimpleHTTPRequestHandler):
                 if amount > 9007199254740991:
                     db.rollback()
                     return self.send_json(400, {"error":"مبلغ صورتحساب نشست بیش از حد مجاز است."})
-                db.execute("UPDATE game_sessions SET status='ended',ended_at=?,amount_due=? WHERE id=? AND tenant_id=?",
-                           (now,amount,session_id,user["tenant_id"]))
+                db.execute("UPDATE game_sessions SET status='ended',ended_at=?,amount_due=?,payment_method=? WHERE id=? AND tenant_id=?",
+                           (now,amount,payment_method,session_id,user["tenant_id"]))
                 if amount > 0:
                     tx_id = "game-"+session_id
                     title = "هزینه بازی "+session_id
                     occurred_at = time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now))
                     db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                         VALUES(?,?,?,?,?,'income','گیم‌نت',?,?)""", (tx_id,user["tenant_id"],user["id"],title,amount,occurred_at,now))
-                    if session["customer_id"]:
+                    if payment_method=="credit":
                         db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                             VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],session["customer_id"],user["id"],
                             "game_session",session_id,amount,"هزینه بازی "+session_id,now))
                         post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,"1100")
                     else:
-                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at)
+                        payment_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
+                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,payment_account)
                 audit(db,user["tenant_id"],user["id"],"gamenet.session.ended","game_session",session_id,
-                      {"amount":amount,"elapsedSeconds":elapsed})
+                      {"amount":amount,"elapsedSeconds":elapsed,"paymentMethod":payment_method})
                 db.commit()
-                return self.send_json(200, {"ok":True,"amountDue":amount,"elapsedSeconds":elapsed})
+                return self.send_json(200, {"ok":True,"amountDue":amount,"elapsedSeconds":elapsed,"paymentMethod":payment_method})
             if path == "/api/loyalty/program":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error":"ماژول مشتریان در لایسنس فعال نیست."})

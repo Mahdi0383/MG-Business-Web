@@ -535,6 +535,7 @@ class ApiIntegrationTests(unittest.TestCase):
             db.close()
         status, result = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status, 200)
+        self.assertEqual(result["paymentMethod"],"credit")
         self.assertGreaterEqual(result["amountDue"], 39000)
         self.assertLess(result["amountDue"], 43000)
         game_charge = result["amountDue"]
@@ -542,6 +543,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(retry_end["duplicate"])
         self.assertEqual(retry_end["amountDue"],game_charge)
+        self.assertEqual(retry_end["paymentMethod"],"credit")
         status, result = self.request("GET", "/api/gamenet/devices", token=token)
         self.assertEqual(result["items"][0]["name"], "PC-01 Updated")
         status, result = self.request("GET", "/api/customers", token=token)
@@ -573,6 +575,48 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/gamenet/sessions/session-free/end", {}, token)
         self.assertEqual(status, 200)
         self.assertEqual(result["amountDue"], 0)
+        status, result = self.request("POST", "/api/gamenet/devices", {
+            "id":"pc-card","name":"Card PC","deviceType":"pc","hourlyRate":120000,"isFree":False
+        },token)
+        self.assertEqual(status,201)
+        status, result = self.request("POST","/api/gamenet/sessions",{
+            "id":"session-card","deviceId":"pc-card","customerId":"customer-1","playersCount":1
+        },token)
+        self.assertEqual(status,201)
+        db=server.connect()
+        try:
+            card_start=int(__import__('time').time())-120
+            db.execute("UPDATE game_sessions SET started_at=? WHERE id='session-card'",(card_start,))
+            db.execute("UPDATE game_session_segments SET started_at=? WHERE session_id='session-card'",(card_start,))
+            db.commit()
+        finally:
+            db.close()
+        status, card_settlement = self.request("POST","/api/gamenet/sessions/session-card/end",{
+            "paymentMethod":"card"
+        },token)
+        self.assertEqual(status,200)
+        self.assertEqual(card_settlement["paymentMethod"],"card")
+        self.assertGreater(card_settlement["amountDue"],0)
+        status, card_retry = self.request("POST","/api/gamenet/sessions/session-card/end",{
+            "paymentMethod":"credit"
+        },token)
+        self.assertEqual(status,200)
+        self.assertTrue(card_retry["duplicate"])
+        self.assertEqual(card_retry["paymentMethod"],"card")
+        status, customers_after_card = self.request("GET","/api/customers",token=token)
+        self.assertEqual(next(x for x in customers_after_card["items"] if x["id"]=="customer-1")["balance"],35000+game_charge)
+        db=server.connect()
+        try:
+            paid_receivable=db.execute("""SELECT COUNT(*) FROM customer_ledger
+                WHERE tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
+                AND source_type='game_session' AND source_id='session-card'""").fetchone()[0]
+            self.assertEqual(paid_receivable,0)
+            card_debit=db.execute("""SELECT SUM(l.debit) FROM journal_lines l
+                JOIN accounts a ON a.id=l.account_id JOIN journal_entries e ON e.id=l.entry_id
+                WHERE e.source_type='transaction' AND e.source_id='game-session-card' AND a.code='1010'""").fetchone()[0]
+            self.assertEqual(card_debit,card_settlement["amountDue"])
+        finally:
+            db.close()
 
         # Supplier invoices must increase stock, create payable journal entries, and settle atomically.
         status, result = self.request("POST", "/api/products", {
