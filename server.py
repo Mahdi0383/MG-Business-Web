@@ -2103,7 +2103,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(order_id,str) or not 1<=len(order_id)<=100:
                     return self.send_json(400,{"error":"شناسه سفارش معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
-                existing=db.execute("""SELECT id,order_number,customer_id,discount,total,payment_method
+                existing=db.execute("""SELECT id,order_number,customer_id,discount,total,payment_method,status
                     FROM orders WHERE id=? AND tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
                 if existing:
                     old_items={}
