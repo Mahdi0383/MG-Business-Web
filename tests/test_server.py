@@ -1468,6 +1468,33 @@ class ApiIntegrationTests(unittest.TestCase):
             status, restored_duplicate=self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,200)
             self.assertTrue(restored_duplicate["duplicate"])
+            # Public retry must reject a missing revenue posting even with a valid fingerprint.
+            db=server.connect()
+            try:
+                db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='online-addon-owner'").fetchone()["tenant_id"]
+                journal_id=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                    AND source_type='transaction' AND source_id=?""",
+                    (tenant_id,"order-public-public-addon-order-01")).fetchone()["id"]
+                saved_public_lines=[dict(row) for row in db.execute(
+                    "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
+                ).fetchall()]
+                db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
+                db.commit()
+            finally:
+                db.close()
+            status, damaged_public_retry=self.request("POST","/api/public/orders",payload)
+            self.assertEqual(status,409)
+            db=server.connect()
+            try:
+                columns=list(saved_public_lines[0]); placeholders=",".join("?" for _ in columns)
+                db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                    [tuple(row[column] for column in columns) for row in saved_public_lines])
+                db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                    BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+                db.commit()
+            finally:
+                db.close()
             db=server.connect()
             try:
                 item=db.execute("SELECT unit_price,line_total,addons_json FROM order_items WHERE order_id='public-public-addon-order-01'").fetchone()
