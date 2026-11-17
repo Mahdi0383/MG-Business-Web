@@ -2822,6 +2822,8 @@ class ApiIntegrationTests(unittest.TestCase):
             legacy_v2=json.loads(json.dumps(snapshot))
             legacy_v2["version"]=2
             legacy_v2["tables"].pop("cash_register_shifts")
+            for journal in legacy_v2["tables"]["journal_entries"]:
+                journal.pop("__rowid",None)
             status,legacy_restore=self.request("POST","/api/backup/restore",legacy_v2,owner)
             self.assertEqual(status,200)
             status,preserved=self.request("GET","/api/cash-register/shifts",token=owner)
@@ -2940,6 +2942,8 @@ class ApiIntegrationTests(unittest.TestCase):
             legacy_snapshot["version"]=1
             legacy_snapshot["tables"].pop("accounting_periods")
             legacy_snapshot["tables"].pop("cash_register_shifts")
+            for journal in legacy_snapshot["tables"]["journal_entries"]:
+                journal.pop("__rowid",None)
             status,legacy_restored=self.request("POST","/api/backup/restore",legacy_snapshot,owner)
             self.assertEqual(status,200)
             status,periods_after_legacy_restore=self.request("GET","/api/accounting/periods",token=owner)
