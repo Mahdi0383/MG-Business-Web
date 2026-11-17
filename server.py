@@ -2043,9 +2043,39 @@ class Handler(SimpleHTTPRequestHandler):
                     if payment_method != session["payment_method"]:
                         db.rollback()
                         return self.send_json(409,{"error":"روش تسویه با پرداخت ثبت‌شده این نشست مطابقت ندارد."})
+                    amount=int(session["amount_due"])
+                    tx_id="game-"+session_id
+                    tx=db.execute("SELECT amount,kind FROM transactions WHERE tenant_id=? AND id=?",
+                        (user["tenant_id"],tx_id)).fetchone()
+                    journal_entries=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                        AND source_type='transaction' AND source_id=?""",(user["tenant_id"],tx_id)).fetchall()
+                    journal_rows=[]
+                    if journal_entries:
+                        journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_lines l
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            WHERE l.tenant_id=? AND l.entry_id=?""",
+                            (user["tenant_id"],journal_entries[0]["id"])).fetchall()
+                    ledger_rows=db.execute("""SELECT debit,credit FROM customer_ledger
+                        WHERE tenant_id=? AND source_type='game_session' AND source_id=?""",
+                        (user["tenant_id"],session_id)).fetchall()
+                    journal_valid=False
+                    if amount==0:
+                        journal_valid=tx is None and not journal_entries and not journal_rows and not ledger_rows
+                    else:
+                        account={"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment_method]
+                        expected=sorted([(account,amount,0),("4000",0,amount)])
+                        actual=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                        ledger_valid=((payment_method=="credit" and len(ledger_rows)==1 and
+                                       ledger_rows[0]["debit"]==amount and ledger_rows[0]["credit"]==0) or
+                                      (payment_method!="credit" and not ledger_rows))
+                        journal_valid=(tx is not None and tx["amount"]==amount and tx["kind"]=="income" and
+                            len(journal_entries)==1 and len(journal_rows)==2 and actual==expected and ledger_valid)
+                    if not journal_valid:
+                        db.rollback()
+                        return self.send_json(409,{"error":"سوابق مالی نشست ناقص یا ناسازگار است؛ تکرار تسویه پذیرفته نشد."})
                     elapsed=max(0,int(session["ended_at"] or session["started_at"])-session["started_at"])
                     db.commit()
-                    return self.send_json(200,{"ok":True,"amountDue":session["amount_due"],
+                    return self.send_json(200,{"ok":True,"amountDue":amount,
                         "elapsedSeconds":elapsed,"paymentMethod":session["payment_method"],"duplicate":True})
                 if session["status"]!="running":
                     db.rollback()
@@ -2055,9 +2085,12 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400,{"error":"برای تسویه اعتباری باید مشتری نشست مشخص باشد."})
                 now = int(time.time())
                 elapsed = max(0,now-session["started_at"])
-                db.execute("""UPDATE game_session_segments SET ended_at=?
+                closed_segments=db.execute("""UPDATE game_session_segments SET ended_at=?
                     WHERE tenant_id=? AND session_id=? AND ended_at IS NULL""",
-                    (max(now,session["started_at"]),user["tenant_id"],session_id))
+                    (max(now,session["started_at"]),user["tenant_id"],session_id)).rowcount
+                if closed_segments < 1:
+                    db.rollback()
+                    return self.send_json(409,{"error":"بخش فعال نشست برای تسویه پیدا نشد؛ دوباره تلاش کنید."})
                 segments=db.execute("""SELECT started_at,ended_at,rate_per_hour,is_free
                     FROM game_session_segments WHERE tenant_id=? AND session_id=? ORDER BY started_at,id""",
                     (user["tenant_id"],session_id)).fetchall()
