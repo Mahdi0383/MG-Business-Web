@@ -1312,6 +1312,64 @@ class Handler(SimpleHTTPRequestHandler):
                     "netCashFlow":inflow-outflow,
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
                     "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
+            if path == "/api/accounting/account-ledger":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                params=parse_qs(urlparse(self.path).query,keep_blank_values=True)
+                if set(params)-{"accountId","fromDate","toDate"} or any(len(v)!=1 for v in params.values()):
+                    return self.send_json(400,{"error":"پارامترهای دفتر معین نامعتبر هستند."})
+                account_id=params.get("accountId",[""])[0]
+                if not account_id or len(account_id)>100:
+                    return self.send_json(400,{"error":"شناسه سرفصل حساب الزامی است."})
+                try:
+                    dates=parse_report_dates("&".join(
+                        key+"="+values[0] for key,values in params.items() if key in ("fromDate","toDate")))
+                except ValueError as exc:
+                    return self.send_json(400,{"error":str(exc)})
+                account=db.execute("""SELECT id,code,name,account_type AS accountType,
+                    normal_balance AS normalBalance FROM accounts
+                    WHERE id=? AND tenant_id=?""",(account_id,user["tenant_id"])).fetchone()
+                if not account:
+                    return self.send_json(404,{"error":"سرفصل حساب در این کسب‌وکار پیدا نشد."})
+                base_values=[user["tenant_id"],account_id]
+                opening_condition=" AND e.entry_date<?" if "fromDate" in dates else ""
+                opening_values=base_values+[time.strftime("%Y-%m-%d",dates["fromDate"])] if opening_condition else base_values
+                opening=db.execute("""SELECT COALESCE(SUM(l.debit),0) AS debit,
+                    COALESCE(SUM(l.credit),0) AS credit
+                    FROM journal_lines l JOIN journal_entries e
+                    ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    WHERE l.tenant_id=? AND l.account_id=?"""+opening_condition,opening_values).fetchone()
+                conditions=["l.tenant_id=?","l.account_id=?"]; values=list(base_values)
+                if "fromDate" in dates:
+                    conditions.append("e.entry_date>=?")
+                    values.append(time.strftime("%Y-%m-%d",dates["fromDate"]))
+                if "toDate" in dates:
+                    conditions.append("e.entry_date<=?")
+                    values.append(time.strftime("%Y-%m-%d",dates["toDate"]))
+                rows=db.execute("""SELECT e.id AS entryId,e.entry_date AS entryDate,e.memo,
+                    e.source_type AS sourceType,e.source_id AS sourceId,e.created_at AS createdAt,
+                    l.debit,l.credit FROM journal_lines l
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    WHERE """+" AND ".join(conditions)+"""
+                    ORDER BY e.entry_date,e.created_at,e.id,l.id LIMIT 5000""",values).fetchall()
+                debit=sum(row["debit"] for row in rows)
+                credit=sum(row["credit"] for row in rows)
+                normal_delta=(opening["debit"]-opening["credit"] if account["normalBalance"]=="debit"
+                              else opening["credit"]-opening["debit"])
+                opening_balance=normal_delta
+                items=[]
+                for row in rows:
+                    normal_delta += (row["debit"]-row["credit"] if account["normalBalance"]=="debit"
+                                     else row["credit"]-row["debit"])
+                    item=dict(row)
+                    item["runningBalance"]=normal_delta
+                    items.append(item)
+                return self.send_json(200,{"account":dict(account),"openingBalance":opening_balance,
+                    "periodDebit":debit,"periodCredit":credit,"closingBalance":normal_delta,
+                    "items":list(reversed(items)),
+                    "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
+                    "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None,
+                    "truncated":len(rows)==5000})
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
