@@ -287,6 +287,11 @@ class ApiIntegrationTests(unittest.TestCase):
             "quantityDelta": -16, "unitCost": 30000
         }, token)
         self.assertEqual(status, 409)
+        status, result = self.request("POST", "/api/inventory/movements", {
+            "id": "move-invalid-cost", "productId": "product-1", "movementType": "purchase",
+            "quantityDelta": 1, "unitCost": 9007199254740992
+        }, token)
+        self.assertEqual(status, 400)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["quantity"], 15)
