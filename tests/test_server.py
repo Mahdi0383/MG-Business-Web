@@ -1100,6 +1100,19 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,403)
             status,invalid=self.request("POST",f"/api/users/{cashier['id']}/role",{"role":"owner"},owner_token)
             self.assertEqual(status,400)
+            status,self_change=self.request("POST",f"/api/users/{setup['user']['id']}/role",{"role":"viewer"},owner_token)
+            self.assertEqual(status,400)
+            status,missing=self.request("POST","/api/users/nonexistent-role-target/role",{"role":"manager"},owner_token)
+            self.assertEqual(status,404)
+            status,no_change=self.request("POST",f"/api/users/{cashier['id']}/role",{"role":"viewer"},owner_token)
+            self.assertEqual(status,200)
+            self.assertFalse(no_change["changed"])
+            self.assertFalse(no_change["sessionsRevoked"])
+            status,audit=self.request("GET","/api/audit-log",token=owner_token)
+            self.assertEqual(status,200)
+            role_events=[item for item in audit["items"] if item["action"]=="user.role.changed" and item["entityId"]==cashier["id"]]
+            self.assertEqual(len(role_events),1)
+            self.assertEqual(role_events[0]["details"],{"from":"cashier","to":"viewer"})
         finally:
             server.DB_PATH=original_db_path
 
