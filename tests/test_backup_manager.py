@@ -50,6 +50,13 @@ class BackupManagerTests(unittest.TestCase):
             db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id),
                 username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL,
                 active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
+            for table in (
+                "sessions", "transactions", "accounts", "journal_entries", "journal_lines",
+                "products", "inventory_movements", "customers", "customer_ledger",
+                "orders", "order_items", "game_devices", "game_sessions",
+                "gamenet_reservations", "licenses", "tenant_modules",
+            ):
+                db.execute(f"CREATE TABLE {table}(id TEXT PRIMARY KEY)")
             db.execute("CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
             db.execute("INSERT INTO records(value) VALUES('before restore')")
             db.commit()
