@@ -29,7 +29,13 @@ try {
   await page.locator('#transactionForm input[name="title"]').fill("درآمد آزمون مرورگر");
   await page.locator('#transactionForm input[name="amount"]').fill("25000");
   await page.locator('#transactionForm select[name="kind"]').selectOption("income");
+  const transactionResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/transactions") && response.request().method() === "POST"
+  );
   await page.locator("#transactionForm button.primary").click();
+  const transactionResponse = await transactionResponsePromise;
+  const transactionBody = await transactionResponse.json();
+  assert.equal(transactionResponse.status(), 201, "transaction API response: " + JSON.stringify(transactionBody));
   await page.locator("#modal").waitFor({ state: "hidden" });
   await page.locator("#transactions").getByText("درآمد آزمون مرورگر", { exact: true }).waitFor({ state: "visible" });
 
