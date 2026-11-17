@@ -2429,13 +2429,22 @@ class Handler(SimpleHTTPRequestHandler):
                 existing=db.execute("SELECT customer_id,credit FROM customer_ledger WHERE tenant_id=? AND source_type='payment' AND source_id=?",
                                     (user["tenant_id"],payment_id)).fetchone()
                 if existing:
-                    if existing["customer_id"]==customer_id and existing["credit"]==amount:
+                    journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_payment' AND e.source_id=?""",
+                        (user["tenant_id"],payment_id)).fetchall()
+                    expected_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
+                    payment_matches=(len(journal_rows)==2 and
+                        any(row["code"]==expected_account and row["debit"]==amount and row["credit"]==0 for row in journal_rows) and
+                        any(row["code"]=="1100" and row["debit"]==0 and row["credit"]==amount for row in journal_rows))
+                    if (existing["customer_id"]==customer_id and existing["credit"]==amount and payment_matches):
                         balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
                                            (user["tenant_id"],customer_id)).fetchone()[0]
                         db.commit()
                         return self.send_json(200,{"ok":True,"paymentId":payment_id,"remainingBalance":balance,"duplicate":True})
                     db.rollback()
-                    return self.send_json(409,{"error":"شناسه دریافت قبلاً با مبلغ متفاوت استفاده شده است."})
+                    return self.send_json(409,{"error":"شناسه دریافت قبلاً با اطلاعات پرداخت متفاوت استفاده شده است."})
                 balance = db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
                                      (user["tenant_id"],customer_id)).fetchone()[0]
                 if amount > balance:
