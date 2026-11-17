@@ -30,6 +30,32 @@ class DeploymentPreflightTests(unittest.TestCase):
         }
         self.assertEqual(validate_config(env, ROOT), [])
 
+    def test_production_rejects_public_bind_even_with_https_url(self):
+        env = {
+            "MG_ENV": "production",
+            "MG_LICENSE_SECRET": "production-secret-with-more-than-32-characters",
+            "MG_HOST": "0.0.0.0",
+            "MG_PUBLIC_URL": "https://business.example.com",
+            "MG_DATA_DIR": "/var/lib/mg-business",
+            "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
+            "MG_BACKUP_DIR": "/var/backups/mg-business",
+        }
+        errors = validate_config(env, ROOT)
+        self.assertTrue(any("must bind to loopback" in error for error in errors))
+
+    def test_production_loopback_behind_https_proxy_passes(self):
+        env = {
+            "MG_ENV": "production",
+            "MG_LICENSE_SECRET": "production-secret-with-more-than-32-characters",
+            "MG_HOST": "127.0.0.1",
+            "MG_PORT": "8080",
+            "MG_PUBLIC_URL": "https://business.example.com",
+            "MG_DATA_DIR": "/var/lib/mg-business",
+            "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
+            "MG_BACKUP_DIR": "/var/backups/mg-business",
+        }
+        self.assertEqual(validate_config(env, ROOT), [])
+
     def test_web_root_database_is_rejected(self):
         errors = validate_config({"MG_DB_PATH": str(ROOT / "database.sqlite3")}, ROOT)
         self.assertTrue(any("MG_DB_PATH" in error for error in errors))
