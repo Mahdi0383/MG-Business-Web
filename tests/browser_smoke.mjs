@@ -100,8 +100,9 @@ try {
   await page.locator('[data-accounting-export]').click();
   const accountingDownload = await accountingDownloadPromise;
   const accountingPath = await accountingDownload.path();
-  const accountingCsv = await (await import("node:fs/promises")).readFile(accountingPath, "utf8");
-  assert.ok(accountingCsv.startsWith("\\uFEFF"), "accounting CSV must include a UTF-8 BOM");
+  const accountingBytes = await (await import("node:fs/promises")).readFile(accountingPath);
+  assert.deepEqual([...accountingBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "accounting CSV must include a UTF-8 BOM");
+  const accountingCsv = accountingBytes.toString("utf8");
   assert.match(accountingCsv, /گزارش حسابداری MG/);
   assert.match(accountingCsv, /جزئیات گردش نقدی/);
   assert.match(accountingCsv, /دفتر روزنامه/);
@@ -114,8 +115,9 @@ try {
   await page.locator('[data-reports-export]').click();
   const managementDownload = await managementDownloadPromise;
   const managementPath = await managementDownload.path();
-  const managementCsv = await (await import("node:fs/promises")).readFile(managementPath, "utf8");
-  assert.ok(managementCsv.startsWith("\\uFEFF"), "management CSV must include a UTF-8 BOM");
+  const managementBytes = await (await import("node:fs/promises")).readFile(managementPath);
+  assert.deepEqual([...managementBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "management CSV must include a UTF-8 BOM");
+  const managementCsv = managementBytes.toString("utf8");
   assert.match(managementCsv, /گزارش مدیریتی MG/);
   assert.match(managementCsv, /فروش به تفکیک محصول/);
   assert.match(managementCsv, /سفارش‌ها/);
