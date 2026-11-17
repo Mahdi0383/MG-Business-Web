@@ -50,6 +50,9 @@ if 'resolved.name in ("server.py","license_tool.py","backup_manager.py","README.
     raise SystemExit("private backend and backup sources must not be statically served")
 if "def translate_path(self, path):" not in server or "def list_directory(self, path):" not in server:
     raise SystemExit("static server must block private files and directory listing")
+if "moduleAccess?.has('accounting')?await apiRequest('/api/transactions'):{items:[]}" not in app:
+    raise SystemExit("backup restore must not require the accounting module to refresh the workspace")
+
 if "def verify_license_code(code):" not in server or 'if path == "/api/backup/restore":' not in server:
     raise SystemExit("license verification or backup restoration endpoint is missing")
 get_handler = server.split("    def do_GET(self):", 1)[1].split("    def do_DELETE(self):", 1)[0]
