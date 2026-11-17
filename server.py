@@ -1247,7 +1247,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403,{"error":"ماژول کافه در لایسنس فعال نیست."})
                 order_id=path.rsplit("/",1)[-1]
-                order=db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.subtotal,o.discount,o.total,
+                order=db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.fulfillment_status AS fulfillmentStatus,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
                     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
                     WHERE o.id=? AND o.tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
@@ -1279,7 +1279,7 @@ class Handler(SimpleHTTPRequestHandler):
                 conditions=["o.tenant_id=?"]; values=[user["tenant_id"]]
                 if lower is not None: conditions.append("o.created_at>=?"); values.append(lower)
                 if upper is not None: conditions.append("o.created_at<?"); values.append(upper)
-                rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.subtotal,o.discount,o.total,
+                rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.fulfillment_status AS fulfillmentStatus,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
                     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
                     WHERE """+" AND ".join(conditions)+""" ORDER BY o.created_at DESC LIMIT 1000""", values).fetchall()
