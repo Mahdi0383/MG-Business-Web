@@ -2009,6 +2009,79 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path == "/api/cash-register/shifts/open":
+                if not require_any_module(db,user["tenant_id"],"cafe","accounting","gamenet"):
+                    return self.send_json(403,{"error":"ماژول صندوق در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403,{"error":"دسترسی افتتاح شیفت صندوق ندارید."})
+                if set(data)-{"openingCash","note"} or "openingCash" not in data:
+                    return self.send_json(400,{"error":"مبلغ افتتاح و یادداشت اختیاری را ارسال کنید."})
+                opening_cash=data.get("openingCash")
+                note=data.get("note","")
+                if type(opening_cash) is not int or not 0<=opening_cash<=9007199254740991:
+                    return self.send_json(400,{"error":"موجودی اولیه صندوق معتبر نیست."})
+                if not isinstance(note,str) or len(note)>300:
+                    return self.send_json(400,{"error":"یادداشت افتتاح شیفت بیش از حد طولانی است."})
+                db.execute("BEGIN IMMEDIATE")
+                active=db.execute("SELECT id FROM cash_register_shifts WHERE tenant_id=? AND status='open'",
+                    (user["tenant_id"],)).fetchone()
+                if active:
+                    db.rollback()
+                    return self.send_json(409,{"error":"یک شیفت صندوق هنوز باز است؛ ابتدا آن را ببندید."})
+                shift_id=secrets.token_urlsafe(18)
+                opened_at=int(time.time())
+                db.execute("""INSERT INTO cash_register_shifts
+                    (id,tenant_id,opened_by,opened_at,opening_cash,status,open_note)
+                    VALUES(?,?,?,?,?,'open',?)""",
+                    (shift_id,user["tenant_id"],user["id"],opened_at,opening_cash,note))
+                audit(db,user["tenant_id"],user["id"],"cash_register.shift.opened","cash_register_shift",shift_id,
+                    {"openingCash":opening_cash})
+                db.commit()
+                return self.send_json(201,{"ok":True,"id":shift_id,"openedAt":opened_at,
+                    "openingCash":opening_cash,"status":"open",
+                    "expectedCash":cash_register_expected_cash(db,user["tenant_id"],opened_at,opening_cash)})
+            if path.startswith("/api/cash-register/shifts/") and path.endswith("/close"):
+                if not require_any_module(db,user["tenant_id"],"cafe","accounting","gamenet"):
+                    return self.send_json(403,{"error":"ماژول صندوق در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403,{"error":"دسترسی بستن شیفت صندوق ندارید."})
+                if set(data)-{"countedCash","note"} or "countedCash" not in data:
+                    return self.send_json(400,{"error":"موجودی شمارش‌شده و یادداشت اختیاری را ارسال کنید."})
+                counted_cash=data.get("countedCash")
+                note=data.get("note","")
+                if type(counted_cash) is not int or not 0<=counted_cash<=9007199254740991:
+                    return self.send_json(400,{"error":"موجودی شمارش‌شده صندوق معتبر نیست."})
+                if not isinstance(note,str) or len(note)>300:
+                    return self.send_json(400,{"error":"یادداشت بستن شیفت بیش از حد طولانی است."})
+                shift_id=path.split("/")[-2]
+                if not 1<=len(shift_id)<=100:
+                    return self.send_json(400,{"error":"شناسه شیفت صندوق معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                shift=db.execute("""SELECT id,opened_by,opened_at,opening_cash,status FROM cash_register_shifts
+                    WHERE id=? AND tenant_id=?""",(shift_id,user["tenant_id"])).fetchone()
+                if not shift:
+                    db.rollback()
+                    return self.send_json(404,{"error":"شیفت صندوق پیدا نشد."})
+                if shift["status"]!="open":
+                    db.rollback()
+                    return self.send_json(409,{"error":"این شیفت قبلاً بسته شده است."})
+                if shift["opened_by"]!=user["id"] and user["role"] not in ("owner","manager"):
+                    db.rollback()
+                    return self.send_json(403,{"error":"فقط افتتاح‌کننده شیفت یا مالک/مدیر می‌تواند آن را ببندد."})
+                closed_at=int(time.time())
+                expected_cash=cash_register_expected_cash(
+                    db,user["tenant_id"],shift["opened_at"],shift["opening_cash"],closed_at)
+                difference=counted_cash-expected_cash
+                db.execute("""UPDATE cash_register_shifts SET status='closed',closed_by=?,closed_at=?,
+                    expected_cash=?,counted_cash=?,difference=?,close_note=?
+                    WHERE id=? AND tenant_id=? AND status='open'""",
+                    (user["id"],closed_at,expected_cash,counted_cash,difference,note,shift_id,user["tenant_id"]))
+                audit(db,user["tenant_id"],user["id"],"cash_register.shift.closed","cash_register_shift",shift_id,
+                    {"expectedCash":expected_cash,"countedCash":counted_cash,"difference":difference})
+                db.commit()
+                return self.send_json(200,{"ok":True,"id":shift_id,"status":"closed",
+                    "expectedCash":expected_cash,"countedCash":counted_cash,"difference":difference,
+                    "closedAt":closed_at})
             if path == "/api/accounting/periods/close":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
