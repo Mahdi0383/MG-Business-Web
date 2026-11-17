@@ -322,7 +322,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(daily_best["items"]),1)
         self.assertEqual(daily_best["items"][0]["productId"],"product-1")
         self.assertEqual(daily_best["items"][0]["quantity"],2)
-        self.assertEqual(daily_best["items"][0]["revenue"],170000)  # Product line revenue is before invoice-level discount allocation.
+        self.assertEqual(daily_best["items"][0]["revenue"],165000)  # Revenue is net of the proportionally allocated order discount.
         self.assertEqual(daily_best["items"][0]["orderCount"],1)
         status, duplicate_order = self.request("POST", "/api/orders", {
             "id":"order-test-1","customerId":"customer-1","discount":5000,
