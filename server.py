@@ -406,6 +406,17 @@ def connect():
                 WHERE status='ended' AND customer_id IS NOT NULL AND amount_due>0""")
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(11,?)", (int(time.time()),))
     if not db.execute("SELECT 1 FROM schema_migrations WHERE version=12").fetchone():
+        legacy_orders=db.execute("SELECT id,tenant_id,discount FROM orders WHERE discount>0").fetchall()
+        for legacy_order in legacy_orders:
+            legacy_items=db.execute("""SELECT id,line_total FROM order_items
+                WHERE tenant_id=? AND order_id=? ORDER BY id""",
+                (legacy_order["tenant_id"],legacy_order["id"])).fetchall()
+            if legacy_items:
+                allocations=allocate_proportional_discount(
+                    [row["line_total"] for row in legacy_items],legacy_order["discount"])
+                for item,allocated in zip(legacy_items,allocations):
+                    db.execute("UPDATE order_items SET discount_amount=? WHERE id=?",
+                        (allocated,item["id"]))
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(12,?)", (int(time.time()),))
     db.commit()
     return db
