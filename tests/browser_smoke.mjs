@@ -64,6 +64,14 @@ try {
   await page.locator('#stockForm select[name="movementType"]').selectOption("purchase");
   await page.locator('#stockForm input[name="quantity"]').fill("5");
   await page.locator('#stockForm input[name="unitCost"]').fill("20000");
+  const stockFormState = await page.locator("#stockForm").evaluate(form => ({
+    valid: form.checkValidity(),
+    controls: Array.from(form.elements).map(control => ({
+      name: control.name, value: control.value, disabled: control.disabled,
+      valid: typeof control.checkValidity === "function" ? control.checkValidity() : true
+    }))
+  }));
+  assert.equal(stockFormState.valid, true, "stock form validity: " + JSON.stringify(stockFormState));
   const stockResponsePromise = page.waitForResponse(response =>
     response.url().endsWith("/api/inventory/movements") && response.request().method() === "POST"
   , { timeout: 10000 }).catch(() => null);
