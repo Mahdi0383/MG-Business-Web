@@ -55,6 +55,31 @@ def remember_public_order_attempt(ip, now):
         PUBLIC_ORDER_FAILURES.pop(next(iter(PUBLIC_ORDER_FAILURES)))
     return True
 
+def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normalized_lines):
+    existing=db.execute("""SELECT id,order_number,total,customer_id,status FROM orders
+        WHERE id=? AND tenant_id=?""",(order_id,tenant_id)).fetchone()
+    if not existing:
+        return None
+    if existing["status"] != "paid":
+        return False
+    customer=db.execute("SELECT full_name,phone FROM customers WHERE id=? AND tenant_id=?",
+                        (existing["customer_id"],tenant_id)).fetchone()
+    if not customer or customer["full_name"] != customer_name or customer["phone"] != phone:
+        return False
+    old_items={}
+    for row in db.execute("SELECT product_id,quantity,addons_json FROM order_items WHERE tenant_id=? AND order_id=?",
+                          (tenant_id,order_id)).fetchall():
+        try:
+            saved=json.loads(row["addons_json"] or "[]")
+            addon_ids=tuple(sorted(item["id"] for item in saved if isinstance(item,dict) and isinstance(item.get("id"),str)))
+        except (TypeError,ValueError):
+            addon_ids=()
+        key=(row["product_id"],addon_ids)
+        old_items[key]=old_items.get(key,0)+row["quantity"]
+    if old_items != normalized_lines:
+        return False
+    return {"orderNumber":existing["order_number"],"total":existing["total"]}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tenants(
