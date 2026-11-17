@@ -2701,7 +2701,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
     def test_cafe_kitchen_fulfillment_requires_ordered_transitions(self):
         original_db_path=server.DB_PATH
-        server.DB_PATH=Path(self.temp.name)/"cafe-kitchen-queue.sqlite3"
+        server.DB_PATH=Path(self.temp.name)/"cafe-kitchen-state-machine.sqlite3"
         try:
             status,setup=self.request("POST","/api/setup",{
                 "businessName":"Kitchen Queue","username":"kitchen-owner",
@@ -2770,7 +2770,7 @@ class ApiIntegrationTests(unittest.TestCase):
             status,audit_result=self.request("GET","/api/audit-log",token=owner)
             self.assertEqual(status,200)
             transitions=[item for item in audit_result["items"]
-                if item["action"]=="cafe.order.fulfillment.updated" and item["entity_id"]==order["id"]]
+                if item["action"]=="cafe.order.fulfillment.updated" and item["entityId"]==order["id"]]
             self.assertEqual(len(transitions),3)
         finally:
             server.DB_PATH=original_db_path
