@@ -26,15 +26,15 @@ Deliver a modular business platform with customer web/PWA app, customer-operated
 - [ ] Suspension/expiry that preserves data and provides recovery/export paths.
 
 ### C. Offline-first and high availability
-- [ ] Local durable database and operation journal on every supported client.
+- [ ] Local durable business database and operation journal on every supported client platform; browser PWA currently has IndexedDB outbox/inbox and customer/inventory projections.
 - [x] Initial tenant-scoped append-only sync journal, idempotent push/pull transport, IndexedDB outbox/inbox and per-device durable acknowledgement cursor (transport foundation; customer creation is the first applied business vertical slice below).
 - [x] Per-device, per-branch server acknowledgement watermarks; tenant-wide manager acknowledgement remains separately scoped.
 - [x] Atomic IndexedDB customer creation: local customer projection and branch-originated outbox command commit in one transaction; server-side customer creation replay and transactional inbound projection on other devices are implemented.
 - [x] Versioned customer deactivation is now included in the same local-first vertical slice: local inactive projection/outbox is atomic, server replay uses optimistic concurrency, and inbound deactivation/acknowledgement is transactional with origin-echo and stale-version handling.
 - [x] Server-side `customer.profile.created` replay creates the authoritative customer with the client-generated stable ID in the same EF transaction as the journal insert; exact retries are idempotent.
 - [x] Transactional inbound customer create/update projection with atomic inbox acknowledgement, origin-operation echo suppression and durable stale-version conflict records; browser IndexedDB command handling has separate verification requirements.
-- [x] First inventory offline vertical slice: cached products and raw weighted-average stock baselines, durable local stock movement commands, atomic IndexedDB outbox/projection writes, server replay with idempotency and stale-balance fencing, inbound stock projection and originating-device echo suppression.
-- [ ] Transactional local business command handlers and inbound projections for sales, accounting, purchasing, café and GameNet; complete per-domain conflict resolution.
+- [x] First inventory offline vertical slice: cached products and raw weighted-average stock baselines, durable local stock movement commands, atomic IndexedDB outbox/projection writes, server replay with idempotency and stale-balance fencing, inbound stock projection and originating-device echo suppression; the inventory workspace queues movements automatically when the API is unreachable.
+- [ ] Transactional local business command handlers and inbound projections for sales, accounting, purchasing, café and GameNet; customer and inventory are the only complete local-first business slices.
 - [x] Persist branch-scoped unresolved incoming conflicts and surface their open count in the workspace sync status; automatic resolution remains intentionally unavailable.
 - [x] Customer workspace falls back to the durable local customer projection on fetch/network failure, including online-but-unreachable API conditions; HTTP/API errors remain visible rather than being masked.
 - [x] Revalidate persisted inbox payload SHA-256 immediately before replay; missing, malformed or tampered hashes fail closed.
@@ -93,26 +93,20 @@ Gate 5 — Commercial release: independent Control Center, customer onboarding, 
 
 ## Latest delivery increment — 2026-11-17
 
-- Documented the cryptographic device-enrollment contract: non-extractable browser ECDSA P-256 keys, one-time challenge/proof, tenant/branch/actor binding, signed request transcripts, nonce/timestamp replay protection, key rotation/revocation/recovery and required negative tests.
-- Reaffirmed the production gate: browser-profile device IDs remain untrusted; cryptographic enrollment and verification are not implemented. No sync write path is represented as production-secure.
-- Verified the current code head's Web CI and SQLite backend CI both completed successfully. Documentation-only updates do not substitute for code or security validation.
+- Implemented cryptographic browser-device enrollment with ECDSA P-256 proof-of-possession, one-time tenant/branch/actor/device-bound challenges, non-extractable IndexedDB private keys and digest-only server credentials.
+- Implemented signed sync request verification with key-version and credential validation, canonical method/path/context/body-hash signatures, timestamp checks and persisted one-time nonce replay protection.
+- Added same-key enrollment recovery, explicit proof-of-possession key rotation and authenticated credential revocation. Credential changes revoke the device's authority leases and invalidate the browser's cached lease.
+- Implemented signed short-lived tenant/branch authority leases, serialized acquisition, monotonically increasing fencing epochs and stale-epoch push rejection. Production multi-node failover/failback and PostgreSQL race certification remain open.
+- Extended the local-first inventory slice through the actual workspace: manual movements are atomically stored with the local stock projection/outbox when the API is unavailable, then replayed with idempotency and stale-balance protection.
+- Refreshed release gates to distinguish passing CI from production approval and to identify incomplete verticals and operational controls. Fresh CI is required for the current documentation head.
 - PR #3 remains open and Draft. Production financial use, merge and deployment remain blocked until all release gates have implementation and test evidence.
 
-### Inventory retry safety increment — 2026-11-17
+### Validated product foundations
 
-- Added optional stock-movement `Idempotency-Key` support with a SHA-256 request fingerprint and a unique tenant/branch/key constraint.
-- Exact retries return the originally committed movement; reusing a key with changed request content returns HTTP 409. A provider-backed integration test verifies no duplicate stock is posted.
-- Added the PostgreSQL migration and updated the EF model snapshot; model-snapshot validation, API build and PostgreSQL migration-script generation passed. The latest SQLite integration/domain run passed after normalizing the fingerprint representation.
-- The manual inventory movement API now rejects requests without an `Idempotency-Key`; exact retries replay the original movement and changed-payload reuse is rejected. Sales-order-originated stock writes, local/offline stock commands and their cross-domain idempotency remain release blockers.
-- Web CI, SQLite integration/domain tests and PostgreSQL migration + integration/domain CI all passed on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09`.
-
-### Inventory workspace increment — 2026-11-17
-
-- Added a per-product stock movement workflow to the web workspace for receipts, issues, sales/purchase returns and stock adjustments.
-- The form sends the required `Idempotency-Key` generated with Web Crypto. The same key remains in the open form after network errors so a retry can safely replay a committed movement instead of posting stock twice.
-- The form follows the domain movement enum and requests unit cost only for inbound movement types.
-- This UI is deliberately online-only; stock changes are not advertised as offline-capable. Transactional local stock commands, sale-originated stock idempotency and inbound projection processing remain release blockers.
-- Frontend tests and production build passed on code head `82e77a8bf9aa8db7c57fb5e44b1b30bd28fc78ce`; enum alignment and subsequent changes are awaiting CI.
+- Backend foundations exist for tenant/branch identity, membership roles, customer profiles, product catalog, inventory movements/valuation, sales orders/payments, double-entry accounting journals, café kitchen tickets, GameNet sessions and sync transport.
+- Customer and inventory have local-first projections, durable outbox commands, server replay and inbound projection handling. Sales, accounting, purchasing, café and GameNet do not yet have equivalent offline command processing.
+- Existing APIs and domain entities are not equivalent to completed operator workflows. Accounting reports/period controls, purchasing, complete online customer ordering/reservations, full café/game-net workflows, hardware integrations, Control Center and licensing remain release work.
+- Automated tests passing on a commit do not replace production database concurrency testing, security review, multi-device partition/recovery tests, real-device acceptance and business-owner UAT.
 
 ## Planning estimate
 
