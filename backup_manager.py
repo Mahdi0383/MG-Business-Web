@@ -244,7 +244,12 @@ def restore_snapshot(
 
     if target.exists():
         backup_dir = Path(safety_backup_dir).expanduser().resolve() if safety_backup_dir else target.parent / "backups"
-        create_snapshot(target, backup_dir, retention=365, encryption_key=key)
+        try:
+            create_snapshot(target, backup_dir, retention=365, encryption_key=key)
+        except Exception:
+            if decrypted_path.exists():
+                decrypted_path.unlink()
+            raise
 
     temp_path = target.parent / (target.name + ".restore-" + secrets.token_hex(6) + ".tmp")
     source = destination = None
