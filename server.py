@@ -918,6 +918,23 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("SELECT code,name,account_type AS accountType,normal_balance AS normalBalance FROM accounts WHERE tenant_id=? AND active=1 ORDER BY code",
                                   (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/reports/best-selling-today":
+                if not module_enabled(db,user["tenant_id"],"reports"):
+                    return self.send_json(403, {"error":"ماژول گزارش‌ها در لایسنس فعال نیست."})
+                now=int(time.time())
+                local=time.localtime(now)
+                day_start=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday,0,0,0,0,0,-1)))
+                day_end=day_start+24*60*60
+                rows=db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
+                    SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue,
+                    COUNT(DISTINCT o.id) AS orderCount
+                    FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
+                    WHERE i.tenant_id=? AND o.status='paid' AND o.created_at>=? AND o.created_at<?
+                    GROUP BY i.product_id,i.product_name
+                    ORDER BY quantity DESC,revenue DESC,i.product_name COLLATE NOCASE LIMIT 10""",
+                    (user["tenant_id"],day_start,day_end)).fetchall()
+                return self.send_json(200, {"date":time.strftime("%Y-%m-%d",local),
+                    "timezone":time.strftime("%Z",local),"items":[dict(row) for row in rows]})
             if path == "/api/reports/sales-by-product":
                 if not module_enabled(db,user["tenant_id"],"reports"):
                     return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
