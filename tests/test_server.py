@@ -6,6 +6,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 import time
@@ -703,7 +704,7 @@ class ApiIntegrationTests(unittest.TestCase):
         original_interval = server.BACKUP_INTERVAL_SECONDS
         try:
             server.BACKUP_INTERVAL_SECONDS = 86400
-            with unittest.mock.patch("server.create_snapshot", side_effect=[
+            with mock.patch("server.create_snapshot", side_effect=[
                 OSError("temporary disk issue"),
                 OSError("temporary disk issue"),
                 Path("/tmp/mg-test-snapshot.sqlite3"),
