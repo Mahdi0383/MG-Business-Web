@@ -852,6 +852,27 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertTrue(retry_end["duplicate"])
         self.assertEqual(retry_end["amountDue"],game_charge)
         self.assertEqual(retry_end["paymentMethod"],"credit")
+        # Credit settlement retries must also verify the customer receivable entry.
+        db=server.connect()
+        try:
+            saved_game_receivable=dict(db.execute("""SELECT * FROM customer_ledger WHERE tenant_id=?
+                AND source_type='game_session' AND source_id='session-01'""",
+                (db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"],)).fetchone())
+            db.execute("DELETE FROM customer_ledger WHERE id=?",(saved_game_receivable["id"],))
+            db.commit()
+        finally:
+            db.close()
+        status, missing_game_receivable=self.request("POST","/api/gamenet/sessions/session-01/end",{},token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(saved_game_receivable)
+            placeholders=",".join("?" for _ in columns)
+            db.execute("INSERT INTO customer_ledger("+",".join(columns)+") VALUES("+placeholders+")",
+                tuple(saved_game_receivable[column] for column in columns))
+            db.commit()
+        finally:
+            db.close()
         status, result = self.request("GET", "/api/gamenet/devices", token=token)
         self.assertEqual(result["items"][0]["name"], "PC-01 Updated")
         status, result = self.request("GET", "/api/customers", token=token)
