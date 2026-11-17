@@ -159,6 +159,12 @@ if 'id="accountingDateFilter"' not in app or 'id="reportsDateFilter"' not in app
     raise SystemExit("Accounting and management report date filters are missing")
 if "apiRequest('/api/orders'+query)" not in app or "apiRequest('/api/reports/sales-by-product'+query)" not in app:
     raise SystemExit("Management report date filters must reach order and product sales endpoints")
+if 'if path == "/api/accounting/accounts":' not in server or 'if "normalBalance" in data:' not in server:
+    raise SystemExit("Tenant-scoped custom chart of accounts API validation is missing")
+if "accountCreateForm" not in app or "apiRequest('/api/accounting/accounts')" not in app:
+    raise SystemExit("Accounting chart of accounts management UI is missing")
+if "account.created" not in server or "accountType" not in app:
+    raise SystemExit("Custom account creation must be audited and expose account types")
 if 'if path == "/api/accounting/cash-flow":' not in server or "netCashFlow" not in server:
     raise SystemExit("Date-scoped accounting cash flow report API is missing")
 if "apiRequest('/api/accounting/cash-flow'+accountingReportQuery())" not in app:
