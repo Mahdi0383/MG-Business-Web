@@ -2773,6 +2773,7 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             self.assertEqual(cashier_close["difference"],0)
 
+            time.sleep(1)
             status,active_shift=self.request("POST","/api/cash-register/shifts/open",{
                 "openingCash":2000,"note":"shift retained through restore"},owner)
             self.assertEqual(status,201)
@@ -2804,6 +2805,19 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(history["active"]["expectedCash"],2300)
             first=next(item for item in history["items"] if item["id"]==shift_id)
             self.assertEqual(first["difference"],-50)
+
+            legacy_v3=json.loads(json.dumps(snapshot))
+            legacy_v3["version"]=3
+            for journal in legacy_v3["tables"]["journal_entries"]:
+                journal.pop("__rowid",None)
+            for shift in legacy_v3["tables"]["cash_register_shifts"]:
+                shift.pop("journal_cursor",None)
+            status,legacy_v3_restore=self.request("POST","/api/backup/restore",legacy_v3,owner)
+            self.assertEqual(status,200)
+            status,legacy_v3_active=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(legacy_v3_active["active"]["expectedCash"],2300,
+                "v3 restores must use the legacy time boundary when journal rowids are absent")
 
             legacy_v2=json.loads(json.dumps(snapshot))
             legacy_v2["version"]=2
