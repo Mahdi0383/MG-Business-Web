@@ -990,7 +990,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(404,{"error":"سفارش پیدا نشد."})
                 items=[]
                 for row in db.execute("""SELECT id,product_id AS productId,product_name AS productName,
-                    quantity,unit_price AS unitPrice,line_total AS lineTotal,addons_json AS addonsJson
+                    quantity,unit_price AS unitPrice,line_total AS lineTotal,
+                    discount_amount AS discountAmount,addons_json AS addonsJson
                     FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY rowid""",
                     (user["tenant_id"],order_id)).fetchall():
                     item=dict(row)
