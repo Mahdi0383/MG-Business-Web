@@ -75,6 +75,8 @@ if '"duplicate":True' not in server or 'if order["status"]=="cancelled"' not in 
     raise SystemExit("Cafe order reversal must be idempotent")
 if 'if path == "/api/ready":' not in server or "PRAGMA quick_check" not in server or "/api/ready" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("Database readiness checks are missing")
+if "undistributed=discount-sum(allocations)" not in server or '"discount":30001' not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
+    raise SystemExit("Purchase invoice discounts must be allocated proportionally without rounding loss")
 if '"duplicate":True' not in server or "reservation-cancel" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("Game reservation cancellation must be retry-safe")
 if "def public_order_duplicate" not in server or 'item["addons"]=addons_by_product.get' not in server:
