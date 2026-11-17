@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MG Business local-first HTTP application and SQLite API (stdlib only)."""
 from __future__ import annotations
-import base64, hashlib, hmac, ipaddress, json, os, secrets, sqlite3, time, threading
+import base64, hashlib, hmac, ipaddress, json, os, re, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
