@@ -1290,6 +1290,30 @@ class ApiIntegrationTests(unittest.TestCase):
                 server.LOGIN_IP_FAILURES.clear()
                 server.LOGIN_IP_FAILURES.update(original_ip)
 
+    def test_login_rejects_oversized_username_before_rate_limit_state(self):
+        ip = "127.0.0.1"
+        with server.LOGIN_LOCK:
+            original_user = server.LOGIN_FAILURES.copy()
+            original_ip = server.LOGIN_IP_FAILURES.copy()
+            server.LOGIN_FAILURES.clear()
+            server.LOGIN_IP_FAILURES.clear()
+        try:
+            for username in ("x" * 65, "x" * 10000, ["not", "a", "string"]):
+                status, result = self.request("POST", "/api/login", {
+                    "username": username, "password": "incorrect-password"
+                })
+                self.assertEqual(status, 400)
+                self.assertIn("error", result)
+            with server.LOGIN_LOCK:
+                self.assertNotIn(ip, server.LOGIN_IP_FAILURES)
+                self.assertEqual(server.LOGIN_FAILURES, {})
+        finally:
+            with server.LOGIN_LOCK:
+                server.LOGIN_FAILURES.clear()
+                server.LOGIN_FAILURES.update(original_user)
+                server.LOGIN_IP_FAILURES.clear()
+                server.LOGIN_IP_FAILURES.update(original_ip)
+
     def test_login_rate_limit_covers_username_rotation_per_ip(self):
         ip = "127.0.0.1"
         with server.LOGIN_LOCK:
