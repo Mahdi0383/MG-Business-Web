@@ -46,7 +46,7 @@ git pull --ff-only
 - `GET /api/health` برای زنده‌بودن سرویس، `GET /api/ready` برای بررسی یکپارچگی SQLite، کلیدهای خارجی، جداول ضروری و تاریخچه migration، و `GET /api/setup-status`
 - `POST /api/setup` برای ایجاد اولین کسب‌وکار و حساب مالک (رمز حداقل ۱۲ نویسه)
 - `POST /api/login` و `POST /api/logout`
-- `GET /api/me`، `POST /api/account/password` برای تغییر رمز حساب فعلی با تأیید رمز قبلی و ابطال نشست‌های قبلی، `GET/POST /api/users`، `DELETE /api/users/{id}`، `POST /api/users/{id}/password` برای بازنشانی رمز کاربران توسط مالک، و `GET /api/audit-log` برای مشاهده تاریخچه ممیزی
+- `GET /api/me`، `POST /api/account/password` برای تغییر رمز حساب فعلی با تأیید رمز قبلی و ابطال نشست‌های قبلی، `GET/POST /api/users`، `DELETE /api/users/{id}`، `POST /api/users/{id}/password` برای بازنشانی رمز کاربران توسط مالک، `POST /api/users/{id}/role` برای تغییر نقش فعال به مدیر/صندوقدار/فقط‌مشاهده (فقط مالک؛ نشست‌های قبلی کاربر باطل و رویداد ممیزی ثبت می‌شود)، و `GET /api/audit-log` برای مشاهده تاریخچه ممیزی
 - `GET /api/modules`، `GET /api/licenses/status` و `POST /api/licenses/activate`
 - `GET/POST /api/orders`، `GET /api/orders/{id}` برای جزئیات رسید و `DELETE /api/orders/{id}` برای برگشت سفارش
 - `GET/POST /api/product-addons`، `POST /api/product-addons/{id}` و `DELETE /api/product-addons/{id}` برای مدیریت افزودنی کالا
