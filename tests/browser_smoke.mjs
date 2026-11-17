@@ -23,8 +23,18 @@ try {
   await page.locator('#accountCreateForm select[name="accountType"]').selectOption("asset");
   await page.locator('#accountCreateForm button[type="submit"]').click();
   await page.locator("#modulePage .module-table").last().getByText("حساب آزمایشی مرورگر", { exact: true }).waitFor({ state: "visible" });
+
+  await page.locator('#navigation [data-page="overview"]').click();
+  await page.locator("#addTransaction").click();
+  await page.locator('#transactionForm input[name="title"]').fill("درآمد آزمون مرورگر");
+  await page.locator('#transactionForm input[name="amount"]').fill("25000");
+  await page.locator('#transactionForm select[name="kind"]').selectOption("income");
+  await page.locator('#transactionForm button[type="submit"]').click();
+  await page.locator("#modal").waitFor({ state: "hidden" });
+  await page.locator("#transactions").getByText("درآمد آزمون مرورگر", { exact: true }).waitFor({ state: "visible" });
+
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, authenticated dashboard, accounting navigation, custom account creation.");
+  console.log("Browser E2E passed: setup, login, dashboard, accounting, custom account creation, and transaction posting.");
 } finally {
   await browser.close();
 }
