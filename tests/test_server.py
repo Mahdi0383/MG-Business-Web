@@ -1167,9 +1167,17 @@ class ApiIntegrationTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
+        status, backup_user = self.request("POST","/api/users",{
+            "username":"backup-preserved-user","password":"backup-preserved-password-2026","role":"viewer"
+        },token)
+        self.assertEqual(status,201)
         status, snapshot = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         self.assertTrue(any(row["id"]=="backup-license-test" for row in snapshot["tables"]["licenses"]))
+        self.assertTrue(any(row["username"]=="backup-preserved-user" for row in snapshot["tables"]["users"]))
+        # Restore must not roll back current credentials, roles, or account activation.
+        status, changed_backup_user = self.request("POST","/api/users/"+backup_user["id"]+"/role",{"role":"cashier"},token)
+        self.assertEqual(status,200)
         self.assertTrue(any(row["module_key"]=="backup-test" for row in snapshot["tables"]["tenant_modules"]))
         self.assertIn("licenses",snapshot["tables"])
         self.assertIn("tenant_modules",snapshot["tables"])
@@ -1229,6 +1237,14 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/backup/restore", snapshot, token)
         self.assertEqual(status, 200)
         self.assertGreater(result["restoredRows"], 0)
+        db=server.connect()
+        try:
+            preserved_user=db.execute("SELECT role,active FROM users WHERE id=? AND tenant_id=?",
+                (backup_user["id"],backup_tenant_id)).fetchone()
+            self.assertEqual(preserved_user["role"],"cashier")
+            self.assertEqual(preserved_user["active"],1)
+        finally:
+            db.close()
         db=server.connect()
         try:
             self.assertIsNotNone(db.execute("SELECT 1 FROM licenses WHERE id=? AND tenant_id=?",
