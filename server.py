@@ -1332,13 +1332,16 @@ class Handler(SimpleHTTPRequestHandler):
                 if not account:
                     return self.send_json(404,{"error":"سرفصل حساب در این کسب‌وکار پیدا نشد."})
                 base_values=[user["tenant_id"],account_id]
-                opening_condition=" AND e.entry_date<?" if "fromDate" in dates else ""
-                opening_values=base_values+[time.strftime("%Y-%m-%d",dates["fromDate"])] if opening_condition else base_values
-                opening=db.execute("""SELECT COALESCE(SUM(l.debit),0) AS debit,
-                    COALESCE(SUM(l.credit),0) AS credit
-                    FROM journal_lines l JOIN journal_entries e
-                    ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
-                    WHERE l.tenant_id=? AND l.account_id=?"""+opening_condition,opening_values).fetchone()
+                if "fromDate" in dates:
+                    opening=db.execute("""SELECT COALESCE(SUM(l.debit),0) AS debit,
+                        COALESCE(SUM(l.credit),0) AS credit
+                        FROM journal_lines l JOIN journal_entries e
+                        ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                        WHERE l.tenant_id=? AND l.account_id=? AND e.entry_date<?""",
+                        (*base_values,time.strftime("%Y-%m-%d",dates["fromDate"]))).fetchone()
+                    opening_debit,opening_credit=opening["debit"],opening["credit"]
+                else:
+                    opening_debit=opening_credit=0
                 conditions=["l.tenant_id=?","l.account_id=?"]; values=list(base_values)
                 if "fromDate" in dates:
                     conditions.append("e.entry_date>=?")
@@ -1354,8 +1357,8 @@ class Handler(SimpleHTTPRequestHandler):
                     ORDER BY e.entry_date,e.created_at,e.id,l.id LIMIT 5000""",values).fetchall()
                 debit=sum(row["debit"] for row in rows)
                 credit=sum(row["credit"] for row in rows)
-                normal_delta=(opening["debit"]-opening["credit"] if account["normalBalance"]=="debit"
-                              else opening["credit"]-opening["debit"])
+                normal_delta=(opening_debit-opening_credit if account["normalBalance"]=="debit"
+                              else opening_credit-opening_debit)
                 opening_balance=normal_delta
                 items=[]
                 for row in rows:
