@@ -13,6 +13,8 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
     errors: list[str] = []
     root = root.resolve()
     environment = env.get("MG_ENV", "development").strip().lower()
+    if environment not in {"development", "test", "production"}:
+        errors.append("MG_ENV must be one of: development, test, production.")
     host = env.get("MG_HOST", "127.0.0.1").strip()
     port = env.get("MG_PORT", "8080").strip()
 
@@ -32,12 +34,18 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
             errors.append("MG_HOST must not be empty.")
 
     public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
-    if public_bind and (public_url.scheme != "https" or not public_url.netloc):
-        errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with an https:// URL.")
+    valid_https_url = public_url.scheme == "https" and bool(public_url.hostname) and not public_url.username and not public_url.password and not public_url.fragment
+    if valid_https_url:
+        try:
+            valid_https_url = public_url.port is None or 1 <= public_url.port <= 65535
+        except ValueError:
+            valid_https_url = False
+    if public_bind and not valid_https_url:
+        errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with a valid https:// URL.")
     if environment == "production":
         if len(env.get("MG_LICENSE_SECRET", "")) < 32:
             errors.append("Production requires MG_LICENSE_SECRET with at least 32 characters.")
-        if public_url.scheme != "https" or not public_url.netloc:
+        if not valid_https_url:
             errors.append("Production requires MG_PUBLIC_URL with a valid https:// URL.")
         if public_bind:
             errors.append("Production MG_HOST must bind to loopback behind a TLS-terminating reverse proxy; direct public HTTP binding is not allowed.")
