@@ -29,6 +29,7 @@ PBKDF2_ROUNDS = 310_000
 MAX_BODY = 50 * 1024 * 1024
 MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
+LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 
@@ -991,20 +992,25 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.create_session(db, user_id)
             if path == "/api/login":
                 username, password = str(data.get("username", "")).strip(), data.get("password", "")
-                key = (self.client_address[0], username.casefold())
+                ip = self.client_address[0]
+                key = (ip, username.casefold())
                 now = time.time()
                 with LOGIN_LOCK:
                     attempts = [stamp for stamp in LOGIN_FAILURES.get(key, []) if now - stamp < 900]
+                    ip_attempts = [stamp for stamp in LOGIN_IP_FAILURES.get(ip, []) if now - stamp < 900]
                     LOGIN_FAILURES[key] = attempts
-                    if len(attempts) >= 8:
+                    LOGIN_IP_FAILURES[ip] = ip_attempts
+                    if len(attempts) >= 8 or len(ip_attempts) >= 30:
                         return self.send_json(429, {"error": "تلاش‌های ورود بیش از حد است؛ ۱۵ دقیقه بعد دوباره امتحان کنید."})
                 user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
                 if not user or not isinstance(password, str) or not verify_password(password, user["password_hash"]):
                     with LOGIN_LOCK:
                         LOGIN_FAILURES.setdefault(key, []).append(now)
+                        LOGIN_IP_FAILURES.setdefault(ip, []).append(now)
                     return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
                 with LOGIN_LOCK:
                     LOGIN_FAILURES.pop(key, None)
+                    LOGIN_IP_FAILURES.pop(ip, None)
                 return self.create_session(db, user["id"])
             if path == "/api/public/orders":
                 ip = self.client_address[0]
