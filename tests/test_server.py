@@ -60,6 +60,20 @@ class ApiIntegrationTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def test_security_headers_are_applied_to_api_and_static_responses(self):
+        for path in ("/api/health", "/"):
+            req = urllib.request.Request(self.base + path, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as response:
+                headers = response.headers
+                self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+                self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+                self.assertEqual(headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
+                self.assertEqual(headers.get("Permissions-Policy"),
+                                 "camera=(), microphone=(), geolocation=()")
+                self.assertIn("default-src 'self'", headers.get("Content-Security-Policy", ""))
+                self.assertEqual(headers.get("Cross-Origin-Opener-Policy"), "same-origin")
+                self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "same-origin")
+
     def test_request_body_limit_is_small_except_for_backup_restore(self):
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
         try:
