@@ -5,22 +5,27 @@ A release is blocked until every mandatory gate below has objective evidence att
 
 ## Current validated baseline
 
-- [x] Frontend CI (tests and production build) passes on code head `82e77a8bf9aa8db7c57fb5e44b1b30bd28fc78ce` (run `43960052093`); the subsequent stock enum mapping change is awaiting its own CI run.
-- [x] Backend SQLite build, model-snapshot verification and integration/domain tests pass on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` (run `43958619643`).
-- [x] PostgreSQL API CI, including PostgreSQL migration application and integration/domain tests, passes on code head `100acedc10b0d471d44740b9d05e9ead93ea0a09` (run `43958607238`).
+- [x] Frontend CI tests and production build pass on code head `0f92fbd75843161e274cbd2d28e39753041d8e4d` (run `43980450449`).
+- [x] Backend SQLite build, model-snapshot verification and integration/domain tests pass on code head `0f92fbd75843161e274cbd2d28e39753041d8e4d` (run `43980450373`).
+- [x] API/PostgreSQL CI passes on code head `0f92fbd75843161e274cbd2d28e39753041d8e4d` (run `43980443175`).
 - [x] Sales receipt creation and journal posting are transactional.
 - [x] Partial and full customer-balance settlement API exists.
 - [x] Payment history is tenant/branch scoped.
 - [x] Payment collection persists idempotency keys and request fingerprints; exact retries replay the original receipt and changed payloads are rejected.
 - [x] Game-session closure replays the committed invoice after a lost response and rejects changed settlement payloads.
 - [x] Inventory movement validates the active stock-tracked product and stock ledger inside the serializable write transaction.
-- [x] Manual inventory stock-movement API requires `Idempotency-Key`, persists a request fingerprint under a tenant/branch unique constraint, replays exact retries and rejects changed-payload reuse; offline/local stock commands and sales-order-originated stock writes still need end-to-end command idempotency.
-- [x] Inventory workspace exposes per-product receipt/issue/return/adjustment entry and sends a cryptographically random idempotency key; retries within the open form reuse the same key. This is online-only until the offline stock command pipeline is implemented.
+- [x] Manual inventory stock-movement API requires `Idempotency-Key`, persists a request fingerprint under a tenant/branch unique constraint, replays exact retries and rejects changed-payload reuse.
+- [x] Inventory workspace exposes per-product receipt/issue/return/adjustment entry and reuses the same cryptographically random idempotency key on retry; manual movement UI remains online-only.
 - [x] Public ordering rejects ambiguous multi-tenant routing.
 - [x] Sync journal validates payload integrity, actor scope, idempotency envelopes and monotonic cursors.
 - [x] PWA shell does not cache authentication, API or synchronization traffic.
 - [x] Customer profile create, update and deactivation commands use versioned local projections, durable outbox records, authoritative server replay and transactional inbound projection/acknowledgement with origin-echo handling and stale-version conflicts.
-- [x] Frontend CI passed on intermediate development head `9c337aee8e91ed81e927abbaa312cd432bef699c`; subsequent changes to documentation and tests are awaiting CI on the current head.\n- [ ] Current branch head `8134cf8471fa08c6982b552ac4204fc498ebbf2c`: frontend/backend/API CI and PostgreSQL migration validation must all pass before release review.
+- [x] Initial inventory offline movement slice includes cached products/baselines, durable local commands, atomic local projection/outbox writes, server replay with idempotency and stale-balance fencing, inbound stock projection and origin-echo suppression.
+- [x] Browser device enrollment, signed sync request verification, credential rotation/revocation and authority lease/fencing foundations pass current frontend, backend SQLite and API/PostgreSQL CI.
+- [ ] Production database concurrency/race testing, multi-node nonce replay validation and operational security review remain mandatory.
+- [ ] Offline transactional business command handlers for sales, accounting, purchasing, café and GameNet remain incomplete; inventory's manual movement UI is not yet offline-enabled.
+- [ ] MG Master / Control Center failover, failback, entitlement lifecycle and creator-only administration remain incomplete.
+- [ ] Customer portal, complete online ordering/reservations, full accounting/purchasing and feature-parity UI remain incomplete.
 
 ## Mandatory blockers before live financial use
 
