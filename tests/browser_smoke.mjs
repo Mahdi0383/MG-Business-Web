@@ -23,6 +23,17 @@ try {
   await page.locator('#accountCreateForm select[name="accountType"]').selectOption("asset");
   await page.locator('#accountCreateForm button[type="submit"]').click();
   await page.locator("#modulePage .module-table").last().getByText("حساب آزمایشی مرورگر", { exact: true }).waitFor({ state: "visible" });
+  const unusedAccountRow = page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" });
+  const accountDeactivationPromise = page.waitForResponse(response =>
+    response.url().includes("/api/accounting/accounts/") && response.request().method() === "DELETE"
+  );
+  await unusedAccountRow.locator("[data-account-deactivate]").click();
+  await page.locator('#confirmOverlay [data-confirm="yes"]').click();
+  const accountDeactivationResponse = await accountDeactivationPromise;
+  assert.equal(accountDeactivationResponse.status(), 200, "unused account deactivation must succeed");
+  await page.locator("#accountCreateForm").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
+    "deactivated account must disappear from the active chart");
 
   await page.locator('#navigation [data-page="overview"]').click();
   await page.locator("#addTransaction").click();
