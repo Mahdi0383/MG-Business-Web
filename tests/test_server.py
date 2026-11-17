@@ -226,6 +226,38 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,200)
         self.assertTrue(duplicate_tx["duplicate"])
+        # Idempotent retries must verify the immutable accounting journal, not only
+        # the transaction row, before claiming that the original write succeeded.
+        db=server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            journal_id=db.execute("""SELECT id FROM journal_entries
+                WHERE tenant_id=? AND source_type='transaction' AND source_id=?""",
+                (tenant_id,"tx-test-1")).fetchone()["id"]
+            saved_tx_lines=[dict(row) for row in db.execute(
+                "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",
+                (tenant_id,journal_id)).fetchall()]
+            db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
+            db.commit()
+        finally:
+            db.close()
+        status, damaged_retry=self.request("POST","/api/transactions",{
+            "id":"tx-test-1","title":"Cafe sale","amount":150000,
+            "kind":"income","category":"Cafe","createdAt":"2026-11-16T12:00:00.000Z"
+        },token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(saved_tx_lines[0])
+            placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in saved_tx_lines])
+            db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.commit()
+        finally:
+            db.close()
         status, conflict_tx = self.request("POST", "/api/transactions", {
             "id":"tx-test-1","title":"Different sale","amount":150000,
             "kind":"income","category":"Cafe","createdAt":"2026-11-16T12:00:00.000Z"
