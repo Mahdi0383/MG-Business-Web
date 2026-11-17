@@ -2823,10 +2823,18 @@ class ApiIntegrationTests(unittest.TestCase):
                     AND source_type='transaction' AND source_id=?""",
                     (setup["user"]["tenantId"],transaction["id"])).fetchone()
                 self.assertIsNotNone(entry)
-                line=db.execute("SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=? LIMIT 1",
-                    (setup["user"]["tenantId"],entry["id"])).fetchone()
-                self.assertIsNotNone(line)
-                db.execute("DELETE FROM journal_lines WHERE id=?",(line["id"],))
+                cash=db.execute("SELECT id FROM accounts WHERE tenant_id=? AND code='1000'",
+                    (setup["user"]["tenantId"],)).fetchone()
+                self.assertIsNotNone(cash)
+                db.execute("""INSERT INTO journal_entries
+                    (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+                    VALUES(?,?,?,?,?,?,?,?)""",("manual-unbalanced-period",setup["user"]["tenantId"],
+                    today,"سند نامتوازن آزمایشی","test_unbalanced","manual-unbalanced",
+                    setup["user"]["id"],int(time.time())))
+                db.execute("""INSERT INTO journal_lines
+                    (id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)""",
+                    ("manual-unbalanced-line",setup["user"]["tenantId"],"manual-unbalanced-period",
+                    cash["id"],1000,0))
                 db.commit()
             finally:
                 db.close()
