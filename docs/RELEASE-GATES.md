@@ -80,38 +80,17 @@ A release is blocked until every mandatory gate below has objective evidence att
 Passing CI demonstrates that the current automated test/build gates pass; it does not prove the incomplete controls above. Do not enable live financial/offline multi-node operation until all mandatory blockers are checked and independently verified.
 
 
-### Cryptographic device trust design — 2026-11-17
+## Implementation notes — 2026-11-17
 
-- Added `docs/architecture/DEVICE-ENROLLMENT-AND-REQUEST-AUTH.md` as a proposed security contract covering one-time enrollment challenges, non-extractable Web Crypto signing keys, credential hashing/rotation/revocation, canonical request signatures, replay protection, and signed authority leases with fencing.
-- This is design documentation only; no enrollment or request-signing code is implemented by this document. Browser UUID identity remains untrusted, and this release gate remains open.
+The cryptographic enrollment, request-signature middleware, credential rotation/revocation, signed authority lease and fencing items marked complete above are implemented in code and covered by automated tests. The current protocol and canonical messages are documented in `docs/architecture/DEVICE-ENROLLMENT-AND-REQUEST-AUTH.md`.
 
+Important scope boundaries:
 
-### Device-enrollment persistence reconciliation — 2026-11-17
+- Device credentials are explicitly bound to tenant, actor, branch and device. Browser device IDs and IndexedDB credentials are also isolated by tenant/branch/actor.
+- Enrollment lifecycle endpoints require authenticated tenant membership and fresh proof-of-possession challenges. All other `/api/sync/*` routes are subject to request-signature verification when production enforcement is enabled.
+- The browser client supports same-key recovery, explicit proof-of-possession key rotation and credential revocation; rotation/revocation invalidate cached authority state.
+- Signed lease acquisition and fencing are implemented, but no claim is made that a multi-node control plane, automated failover/failback or production PostgreSQL race certification is complete.
+- The only complete local-first business vertical slices are customer profiles and inventory movements. Financial, café and GameNet offline command processing is still blocked.
 
-- Added an EF-generated reconciliation migration for the nullable single-use challenge consumption timestamp and refreshed the authoritative model snapshot.
-- The migration is additive/relaxing only: it changes `ConsumedAtUtc` to nullable, matching the challenge's unconsumed state. Existing rows remain valid.
-- The temporary snapshot-generation workflow has been removed. Enrollment endpoint and persistence tests still require a clean SQLite and PostgreSQL CI run before this gate can close.
+CI status is recorded against exact commit SHAs and workflow run IDs in the validated baseline above. Any new code change requires fresh frontend, SQLite backend and PostgreSQL/API validation before release review.
 
-
-## Cryptographic device request authentication
-
-- Browser enrollment creates a Web Crypto ECDSA P-256 key pair. The private key is non-extractable and persisted as a structured-clone CryptoKey in IndexedDB; the server stores the public SPKI key and only a SHA-256 digest of the one-time-returned device credential.
-- Enrollment challenges are random, short-lived, single-use and bound to the authenticated tenant, actor, branch context and device ID. A proof-of-possession signature is required to complete enrollment.
-- Authenticated sync heartbeat, pull, push and acknowledgement requests are signed over method, path/query, tenant, branch, actor, device, key version, timestamp, UUID nonce and exact serialized body SHA-256. The server checks credential digest, active status, actor scope, key version, ECDSA signature and a two-minute timestamp window, then persists the nonce under a unique key before executing the endpoint.
-- Device credentials are tenant-scoped so one browser identity can be used in the tenant's authorized branches; enrollment proof itself remains branch-context-bound. A future branch-restricted credential can set an explicit branch scope.
-- Production startup now fails unless `SyncSecurity:RequireDeviceSignatures=true`. Enrollment bootstrap routes are excluded from request-signature middleware but still require authenticated tenant membership and challenge proof.
-- This closes device request authentication and replay protection at the API boundary; key rotation/revocation APIs, expired nonce cleanup, browser key recovery, signed authority leases/fencing and end-to-end multi-node recovery tests remain open release gates.
-
-
-### Device enrollment recovery and nonce retention — 2026-11-17
-
-- Device enrollment now persists the browser's non-extractable private key before the server can commit. A repeated proof using that same key and a fresh challenge rotates the one-time credential and key version, allowing recovery after a lost response without exposing the private key.
-- Signed request middleware deletes expired replay nonces for the authenticated tenant/device during normal traffic and records last credential use. The replay store therefore remains bounded for active devices; idle-device records expire from acceptance and are removed on the next request.
-- Integration coverage verifies enrollment response recovery, credential version rotation, replay rejection and request-body tampering. Key revocation/rotation administration, device loss recovery and lease fencing remain separate gates.
-
-
-## Current branch validation
-- [x] Frontend tests and production build passed on `eaef768a6be25f833b0e4c15afa730ac3b97da85` (run `43978022481`).
-- [x] SQLite-backed backend build, EF model-snapshot verification and integration/domain tests passed on `1234217a7abc15efcbf1dfd939a4fd6bcfef0aeb` (run `43977344169`).
-- [x] PostgreSQL API CI, migration script generation/application and domain/integration tests passed on `1234217a7abc15efcbf1dfd939a4fd6bcfef0aeb` (run `43977344189`).
-- [ ] Re-run all three CI gates on the final release candidate after any further backend changes.
