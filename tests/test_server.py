@@ -685,8 +685,12 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertEqual(card_settlement["paymentMethod"],"card")
         self.assertGreater(card_settlement["amountDue"],0)
-        status, card_retry = self.request("POST","/api/gamenet/sessions/session-card/end",{
+        status, changed_card_retry = self.request("POST","/api/gamenet/sessions/session-card/end",{
             "paymentMethod":"credit"
+        },token)
+        self.assertEqual(status,409)
+        status, card_retry = self.request("POST","/api/gamenet/sessions/session-card/end",{
+            "paymentMethod":"card"
         },token)
         self.assertEqual(status,200)
         self.assertTrue(card_retry["duplicate"])
