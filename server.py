@@ -2349,7 +2349,10 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("INSERT INTO supplier_payments(id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at) VALUES(?,?,?,?,?,?,?,?)",
                     (payid,user["tenant_id"],iid,inv["supplier_id"],user["id"],method,amount,now))
                 paid=inv["paid_amount"]+amount; status="paid" if paid==inv["total"] else "partial"
-                db.execute("UPDATE purchase_invoices SET paid_amount=?,status=? WHERE id=?",(paid,status,iid))
+                updated=db.execute("UPDATE purchase_invoices SET paid_amount=?,status=? WHERE id=? AND tenant_id=?",(paid,status,iid,user["tenant_id"]))
+                if updated.rowcount != 1:
+                    db.rollback()
+                    return self.send_json(409,{"error":"وضعیت فاکتور برای ثبت پرداخت تغییر کرده است؛ دوباره تلاش کنید."})
                 post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,amount,method)
                 audit(db,user["tenant_id"],user["id"],"supplier.payment.created","purchase_invoice",iid,{"amount":amount})
                 db.commit(); return self.send_json(201,{"paymentId":payid,"paidAmount":paid,"remainingBalance":inv["total"]-paid,"status":status})
