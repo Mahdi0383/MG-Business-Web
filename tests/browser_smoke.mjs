@@ -94,8 +94,35 @@ try {
   assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
 
+  await page.locator('#navigation [data-page="accounting"]').click();
+  await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
+  const accountingDownloadPromise = page.waitForEvent("download");
+  await page.locator('[data-accounting-export]').click();
+  const accountingDownload = await accountingDownloadPromise;
+  const accountingPath = await accountingDownload.path();
+  const accountingCsv = await (await import("node:fs/promises")).readFile(accountingPath, "utf8");
+  assert.ok(accountingCsv.startsWith("\\uFEFF"), "accounting CSV must include a UTF-8 BOM");
+  assert.match(accountingCsv, /گزارش حسابداری MG/);
+  assert.match(accountingCsv, /جزئیات گردش نقدی/);
+  assert.match(accountingCsv, /دفتر روزنامه/);
+  assert.match(accountingCsv, /تراز آزمایشی/);
+  assert.match(accountingCsv, /درآمد آزمون مرورگر/);
+
+  await page.locator('#navigation [data-page="reports"]').click();
+  await page.locator('[data-reports-export]').waitFor({ state: "visible" });
+  const managementDownloadPromise = page.waitForEvent("download");
+  await page.locator('[data-reports-export]').click();
+  const managementDownload = await managementDownloadPromise;
+  const managementPath = await managementDownload.path();
+  const managementCsv = await (await import("node:fs/promises")).readFile(managementPath, "utf8");
+  assert.ok(managementCsv.startsWith("\\uFEFF"), "management CSV must include a UTF-8 BOM");
+  assert.match(managementCsv, /گزارش مدیریتی MG/);
+  assert.match(managementCsv, /فروش به تفکیک محصول/);
+  assert.match(managementCsv, /سفارش‌ها/);
+  assert.match(managementCsv, /کالای آزمون کافه/);
+
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, and cafe POS order.");
+  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports.");
 } finally {
   await browser.close();
 }
