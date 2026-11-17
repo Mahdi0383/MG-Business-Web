@@ -527,6 +527,7 @@ class ApiIntegrationTests(unittest.TestCase):
             columns=list(lines[0]); placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in lines])
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
             db.execute("""DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=(
                 SELECT id FROM journal_entries WHERE tenant_id=? AND source_type='order_cogs' AND source_id=?)""",
                 (tenant_id,tenant_id,"order-test-1"))
