@@ -507,6 +507,22 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(statement["items"][0]["balanceAfter"],0)
         self.assertEqual(statement["items"][-1]["sourceType"],"invoice")
         self.assertEqual(statement["items"][-1]["balanceAfter"],420000)
+        self.assertEqual(
+            [item["balanceAfter"] for item in reversed(statement["items"])],
+            [420000,320000,0]
+        )
+        self.assertEqual(
+            sum(item["credit"] for item in statement["items"]),
+            statement["totalPurchases"]
+        )
+        self.assertEqual(
+            sum(item["debit"] for item in statement["items"]),
+            statement["totalPayments"]
+        )
+        status, missing_statement = self.request(
+            "GET", "/api/suppliers/unknown-supplier/ledger", token=token
+        )
+        self.assertEqual(status,404)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "amount":1,"paymentMethod":"cash"
         }, token)
