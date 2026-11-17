@@ -89,6 +89,7 @@ git pull --ff-only
 - `GET /api/me`، `POST /api/account/password` برای تغییر رمز حساب فعلی با تأیید رمز قبلی و ابطال نشست‌های قبلی، `GET/POST /api/users`، `DELETE /api/users/{id}`، `POST /api/users/{id}/password` برای بازنشانی رمز کاربران توسط مالک، `POST /api/users/{id}/role` برای تغییر نقش فعال به مدیر/صندوقدار/فقط‌مشاهده (فقط مالک؛ نشست‌های قبلی کاربر باطل و رویداد ممیزی ثبت می‌شود)، و `GET /api/audit-log` برای مشاهده تاریخچه ممیزی
 - `GET /api/modules`، `GET /api/licenses/status` و `POST /api/licenses/activate`
 - `GET/POST /api/orders`، `GET /api/orders/{id}` برای جزئیات رسید و `DELETE /api/orders/{id}` برای برگشت سفارش
+- `POST /api/orders/{id}/fulfillment` برای صف آماده‌سازی کافه؛ سفارش جدید حضوری و QR در وضعیت `queued` قرار می‌گیرد و فقط به‌ترتیب `preparing`، `ready` و `served` جلو می‌رود. تغییر مرحله برای مالک/مدیر/صندوقدار مجاز، تکرار همان مرحله idempotent، پرش یا برگشت مرحله و آماده‌سازی سفارش لغوشده رد می‌شود؛ هر تغییر در audit log ثبت می‌شود.
 - `GET/POST /api/product-addons`، `POST /api/product-addons/{id}` و `DELETE /api/product-addons/{id}` برای مدیریت افزودنی کالا
 - `GET /api/public/menu` و `POST /api/public/orders` برای منوی عمومی و سفارش QR همراه با افزودنی‌ها
 - `GET /api/reports/sales-by-product` و `GET /api/reports/best-selling-today` برای رتبه‌بندی کالاها بر اساس فروش خالص پس از تخصیص دقیق تخفیف فاکتور به ردیف‌ها؛ گزارش پرفروش روز تعداد فروش، مبلغ خالص و تعداد سفارش را بر اساس تاریخ محلی سرور نمایش می‌دهد
