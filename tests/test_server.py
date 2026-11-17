@@ -319,6 +319,33 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(ranged_journal["fromDate"], "2026-11-16")
         self.assertEqual(ranged_journal["toDate"], "2026-11-16")
         self.assertTrue(any(item["sourceId"]=="tx-test-1" for item in ranged_journal["items"]))
+        status, account_list = self.request("GET", "/api/accounting/accounts", token=token)
+        self.assertEqual(status, 200)
+        cash_account = next(item for item in account_list["items"] if item["code"]=="1000")
+        status, account_ledger = self.request("GET",
+            "/api/accounting/account-ledger?accountId="+cash_account["id"]+
+            "&fromDate=2026-11-16&toDate=2026-11-16", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(account_ledger["account"]["code"], "1000")
+        self.assertEqual(account_ledger["openingBalance"], 0)
+        self.assertEqual(account_ledger["periodDebit"], 150000)
+        self.assertEqual(account_ledger["periodCredit"], 0)
+        self.assertEqual(account_ledger["closingBalance"], 150000)
+        self.assertEqual(len(account_ledger["items"]), 1)
+        self.assertEqual(account_ledger["items"][0]["runningBalance"], 150000)
+        status, missing_account_ledger = self.request("GET", "/api/accounting/account-ledger", token=token)
+        self.assertEqual(status, 400)
+        status, unknown_account_ledger = self.request("GET",
+            "/api/accounting/account-ledger?accountId=not-a-real-account", token=token)
+        self.assertEqual(status, 404)
+        status, duplicate_account_param = self.request("GET",
+            "/api/accounting/account-ledger?accountId="+cash_account["id"]+
+            "&accountId="+cash_account["id"], token=token)
+        self.assertEqual(status, 400)
+        status, invalid_account_ledger_range = self.request("GET",
+            "/api/accounting/account-ledger?accountId="+cash_account["id"]+
+            "&fromDate=2026-11-18&toDate=2026-11-17", token=token)
+        self.assertEqual(status, 400)
         status, cash_flow = self.request("GET", "/api/accounting/cash-flow?fromDate=2026-11-16&toDate=2026-11-16", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(cash_flow["inflow"], 150000)
