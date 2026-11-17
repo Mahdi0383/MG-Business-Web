@@ -1314,6 +1314,31 @@ class ApiIntegrationTests(unittest.TestCase):
                 server.LOGIN_IP_FAILURES.clear()
                 server.LOGIN_IP_FAILURES.update(original_ip)
 
+    def test_login_rejects_oversized_or_non_string_password_before_hashing(self):
+        ip = "127.0.0.1"
+        with server.LOGIN_LOCK:
+            original_user = server.LOGIN_FAILURES.copy()
+            original_ip = server.LOGIN_IP_FAILURES.copy()
+            server.LOGIN_FAILURES.clear()
+            server.LOGIN_IP_FAILURES.clear()
+        try:
+            with mock.patch.object(server, "verify_password", side_effect=AssertionError("password hashing must not run")):
+                for password in ("p" * 257, ["not", "a", "string"]):
+                    status, result = self.request("POST", "/api/login", {
+                        "username": "known-or-unknown-user", "password": password
+                    })
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", result)
+            with server.LOGIN_LOCK:
+                self.assertNotIn(ip, server.LOGIN_IP_FAILURES)
+                self.assertEqual(server.LOGIN_FAILURES, {})
+        finally:
+            with server.LOGIN_LOCK:
+                server.LOGIN_FAILURES.clear()
+                server.LOGIN_FAILURES.update(original_user)
+                server.LOGIN_IP_FAILURES.clear()
+                server.LOGIN_IP_FAILURES.update(original_ip)
+
     def test_login_rate_limit_covers_username_rotation_per_ip(self):
         ip = "127.0.0.1"
         with server.LOGIN_LOCK:
