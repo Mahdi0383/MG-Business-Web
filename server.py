@@ -709,51 +709,6 @@ class Handler(SimpleHTTPRequestHandler):
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/product-addons":
-                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
-                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
-                if user["role"] not in ("owner","manager"):
-                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
-                product_id=data.get("productId"); name=data.get("name"); price=data.get("price")
-                if not isinstance(product_id,str) or not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
-                    return self.send_json(400,{"error":"کالا، نام افزودنی یا قیمت معتبر نیست."})
-                product=db.execute("SELECT id FROM products WHERE id=? AND tenant_id=? AND active=1",
-                                   (product_id,user["tenant_id"])).fetchone()
-                if not product:
-                    return self.send_json(404,{"error":"کالای فعال پیدا نشد."})
-                addon_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
-                if not 1<=len(addon_id)<=100:
-                    return self.send_json(400,{"error":"شناسه افزودنی معتبر نیست."})
-                if db.execute("SELECT 1 FROM product_addons WHERE tenant_id=? AND product_id=? AND name=? AND active=1",
-                              (user["tenant_id"],product_id,name.strip())).fetchone():
-                    return self.send_json(409,{"error":"این افزودنی قبلاً برای کالا ثبت شده است."})
-                db.execute("INSERT INTO product_addons(id,tenant_id,product_id,name,price,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                           (addon_id,user["tenant_id"],product_id,name.strip(),price,now,now))
-                audit(db,user["tenant_id"],user["id"],"product.addon.created","product_addon",addon_id,{"productId":product_id,"price":price})
-                db.commit()
-                return self.send_json(201,{"id":addon_id,"ok":True})
-            if path.startswith("/api/product-addons/"):
-                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
-                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
-                if user["role"] not in ("owner","manager"):
-                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
-                addon_id=path.rsplit("/",1)[-1]; name=data.get("name"); price=data.get("price")
-                if not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
-                    return self.send_json(400,{"error":"نام یا قیمت افزودنی معتبر نیست."})
-                changed=db.execute("""UPDATE product_addons SET name=?,price=?,updated_at=?
-                    WHERE id=? AND tenant_id=? AND active=1""",
-                    (name.strip(),price,int(time.time()),addon_id,user["tenant_id"])).rowcount
-                if not changed:
-                    return self.send_json(404,{"error":"افزودنی فعال پیدا نشد."})
-                audit(db,user["tenant_id"],user["id"],"product.addon.updated","product_addon",addon_id,{"price":price})
-                db.commit()
-                return self.send_json(200,{"ok":True})
-            if path == "/api/products":
-                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
-                    return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
-                rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
-                    FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
-            if path == "/api/product-addons":
                 if not require_any_module(db,user["tenant_id"],"cafe","inventory"):
                     return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
                 rows=db.execute("""SELECT a.id,a.product_id AS productId,p.name AS productName,
@@ -1745,6 +1700,45 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"user.created","user",target_id,{"role":role})
                 db.commit()
                 return self.send_json(201, {"id": target_id, "ok": True})
+            if path == "/api/product-addons":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
+                product_id=data.get("productId"); name=data.get("name"); price=data.get("price")
+                if not isinstance(product_id,str) or not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
+                    return self.send_json(400,{"error":"کالا، نام افزودنی یا قیمت معتبر نیست."})
+                product=db.execute("SELECT id FROM products WHERE id=? AND tenant_id=? AND active=1",
+                                   (product_id,user["tenant_id"])).fetchone()
+                if not product:
+                    return self.send_json(404,{"error":"کالای فعال پیدا نشد."})
+                addon_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                if not 1<=len(addon_id)<=100:
+                    return self.send_json(400,{"error":"شناسه افزودنی معتبر نیست."})
+                if db.execute("SELECT 1 FROM product_addons WHERE tenant_id=? AND product_id=? AND name=?",
+                              (user["tenant_id"],product_id,name.strip())).fetchone():
+                    return self.send_json(409,{"error":"این نام افزودنی قبلاً برای کالا استفاده شده است."})
+                db.execute("INSERT INTO product_addons(id,tenant_id,product_id,name,price,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                           (addon_id,user["tenant_id"],product_id,name.strip(),price,now,now))
+                audit(db,user["tenant_id"],user["id"],"product.addon.created","product_addon",addon_id,{"productId":product_id,"price":price})
+                db.commit()
+                return self.send_json(201,{"id":addon_id,"ok":True})
+            if path.startswith("/api/product-addons/"):
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
+                addon_id=path.rsplit("/",1)[-1]; name=data.get("name"); price=data.get("price")
+                if not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
+                    return self.send_json(400,{"error":"نام یا قیمت افزودنی معتبر نیست."})
+                changed=db.execute("""UPDATE product_addons SET name=?,price=?,updated_at=?
+                    WHERE id=? AND tenant_id=? AND active=1""",
+                    (name.strip(),price,int(time.time()),addon_id,user["tenant_id"])).rowcount
+                if not changed:
+                    return self.send_json(404,{"error":"افزودنی فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"product.addon.updated","product_addon",addon_id,{"price":price})
+                db.commit()
+                return self.send_json(200,{"ok":True})
             if path == "/api/products":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
