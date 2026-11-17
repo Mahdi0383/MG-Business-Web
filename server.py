@@ -1743,8 +1743,8 @@ class Handler(SimpleHTTPRequestHandler):
                 active_reservation=db.execute("""SELECT id,customer_id FROM gamenet_reservations
                     WHERE tenant_id=? AND device_id=? AND status='booked' AND starts_at<=? AND ends_at>?
                     ORDER BY starts_at LIMIT 1""",(user["tenant_id"],device_id,now,now)).fetchone()
-                if active_reservation and active_reservation["customer_id"]!=customer_id:
-                    db.rollback(); return self.send_json(409,{"error":"این دستگاه در حال حاضر برای مشتری دیگری رزرو شده است."})
+                if active_reservation and (active_reservation["customer_id"] is None or active_reservation["customer_id"]!=customer_id):
+                    db.rollback(); return self.send_json(409,{"error":"این دستگاه در حال حاضر رزرو شده و برای این نشست قابل استفاده نیست."})
                 if active_reservation:
                     db.execute("UPDATE gamenet_reservations SET status='completed' WHERE id=?",(active_reservation["id"],))
                 db.execute("""INSERT INTO game_sessions(id,tenant_id,device_id,customer_id,started_by,started_at,status,
@@ -1799,9 +1799,9 @@ class Handler(SimpleHTTPRequestHandler):
                         WHERE tenant_id=? AND device_id=? AND status='booked'
                         AND starts_at<=? AND ends_at>? ORDER BY starts_at LIMIT 1""",
                         (user["tenant_id"],target_id,now,now)).fetchone()
-                    if active_reservation and active_reservation["customer_id"]!=session["customer_id"]:
+                    if active_reservation and (active_reservation["customer_id"] is None or active_reservation["customer_id"]!=session["customer_id"]):
                         db.rollback()
-                        return self.send_json(409, {"error":"دستگاه مقصد در حال حاضر برای مشتری دیگری رزرو شده است."})
+                        return self.send_json(409, {"error":"دستگاه مقصد در حال حاضر رزرو شده و برای این نشست قابل استفاده نیست."})
                 rate=target["hourly_rate"] if changed_device else session["rate_per_hour"]
                 free=target["is_free"] if changed_device else session["is_free"]
                 if requested_free is not None: free=int(requested_free)
