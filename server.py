@@ -5,12 +5,13 @@ import base64, hashlib, hmac, ipaddress, json, os, re, secrets, sqlite3, time, t
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from backup_manager import create_snapshot
+from backup_manager import create_snapshot, decode_encryption_key
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
 DB_PATH = Path(os.environ.get("MG_DB_PATH", DATA_DIR / "mg-business.sqlite3")).resolve()
 BACKUP_DIR = Path(os.environ.get("MG_BACKUP_DIR", DATA_DIR / "backups")).expanduser().resolve()
+BACKUP_ENCRYPTION_KEY = decode_encryption_key(os.environ.get("MG_BACKUP_ENCRYPTION_KEY"))
 if DATA_DIR == ROOT or ROOT in DATA_DIR.parents or DB_PATH == ROOT or ROOT in DB_PATH.parents:
     raise RuntimeError("MG_DATA_DIR and MG_DB_PATH must be outside the public web root.")
 if BACKUP_DIR == ROOT or ROOT in BACKUP_DIR.parents or BACKUP_DIR == DB_PATH:
@@ -3169,7 +3170,7 @@ def backup_scheduler(stop_event=None):
     retry_delay = 60
     while stop_event is None or not stop_event.is_set():
         try:
-            snapshot = create_snapshot(DB_PATH, BACKUP_DIR, BACKUP_RETENTION)
+            snapshot = create_snapshot(DB_PATH, BACKUP_DIR, BACKUP_RETENTION, BACKUP_ENCRYPTION_KEY)
             print("MG scheduled backup created: %s" % snapshot, flush=True)
             retry_delay = 60
             delay = BACKUP_INTERVAL_SECONDS
