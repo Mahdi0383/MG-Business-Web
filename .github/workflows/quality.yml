@@ -36,3 +36,36 @@ jobs:
         run: node --test tests/core.test.js
       - name: Run backend integration tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.56.1
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run browser end-to-end smoke test
+        env:
+          MG_HOST: 127.0.0.1
+          MG_PORT: 8080
+          MG_DATA_DIR: ${{ runner.temp }}/mg-browser-data
+          MG_BACKUP_DIR: ${{ runner.temp }}/mg-browser-backups
+          MG_BACKUP_INTERVAL_HOURS: 168
+        run: |
+          mkdir -p "$MG_DATA_DIR" "$MG_BACKUP_DIR"
+          python server.py > "$RUNNER_TEMP/mg-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/api/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/api/health >/dev/null
+          node tests/browser_smoke.mjs
