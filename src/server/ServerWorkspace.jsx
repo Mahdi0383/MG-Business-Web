@@ -68,6 +68,8 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
   const [modal, setModal] = useState("");
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState(null);
+  const [revokedDeviceIds, setRevokedDeviceIds] = useState(() => new Set());
 
   const canViewProducts = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "GameOperator", "InventoryManager", "Viewer"].includes(tenant.role);
   const canViewCustomers = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "Viewer"].includes(tenant.role);
@@ -642,6 +644,26 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
     }
   };
 
+  const revokeRegisteredDevice = async device => {
+    if (!device?.deviceId || !["Owner", "Manager"].includes(tenant.role)) return;
+    if (revokeTarget !== device.deviceId) {
+      setRevokeTarget(device.deviceId);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await client.post("/api/sync/enrollment/revoke", { deviceId: device.deviceId });
+      setRevokedDeviceIds(previous => new Set([...previous, device.deviceId]));
+      setRevokeTarget(null);
+      setError("اعتبارنامه این دستگاه لغو شد؛ درخواست‌های همگام‌سازی بعدی آن رد می‌شوند.");
+    } catch (revokeError) {
+      setError(formatApiError(revokeError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateKitchenStatus = async (ticketId, status) => {
     setSaving(true);
     setError("");
@@ -777,7 +799,7 @@ function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle",
           <div className="mg-server-panel-head"><div><h2>وضعیت اتصال دستگاه‌ها</h2><p>آستانه هشدار: ۹۰ ثانیه بدون heartbeat · آخرین بررسی هر ۳۰ ثانیه</p></div><span className="mg-server-device-count">{count(deviceStatuses.length)} دستگاه ثبت‌شده</span></div>
           {deviceStatuses.length === 0
             ? <div className="mg-server-empty">هنوز دستگاهی به این کسب‌وکار متصل نشده است.</div>
-            : <div className="mg-server-table-wrap"><table className="mg-server-table"><thead><tr><th>دستگاه</th><th>پلتفرم</th><th>نسخه</th><th>آخرین ارتباط</th><th>آخرین شماره همگام‌سازی</th><th>عملیات در انتظار دریافت</th><th>وضعیت</th></tr></thead><tbody>{deviceStatuses.map(device => <tr key={device.deviceId}><td>{device.deviceName}</td><td>{device.platform}</td><td>{device.clientVersion}</td><td>{dateTime(device.lastSeenAtUtc)}</td><td>{count(device.lastAcknowledgedSequence || 0)}</td><td>{count(device.pendingOperationCount || 0)}</td><td><span className={device.isOnline ? "mg-device-online" : "mg-device-offline"}>{device.isOnline ? "متصل" : "قطع ارتباط"}</span></td></tr>)}</tbody></table></div>}
+            : <div className="mg-server-table-wrap"><table className="mg-server-table"><thead><tr><th>دستگاه</th><th>پلتفرم</th><th>نسخه</th><th>آخرین ارتباط</th><th>آخرین شماره همگام‌سازی</th><th>عملیات در انتظار دریافت</th><th>وضعیت</th>{["Owner", "Manager"].includes(tenant.role) && <th>امنیت</th>}</tr></thead><tbody>{deviceStatuses.map(device => <tr key={device.deviceId}><td>{device.deviceName}</td><td>{device.platform}</td><td>{device.clientVersion}</td><td>{dateTime(device.lastSeenAtUtc)}</td><td>{count(device.lastAcknowledgedSequence || 0)}</td><td>{count(device.pendingOperationCount || 0)}</td><td><span className={revokedDeviceIds.has(device.deviceId) ? "mg-device-offline" : device.isOnline ? "mg-device-online" : "mg-device-offline"}>{revokedDeviceIds.has(device.deviceId) ? "دسترسی لغوشده" : device.isOnline ? "متصل" : "قطع ارتباط"}</span></td>{["Owner", "Manager"].includes(tenant.role) && <td>{revokedDeviceIds.has(device.deviceId) ? "لغوشده" : <button className="mg-secondary-btn" disabled={saving} onClick={() => revokeRegisteredDevice(device)}>{revokeTarget === device.deviceId ? "تأیید لغو دسترسی" : "لغو دسترسی"}</button>}</td>}</tr>)}</tbody></table></div>}
         </section>}
 
         {page === "dashboard" && !loading && <>
