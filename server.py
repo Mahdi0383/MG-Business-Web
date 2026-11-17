@@ -1141,7 +1141,9 @@ class Handler(SimpleHTTPRequestHandler):
                     for name in insert_order:
                         records = tables.get(name,[])
                         if name == "journal_entries":
-                            records = sorted(records,key=lambda row: row.get("created_at",0))
+                            # Reversal entries have a self-referencing FK to the original entry.
+                            # Restore originals first even when both entries share the same second.
+                            records = sorted(records,key=lambda row: (bool(row.get("reversal_of")), row.get("created_at",0)))
                         for record in records:
                             columns = list(record.keys())
                             if not columns:
