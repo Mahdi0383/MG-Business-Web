@@ -1350,6 +1350,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(raw_username, str) or not 3 <= len(raw_username.strip()) <= 64:
                     return self.send_json(400, {"error": "نام کاربری معتبر نیست."})
                 username, password = raw_username.strip(), data.get("password", "")
+                if not isinstance(password, str) or len(password) > 256:
+                    return self.send_json(400, {"error": "رمز عبور معتبر نیست؛ حداکثر طول مجاز ۲۵۶ نویسه است."})
                 ip = self.client_ip()
                 key = (ip, username.casefold())
                 now = time.time()
