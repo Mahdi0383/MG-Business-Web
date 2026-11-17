@@ -1122,6 +1122,29 @@ class ApiIntegrationTests(unittest.TestCase):
             changed["items"]=[{"productId":"public-addon-product","quantity":2}]
             status, conflict = self.request("POST","/api/public/orders",changed)
             self.assertEqual(status,409)
+            # Backup/restore must preserve the idempotency fingerprint, not
+            # silently fall back to mutable customer profile fields.
+            status, public_snapshot=self.request("GET","/api/backup",token=token)
+            self.assertEqual(status,200)
+            db=server.connect()
+            try:
+                db.execute("UPDATE customers SET full_name=?,phone=? WHERE phone=?",
+                           ("Profile Before Restore","+49123456781","+49123456780"))
+                db.commit()
+            finally:
+                db.close()
+            status, restored=self.request("POST","/api/backup/restore",public_snapshot,token)
+            self.assertEqual(status,200)
+            db=server.connect()
+            try:
+                db.execute("UPDATE customers SET full_name=?,phone=? WHERE phone=?",
+                           ("Profile After Restore","+49123456782","+49123456789"))
+                db.commit()
+            finally:
+                db.close()
+            status, restored_duplicate=self.request("POST","/api/public/orders",payload)
+            self.assertEqual(status,200)
+            self.assertTrue(restored_duplicate["duplicate"])
             db=server.connect()
             try:
                 item=db.execute("SELECT unit_price,line_total,addons_json FROM order_items WHERE order_id='public-public-addon-order-01'").fetchone()
