@@ -387,6 +387,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/orders", token=token)
         self.assertEqual(next(x for x in result["items"] if x["id"] == "order-test-1")["status"], "cancelled")
+        status, repeated_return = self.request("DELETE", "/api/orders/order-test-1", token=token)
+        self.assertEqual(status,200)
+        self.assertTrue(repeated_return["duplicate"])
+        status, missing_return = self.request("DELETE", "/api/orders/not-found", token=token)
+        self.assertEqual(status,404)
         db = server.connect()
         try:
             restored = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE product_id='product-1'").fetchone()[0]
