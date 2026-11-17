@@ -759,7 +759,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows=db.execute("""SELECT a.id,a.product_id AS productId,p.name AS productName,
                     a.name,a.price,a.active,a.created_at AS createdAt
                     FROM product_addons a JOIN products p ON p.id=a.product_id
-                    WHERE a.tenant_id=? AND a.active=1 ORDER BY p.name,a.name LIMIT 5000""",
+                    WHERE a.tenant_id=? AND a.active=1 AND p.active=1 ORDER BY p.name,a.name LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
             if path == "/api/inventory":
