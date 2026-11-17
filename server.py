@@ -1150,6 +1150,37 @@ class Handler(SimpleHTTPRequestHandler):
                 total_rows = sum(len(tables.get(name,[])) for name in allowed)
                 if total_rows > 500000:
                     return self.send_json(413, {"error": "تعداد رکوردهای نسخه پشتیبان بیش از حد مجاز است."})
+                # Reject financially incomplete snapshots before deleting any live rows.
+                required_accounts = {"1000","1010","1020","1100","1200","2000","3000",
+                                     "4000","4100","5000","5100","5200"}
+                account_rows = tables.get("accounts", [])
+                available_accounts = {
+                    row.get("code") for row in account_rows
+                    if isinstance(row,dict) and row.get("active",1) in (1,True)
+                }
+                if not required_accounts.issubset(available_accounts):
+                    return self.send_json(400, {"error": "کدینگ پایه حسابداری در نسخه پشتیبان ناقص است."})
+                journal_totals = {}
+                journal_counts = {}
+                for line in tables.get("journal_lines", []):
+                    if not isinstance(line,dict):
+                        return self.send_json(400, {"error": "ردیف سند حسابداری در نسخه پشتیبان معتبر نیست."})
+                    debit, credit, entry_id = line.get("debit"), line.get("credit"), line.get("entry_id")
+                    if type(debit) is not int or type(credit) is not int or debit < 0 or credit < 0 or debit + credit <= 0:
+                        return self.send_json(400, {"error": "مبالغ ردیف سند حسابداری در نسخه پشتیبان معتبر نیست."})
+                    totals = journal_totals.setdefault(entry_id,[0,0])
+                    totals[0] += debit
+                    totals[1] += credit
+                    journal_counts[entry_id] = journal_counts.get(entry_id,0) + 1
+                for entry in tables.get("journal_entries", []):
+                    if not isinstance(entry,dict):
+                        return self.send_json(400, {"error": "سند حسابداری در نسخه پشتیبان معتبر نیست."})
+                    entry_id = entry.get("id")
+                    totals = journal_totals.get(entry_id)
+                    if not totals or journal_counts.get(entry_id,0) < 2 or totals[0] != totals[1]:
+                        return self.send_json(400, {"error": "تراز یکی از اسناد حسابداری نسخه پشتیبان برقرار نیست."})
+                if set(journal_totals) - {row.get("id") for row in tables.get("journal_entries",[]) if isinstance(row,dict)}:
+                    return self.send_json(400, {"error": "ردیف سند بدون سند حسابداری در نسخه پشتیبان وجود دارد."})
                 tenant_id = user["tenant_id"]
                 try:
                     db.execute("BEGIN IMMEDIATE")
