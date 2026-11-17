@@ -163,6 +163,8 @@ if 'if path == "/api/accounting/cash-flow":' not in server or "netCashFlow" not 
     raise SystemExit("Date-scoped accounting cash flow report API is missing")
 if "apiRequest('/api/accounting/cash-flow'+accountingReportQuery())" not in app:
     raise SystemExit("Accounting cash flow summary must follow the selected date range")
+if "cashFlow.items.map" not in app or "x.netCash" not in app:
+    raise SystemExit("Accounting cash flow transaction details are missing from the UI")
 if "cashFlow.inflow" not in app or "cashFlow.outflow" not in app or "cashFlow.netCashFlow" not in app:
     raise SystemExit("Accounting cash flow totals are missing from the UI and CSV export")
 if "apiRequest('/api/accounting/journal'+accountingReportQuery())" not in app:
