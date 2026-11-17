@@ -2228,6 +2228,11 @@ class Handler(SimpleHTTPRequestHandler):
                 tenant_id = user["tenant_id"]
                 try:
                     db.execute("BEGIN IMMEDIATE")
+                    if backup_version < 3 and db.execute(
+                        "SELECT 1 FROM cash_register_shifts WHERE tenant_id=? AND status='open' LIMIT 1",
+                        (tenant_id,)).fetchone():
+                        db.rollback()
+                        return self.send_json(409,{"error":"برای بازیابی پشتیبان قدیمی، ابتدا شیفت فعال صندوق را ببندید؛ این نسخه شناسه دقیق گردش‌های شیفت را نگهداری نمی‌کند."})
                     db.execute("DROP TRIGGER IF EXISTS journal_entries_no_delete")
                     db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
                     column_map = {}
