@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64, hashlib, hmac, ipaddress, json, os, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from backup_manager import create_snapshot
 
 ROOT = Path(__file__).resolve().parent
@@ -397,6 +397,27 @@ CREATE TABLE IF NOT EXISTS audit_log(
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_log(tenant_id, created_at DESC);
 """
+
+def parse_report_dates(raw_query, allow_from=True):
+    params = parse_qs(raw_query, keep_blank_values=True)
+    allowed = {"toDate"} | ({"fromDate"} if allow_from else set())
+    if set(params) - allowed or any(len(values) != 1 for values in params.values()):
+        raise ValueError("پارامترهای بازه گزارش نامعتبر هستند.")
+    parsed = {}
+    for key, values in params.items():
+        value = values[0]
+        if not value:
+            raise ValueError("تاریخ گزارش نمی‌تواند خالی باشد.")
+        try:
+            parsed[key] = time.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("تاریخ گزارش باید با قالب YYYY-MM-DD ارسال شود.")
+        if time.strftime("%Y-%m-%d", parsed[key]) != value:
+            raise ValueError("تاریخ گزارش معتبر نیست.")
+    if "fromDate" in parsed and "toDate" in parsed and parsed["fromDate"] > parsed["toDate"]:
+        raise ValueError("تاریخ شروع گزارش نباید بعد از تاریخ پایان باشد.")
+    return parsed
+
 
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1240,36 +1261,65 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/profit-loss":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                conditions = ["e.tenant_id=?"]
+                values = [user["tenant_id"]]
+                if "fromDate" in dates:
+                    conditions.append("e.entry_date>=?")
+                    values.append(time.strftime("%Y-%m-%d", dates["fromDate"]))
+                if "toDate" in dates:
+                    conditions.append("e.entry_date<=?")
+                    values.append(time.strftime("%Y-%m-%d", dates["toDate"]))
                 rows = db.execute("""SELECT a.account_type AS accountType,
                     COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
+                    LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
                     WHERE a.tenant_id=? AND a.account_type IN ('revenue','expense')
-                    GROUP BY a.account_type""", (user["tenant_id"],)).fetchall()
+                      AND (l.id IS NULL OR """+" AND ".join(conditions)+""")
+                    GROUP BY a.account_type""", (user["tenant_id"], *values)).fetchall()
                 totals = {row["accountType"]: row for row in rows}
                 revenue = totals.get("revenue")["credit"] - totals.get("revenue")["debit"] if totals.get("revenue") else 0
                 expenses = totals.get("expense")["debit"] - totals.get("expense")["credit"] if totals.get("expense") else 0
-                return self.send_json(200, {"revenue": revenue, "expenses": expenses, "netProfit": revenue-expenses})
+                return self.send_json(200, {"revenue": revenue, "expenses": expenses, "netProfit": revenue-expenses,
+                    "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
+                    "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
             if path == "/api/accounting/trial-balance":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query, allow_from=False)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                as_of = time.strftime("%Y-%m-%d", dates["toDate"]) if "toDate" in dates else None
                 rows = db.execute("""SELECT a.code,a.name,a.account_type AS accountType,
                     a.normal_balance AS normalBalance,COALESCE(SUM(l.debit),0) AS debit,
                     COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
-                    WHERE a.tenant_id=? AND a.active=1 GROUP BY a.id ORDER BY a.code""",
-                    (user["tenant_id"],)).fetchall()
+                    LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    WHERE a.tenant_id=? AND a.active=1 AND (? IS NULL OR e.entry_date<=?)
+                    GROUP BY a.id ORDER BY a.code""",(user["tenant_id"],as_of,as_of)).fetchall()
                 items = [dict(row) for row in rows]
-                return self.send_json(200, {"items":items,
+                return self.send_json(200, {"items":items,"asOfDate":as_of,
                     "totalDebit":sum(x["debit"] for x in items),
                     "totalCredit":sum(x["credit"] for x in items)})
             if path == "/api/accounting/balance-sheet":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query, allow_from=False)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                as_of = time.strftime("%Y-%m-%d", dates["toDate"]) if "toDate" in dates else None
                 rows = db.execute("""SELECT a.code,a.name,a.account_type AS accountType,
                     COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
+                    LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
                     WHERE a.tenant_id=? AND a.active=1 AND a.account_type IN ('asset','liability','equity')
-                    GROUP BY a.id ORDER BY a.code""", (user["tenant_id"],)).fetchall()
+                      AND (? IS NULL OR e.entry_date<=?)
+                    GROUP BY a.id ORDER BY a.code""",(user["tenant_id"],as_of,as_of)).fetchall()
                 items = [dict(row) for row in rows]
                 assets = sum(x["debit"]-x["credit"] for x in items if x["accountType"]=="asset")
                 liabilities = sum(x["credit"]-x["debit"] for x in items if x["accountType"]=="liability")
@@ -1277,13 +1327,15 @@ class Handler(SimpleHTTPRequestHandler):
                 profit_rows = db.execute("""SELECT a.account_type AS accountType,
                     COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
-                    WHERE a.tenant_id=? AND a.account_type IN ('revenue','expense') GROUP BY a.account_type""",
-                    (user["tenant_id"],)).fetchall()
+                    LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    WHERE a.tenant_id=? AND a.account_type IN ('revenue','expense')
+                      AND (l.id IS NULL OR (? IS NULL OR e.entry_date<=?))
+                    GROUP BY a.account_type""",(user["tenant_id"],as_of,as_of)).fetchall()
                 totals = {x["accountType"]:x for x in profit_rows}
                 profit = (totals.get("revenue")["credit"]-totals.get("revenue")["debit"] if totals.get("revenue") else 0) - (totals.get("expense")["debit"]-totals.get("expense")["credit"] if totals.get("expense") else 0)
                 equity = equity_accounts + profit
                 return self.send_json(200, {"assets":assets,"liabilities":liabilities,"equity":equity,
-                    "currentProfit":profit,"liabilitiesAndEquity":liabilities+equity,
+                    "currentProfit":profit,"liabilitiesAndEquity":liabilities+equity,"asOfDate":as_of,
                     "balanced":assets == liabilities+equity,"items":items})
             return self.send_json(404, {"error": "مسیر API پیدا نشد."})
         except sqlite3.IntegrityError:
