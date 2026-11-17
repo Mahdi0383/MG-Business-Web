@@ -308,6 +308,10 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        status, order_details = self.request("GET","/api/orders/order-test-1",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(sum(x["discountAmount"] for x in order_details["items"]),5000)
+        self.assertEqual(sum(x["lineTotal"]-x["discountAmount"] for x in order_details["items"]),165000)
         db=server.connect()
         try:
             allocated=db.execute("""SELECT SUM(discount_amount) AS discount,
