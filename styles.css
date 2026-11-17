@@ -86,3 +86,18 @@
  body.printing-order .order-print-sheet button{display:none}
  body.printing-order .module-table-head,body.printing-order .module-table-row{border-color:#ccc;color:#111}
 }
+
+@media print{
+ @page{size:58mm 200mm;margin:2mm}
+ body.printing-order #orderDetailsPanel{width:54mm;max-width:54mm}
+ body.printing-order .order-print-sheet{width:54mm;max-width:54mm;padding:1mm;background:#fff;font-family:Tahoma,Arial,sans-serif}
+ body.printing-order .order-print-sheet .ledger-head{display:block;margin-bottom:8px}
+ body.printing-order .order-print-sheet .ledger-head h3{font-size:12px;margin:5px 0}
+ body.printing-order .order-print-sheet .ledger-head p{font-size:8px;margin:4px 0}
+ body.printing-order .module-table-head.order-lines,
+ body.printing-order .module-table-row.order-lines{grid-template-columns:1fr .45fr .65fr .75fr;gap:3px;padding:5px 2px;font-size:8px}
+ body.printing-order .order-lines small{font-size:7px;line-height:1.4}
+ body.printing-order .order-receipt-totals{width:100%;font-size:9px;gap:5px;margin-top:10px}
+ body.printing-order .order-receipt-totals .grand{font-size:11px}
+ body.printing-order .order-receipt-status{font-size:8px}
+}
