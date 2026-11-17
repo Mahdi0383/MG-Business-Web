@@ -207,6 +207,12 @@ try {
     accountLedgerCheck.body.openingBalance +
     accountLedgerCheck.body.periodDebit - accountLedgerCheck.body.periodCredit,
     "debit-normal cash account closing balance must reconcile to opening plus period movement");
+  await page.locator("#accountLedgerFilter select[name=accountId]").selectOption(accountLedgerCheck.body.account.id);
+  await page.locator("#accountLedgerFilter input[name=fromDate]").fill(accountingToday);
+  await page.locator("#accountLedgerFilter input[name=toDate]").fill(accountingToday);
+  await page.locator("#accountLedgerFilter button[type=submit]").click();
+  await page.locator("#accountLedgerResult .ledger-summary").waitFor({ state: "visible" });
+  await page.locator("#accountLedgerResult").getByText("مانده اختتامیه", { exact: true }).waitFor({ state: "visible" });
   await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
   const accountingDownloadPromise = page.waitForEvent("download");
   await page.locator('[data-accounting-export]').click();
