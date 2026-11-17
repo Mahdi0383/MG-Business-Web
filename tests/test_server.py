@@ -404,6 +404,14 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_payment["duplicate"])
         self.assertEqual(duplicate_payment["remainingBalance"],35000)
+        status, second_customer = self.request("POST", "/api/customers", {
+            "id":"customer-2","fullName":"Second Customer","phone":"+491234568"
+        }, token)
+        self.assertEqual(status,201)
+        status, reused_payment_id = self.request("POST", "/api/customers/customer-2/payments", {
+            "id":"customer-payment-01","amount":50000,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,409)
         status, result = self.request("POST", "/api/customers/customer-1/payments", {
             "amount": 40000, "paymentMethod": "cash"
         }, token)
