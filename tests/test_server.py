@@ -1012,6 +1012,16 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
+        # Logout must not mutate state through a safe GET request.
+        status, result = self.request("GET", "/api/logout", token=token)
+        self.assertNotEqual(status, 200)
+        status, result = self.request("GET", "/api/me", token=token)
+        self.assertEqual(status, 200)
+        status, result = self.request("POST", "/api/logout", {}, token=token)
+        self.assertEqual(status, 200)
+        status, result = self.request("GET", "/api/me", token=token)
+        self.assertEqual(status, 401)
+
     def test_public_orders_support_addons_and_reject_reused_ids_with_changed_content(self):
         original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp.name) / "public-addons-test.sqlite3"
