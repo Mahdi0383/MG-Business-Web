@@ -936,6 +936,23 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(card_retry["duplicate"])
         self.assertEqual(card_retry["paymentMethod"],"card")
+        # A voided settlement transaction must not be accepted as a successful retry.
+        db=server.connect()
+        try:
+            db.execute("UPDATE transactions SET status='voided' WHERE id='game-session-card'")
+            db.commit()
+        finally:
+            db.close()
+        status, voided_game_retry=self.request("POST","/api/gamenet/sessions/session-card/end",{
+            "paymentMethod":"card"
+        },token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            db.execute("UPDATE transactions SET status='posted' WHERE id='game-session-card'")
+            db.commit()
+        finally:
+            db.close()
         # An ended GameNet session cannot report a successful retry after its journal is damaged.
         db=server.connect()
         try:
