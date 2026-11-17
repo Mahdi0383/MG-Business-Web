@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
@@ -81,8 +81,6 @@ if 'if path == "/api/product-addons":' not in server or "addons_json" not in ser
     raise SystemExit("Product add-ons and detailed order receipt API are missing")
 if "data-order-details" not in app or "data-order-print" not in app:
     raise SystemExit("Cafe order detail and print receipt UI are missing")
-if "addons_json" not in server:
-    raise SystemExit("Product add-on API and order-item snapshots are missing")
 if "productAddonForm" not in app or "data-cafe-addon" not in app or "addons:(x.addons||[]).map" not in app:
     raise SystemExit("Product add-on management and POS selection UI are missing")
 if "stableRequestId" not in app:
