@@ -795,10 +795,18 @@ class ApiIntegrationTests(unittest.TestCase):
                 db.commit()
             finally:
                 db.close()
+            status, too_large = self.request("POST", "/api/product-addons", {
+                "id":"addon-too-large","productId":"addon-product","name":"Unsafe price","price":9007199254740992
+            }, token)
+            self.assertEqual(status,400)
             status, created = self.request("POST", "/api/product-addons", {
                 "id":"addon-01","productId":"addon-product","name":"Extra shot","price":20
             }, token)
             self.assertEqual(status, 201)
+            status, unsafe_update = self.request("POST", "/api/product-addons/addon-01", {
+                "name":"Extra shot","price":9007199254740992
+            }, token)
+            self.assertEqual(status,400)
             status, updated = self.request("POST", "/api/product-addons/addon-01", {
                 "name":"Extra shot","price":25
             }, token)
