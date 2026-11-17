@@ -646,6 +646,17 @@ def assert_accounting_period_open(db, tenant_id, entry_date):
         raise sqlite3.IntegrityError("Accounting period is closed; backdated posting or reversal is not allowed.")
 
 
+def cash_register_expected_cash(db, tenant_id, opened_at, opening_cash, as_of=None):
+    as_of=int(time.time()) if as_of is None else int(as_of)
+    movement=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) AS net_cash
+        FROM journal_entries e
+        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        WHERE e.tenant_id=? AND a.code='1000' AND e.created_at>=? AND e.created_at<=?""",
+        (tenant_id,int(opened_at),as_of)).fetchone()["net_cash"]
+    return int(opening_cash)+int(movement)
+
+
 def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000'):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
     cash, counterpart = accounts[debit_account_code] if kind == "income" else accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
