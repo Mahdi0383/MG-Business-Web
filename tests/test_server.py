@@ -2496,6 +2496,21 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 403)
             self.assertIn("error", denied_user)
 
+            status, transaction = self.request("POST", "/api/transactions", {
+                "id": "manager-reversal-permission", "title": "Manager approved expense",
+                "amount": 1200, "kind": "expense", "category": "role-test",
+                "createdAt": "2026-11-17T10:00:00"
+            }, created_tokens["manager"])
+            self.assertEqual(status, 201)
+            status, denied_reversal = self.request("DELETE",
+                "/api/transactions/" + transaction["id"], token=created_tokens["cashier"])
+            self.assertEqual(status, 403)
+            self.assertIn("error", denied_reversal)
+            status, reversed = self.request("DELETE",
+                "/api/transactions/" + transaction["id"], token=created_tokens["manager"])
+            self.assertEqual(status, 200)
+            self.assertTrue(reversed["voided"])
+
             status, stock = self.request("GET", "/api/inventory", token=created_tokens["cashier"])
             self.assertEqual(status, 200)
             self.assertEqual(next(item for item in stock["items"] if item["productId"] == product["id"])["quantity"], 5)
