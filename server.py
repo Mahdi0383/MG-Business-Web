@@ -1469,6 +1469,8 @@ class Handler(SimpleHTTPRequestHandler):
                 from datetime import datetime
                 try:
                     start_dt=datetime.fromisoformat(starts); end_dt=datetime.fromisoformat(ends)
+                    if start_dt.tzinfo is None or start_dt.utcoffset() is None or end_dt.tzinfo is None or end_dt.utcoffset() is None:
+                        return self.send_json(400,{"error":"زمان رزرو باید همراه با منطقه زمانی یا اختلاف UTC ارسال شود."})
                     start_ts=int(start_dt.timestamp()); end_ts=int(end_dt.timestamp())
                 except (TypeError,ValueError,OverflowError):
                     return self.send_json(400,{"error":"زمان رزرو معتبر نیست."})
