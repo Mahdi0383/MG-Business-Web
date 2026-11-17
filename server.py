@@ -830,6 +830,30 @@ class Handler(SimpleHTTPRequestHandler):
                     WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 1000""",
                     (user["tenant_id"],customer_id)).fetchall()
                 return self.send_json(200, {"items":[dict(row) for row in rows]})
+            if path.startswith("/api/orders/"):
+                if not module_enabled(db,user["tenant_id"],"cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه در لایسنس فعال نیست."})
+                order_id=path.rsplit("/",1)[-1]
+                order=db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.subtotal,o.discount,o.total,
+                    o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
+                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+                    WHERE o.id=? AND o.tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
+                if not order:
+                    return self.send_json(404,{"error":"سفارش پیدا نشد."})
+                items=[]
+                for row in db.execute("""SELECT id,product_id AS productId,product_name AS productName,
+                    quantity,unit_price AS unitPrice,line_total AS lineTotal,addons_json AS addonsJson
+                    FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY rowid""",
+                    (user["tenant_id"],order_id)).fetchall():
+                    item=dict(row)
+                    try:
+                        addons=json.loads(item.pop("addonsJson") or "[]")
+                        item["addons"]=addons if isinstance(addons,list) else []
+                    except (TypeError,ValueError):
+                        item.pop("addonsJson",None)
+                        item["addons"]=[]
+                    items.append(item)
+                return self.send_json(200,{"order":dict(order),"items":items})
             if path == "/api/orders":
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})

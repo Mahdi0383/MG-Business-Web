@@ -62,3 +62,27 @@
 .public-addons input{width:auto;margin:0;accent-color:#60a5fa}
 .public-addons label b{margin-inline-start:auto;color:#73d8ad;white-space:nowrap}
 @media(max-width:600px){.public-addons{padding:7px}.public-addons label{font-size:9px}}
+
+.order-details-panel{margin:18px 0}
+.order-print-sheet{padding:18px;border:1px solid #2c3d58;border-radius:14px;background:#111c2d}
+.order-print-sheet .ledger-head{align-items:flex-start}
+.order-lines{grid-template-columns:1.5fr .6fr .8fr .8fr}
+.order-lines small{display:block;margin-top:5px;color:#91a2b9;font-size:10px;line-height:1.7}
+.order-receipt-totals{max-width:430px;margin:18px 0 0 auto;display:grid;gap:9px}
+.order-receipt-totals>div{display:flex;justify-content:space-between;gap:15px;color:#a8b6c9}
+.order-receipt-totals .grand{padding-top:10px;border-top:1px solid #2c3d58;color:#73d8ad;font-size:16px}
+.order-receipt-status{margin-top:16px;color:#91a2b9;font-size:11px}
+@media(max-width:700px){.order-lines{grid-template-columns:1.3fr .5fr .7fr .8fr;gap:5px;padding:8px 5px;font-size:9px}.order-print-sheet{padding:10px}}
+@media print{
+ body.printing-order *{visibility:hidden!important}
+ body.printing-order #orderDetailsPanel,body.printing-order #orderDetailsPanel *{visibility:visible!important}
+ body.printing-order #orderDetailsPanel{position:absolute;inset:0;width:100%;margin:0;padding:0;background:#fff;color:#111}
+ body.printing-order .order-print-sheet{border:0;border-radius:0;background:#fff;color:#111;padding:12mm}
+ body.printing-order .order-print-sheet .ledger-head p,
+ body.printing-order .order-lines small,
+ body.printing-order .order-receipt-status{color:#444}
+ body.printing-order .order-receipt-totals,
+ body.printing-order .order-receipt-totals .grand{color:#111}
+ body.printing-order .order-print-sheet button{display:none}
+ body.printing-order .module-table-head,body.printing-order .module-table-row{border-color:#ccc;color:#111}
+}
