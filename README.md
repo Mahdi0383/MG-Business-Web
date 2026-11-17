@@ -113,6 +113,27 @@ MG_ENV=production python deployment_preflight.py --production
 
 این ابزار پیکربندی bind، پورت، مسیر پایگاه داده و پشتیبان خارج از web root و سیاست نگهداری پشتیبان را بررسی می‌کند؛ جایگزین TLS واقعی، reverse proxy، فایروال، ممیزی امنیتی یا آزمون نفوذ نیست.
 
+## استقرار عملیاتی با Nginx و systemd
+
+نمونه‌های آماده در پوشه `deploy/` قرار دارند:
+
+- `deploy/systemd/mg-business.service`: سرویس systemd با کاربر اختصاصی، محدودیت دسترسی فایل‌سیستم و مسیرهای نوشتنی مشخص.
+- `deploy/systemd/mg-business.env.example`: الگوی تنظیمات production؛ کلید لایسنس را با مقدار تصادفی امن جایگزین کنید و فایل نهایی را فقط در اختیار root و کاربر سرویس قرار دهید.
+- `deploy/nginx/mg-business.conf.example`: reverse proxy با TLS؛ دامنه و مسیر گواهی را جایگزین کنید.
+
+نمونه مسیر نصب روی Linux:
+
+1. برنامه را در `/opt/mg-business` قرار دهید و کاربر سیستمی `mg-business` بسازید.
+2. مسیرهای `/var/lib/mg-business` و `/var/backups/mg-business` را بسازید و مالکیت آن‌ها را به کاربر سرویس بدهید.
+3. فایل محیط را در `/etc/mg-business/mg-business.env` قرار دهید، مجوز آن را `0600` کنید و `MG_LICENSE_SECRET` را با یک راز تصادفی حداقل ۳۲ نویسه‌ای جایگزین کنید.
+4. `MG_PUBLIC_URL` را با دامنه HTTPS واقعی تنظیم کنید. وقتی Nginx روی همان میزبان است، `MG_TRUSTED_PROXIES=127.0.0.1/32,::1/128` را نگه دارید؛ Nginx باید `X-Real-IP` را با `$remote_addr` بازنویسی کند.
+5. قبل از فعال‌سازی سرویس، `deployment_preflight.py --production` را با همان متغیرهای محیطی اجرا کنید.
+6. فایل systemd را در `/etc/systemd/system/` نصب و سرویس را فعال کنید؛ سپس پیکربندی Nginx را فعال و `nginx -t` را اجرا کنید.
+
+Backend باید فقط روی `127.0.0.1:8080` گوش دهد. پورت ۸۰/۴۴۳ را در فایروال برای Nginx باز کنید و پورت ۸۰۸۰ را عمومی نکنید. فقط IP/CIDR مربوط به reverse proxy واقعی را در `MG_TRUSTED_PROXIES` وارد کنید؛ اعتماد به هدرهای forwarding از کلاینت‌های عمومی ناامن است.
+
+این نمونه‌ها برای Linux با systemd و Nginx هستند؛ نصب واقعی همچنان نیازمند صدور گواهی TLS معتبر، تنظیم DNS، فایروال، مدیریت امن رازها و آزمون بازیابی پشتیبان است.
+
 ## اجرای آزمون‌ها
 
 برای اجرای بررسی‌های محلی از ریشه مخزن:
