@@ -117,6 +117,54 @@ def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normal
             old_items[key]=old_items.get(key,0)+row["quantity"]
         if old_items != normalized_lines:
             return False
+    # Public-order retries are only idempotent while the complete financial and
+    # inventory effects of the original order remain intact.
+    tx_id="order-"+order_id
+    transaction=db.execute("""SELECT amount,kind,category FROM transactions
+        WHERE tenant_id=? AND id=?""",(tenant_id,tx_id)).fetchone()
+    sales_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?""",
+        (tenant_id,tx_id)).fetchall()
+    expected_sales=sorted([("1100",existing["total"],0),("4000",0,existing["total"])])
+    actual_sales=sorted((row["code"],row["debit"],row["credit"]) for row in sales_rows)
+    stored_lines=db.execute("""SELECT product_id,quantity,unit_cost FROM order_items
+        WHERE tenant_id=? AND order_id=?""",(tenant_id,order_id)).fetchall()
+    expected_cost=sum(row["quantity"]*row["unit_cost"] for row in stored_lines)
+    expected_stock={}
+    for row in stored_lines:
+        product_id=row["product_id"]
+        if product_id in expected_stock:
+            quantity,cost=expected_stock[product_id]
+            expected_stock[product_id]=(quantity+row["quantity"],cost if cost==row["unit_cost"] else None)
+        else:
+            expected_stock[product_id]=(row["quantity"],row["unit_cost"])
+    actual_stock=db.execute("""SELECT product_id,SUM(quantity_delta) AS quantity_delta,unit_cost
+        FROM inventory_movements WHERE tenant_id=? AND movement_type='sale' AND note=?
+        GROUP BY product_id,unit_cost""",(tenant_id,"سفارش آنلاین "+existing["order_number"])).fetchall()
+    stock_valid=(all(cost is not None for quantity,cost in expected_stock.values()) and
+        sorted((row["product_id"],row["quantity_delta"],row["unit_cost"]) for row in actual_stock)==
+        sorted((product_id,-quantity,cost) for product_id,(quantity,cost) in expected_stock.items()))
+    cogs_entry=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+        AND source_type='order_cogs' AND source_id=?""",(tenant_id,order_id)).fetchone()
+    cogs_rows=[]
+    if cogs_entry:
+        cogs_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_lines l
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,cogs_entry["id"])).fetchall()
+    actual_cogs=sorted((row["code"],row["debit"],row["credit"]) for row in cogs_rows)
+    expected_cogs=sorted([("5100",expected_cost,0),("1200",0,expected_cost)]) if expected_cost else []
+    ledger_rows=db.execute("""SELECT customer_id,debit,credit FROM customer_ledger
+        WHERE tenant_id=? AND source_type='order' AND source_id=?""",(tenant_id,order_id)).fetchall()
+    if not (transaction is not None and transaction["amount"]==existing["total"] and
+        transaction["kind"]=="income" and transaction["category"]=="سفارش آنلاین" and
+        len(sales_rows)==2 and actual_sales==expected_sales and stock_valid and
+        len(ledger_rows)==1 and ledger_rows[0]["customer_id"]==existing["customer_id"] and
+        ledger_rows[0]["debit"]==existing["total"] and ledger_rows[0]["credit"]==0 and
+        ((expected_cost==0 and cogs_entry is None) or
+         (expected_cost>0 and cogs_entry is not None and len(cogs_rows)==2 and actual_cogs==expected_cogs))):
+        return False
     return {"orderNumber":existing["order_number"],"total":existing["total"]}
 
 SCHEMA = """
