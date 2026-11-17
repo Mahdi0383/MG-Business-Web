@@ -11,6 +11,7 @@ from unittest import mock
 import urllib.error
 import urllib.request
 import time
+from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -2692,6 +2693,77 @@ class ApiIntegrationTests(unittest.TestCase):
             for query in ("&limit=0","&limit=501","&offset=-1","&offset=1000001","&limit=abc"):
                 status,_=self.request("GET",base+query,token=token)
                 self.assertEqual(status,400)
+        finally:
+            server.DB_PATH=original_db_path
+
+    def test_accounting_period_close_blocks_backdated_postings_and_reversals(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"accounting-period-close.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Period Close","username":"period-owner",
+                "password":"period-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            yesterday=(date.today()-timedelta(days=1)).isoformat()
+            today=date.today().isoformat()
+
+            status,created=self.request("POST","/api/transactions",{
+                "id":"period-locked-original","title":"پیش از بستن دوره","amount":25000,
+                "kind":"income","category":"test","createdAt":yesterday+"T12:00:00Z"},owner)
+            self.assertEqual(status,201)
+
+            status,manager_user=self.request("POST","/api/users",{
+                "username":"period-manager","password":"period-manager-password-2026","role":"manager"},owner)
+            self.assertEqual(status,201)
+            status,manager_login=self.request("POST","/api/login",{
+                "username":"period-manager","password":"period-manager-password-2026"})
+            self.assertEqual(status,200)
+            manager=manager_login["token"]
+
+            close_payload={"startDate":yesterday,"endDate":yesterday}
+            status,denied=self.request("POST","/api/accounting/periods/close",close_payload,manager)
+            self.assertEqual(status,403)
+            status,closed=self.request("POST","/api/accounting/periods/close",close_payload,owner)
+            self.assertEqual(status,201)
+            self.assertTrue(closed["id"])
+
+            status,periods=self.request("GET","/api/accounting/periods",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(periods["items"]),1)
+            self.assertEqual(periods["items"][0]["startDate"],yesterday)
+            self.assertEqual(periods["items"][0]["endDate"],yesterday)
+            self.assertEqual(periods["items"][0]["closedBy"],"period-owner")
+
+            for invalid in (
+                {"startDate":today,"endDate":yesterday},
+                {"startDate":"2026-02-30","endDate":"2026-02-30"},
+                {"startDate":today,"endDate":"2099-01-01"},
+                {"startDate":yesterday,"endDate":today},
+            ):
+                status,_=self.request("POST","/api/accounting/periods/close",invalid,owner)
+                self.assertIn(status,(400,409))
+            status,duplicate=self.request("POST","/api/accounting/periods/close",close_payload,owner)
+            self.assertEqual(status,409)
+
+            status,backdated=self.request("POST","/api/transactions",{
+                "id":"period-backdated-new","title":"ثبت در دوره بسته","amount":1000,
+                "kind":"income","category":"test","createdAt":yesterday+"T13:00:00Z"},owner)
+            self.assertEqual(status,409)
+            status,reversal=self.request("DELETE","/api/transactions/"+created["id"],token=owner)
+            self.assertEqual(status,409)
+            status,transactions=self.request("GET","/api/transactions",token=owner)
+            self.assertEqual(status,200)
+            original=next(item for item in transactions["items"] if item["id"]==created["id"])
+            self.assertEqual(original["status"],"posted")
+
+            status,current=self.request("POST","/api/transactions",{
+                "id":"period-current-open","title":"ثبت روز باز","amount":5000,
+                "kind":"income","category":"test","createdAt":today+"T12:00:00Z"},owner)
+            self.assertEqual(status,201)
+            status,audit_result=self.request("GET","/api/audit-log",token=owner)
+            self.assertEqual(status,200)
+            self.assertTrue(any(item["action"]=="accounting.period.closed" for item in audit_result["items"]))
         finally:
             server.DB_PATH=original_db_path
 
