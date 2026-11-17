@@ -1440,7 +1440,7 @@ class Handler(SimpleHTTPRequestHandler):
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
                     insert_order = ("accounts","products","product_addons","customers","customer_ledger","suppliers","game_devices","transactions",
                                     "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
-                                    "supplier_payments","orders","order_items","game_sessions","gamenet_reservations","audit_log")
+                                    "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","audit_log")
                     for name in insert_order:
                         records = tables.get(name,[])
                         if name == "journal_entries":
