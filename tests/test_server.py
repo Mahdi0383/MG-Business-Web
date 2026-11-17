@@ -746,7 +746,8 @@ class ApiIntegrationTests(unittest.TestCase):
             server.LOGIN_IP_FAILURES.clear()
             try:
                 for index in range(4200):
-                    server.remember_login_failure(("192.0.2.1","user-"+str(index)), "192.0.2.1", index)
+                    ip = "198.51."+str(index // 256)+"."+str(index % 256)
+                    server.remember_login_failure((ip,"user-"+str(index)), ip, index)
                 self.assertLessEqual(len(server.LOGIN_FAILURES), 4096)
                 self.assertLessEqual(len(server.LOGIN_IP_FAILURES), 2048)
             finally:
