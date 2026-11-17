@@ -1298,9 +1298,10 @@ class Handler(SimpleHTTPRequestHandler):
                     a.normal_balance AS normalBalance,COALESCE(SUM(l.debit),0) AS debit,
                     COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
-                    LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
-                    WHERE a.tenant_id=? AND a.active=1 AND (l.id IS NULL OR ? IS NULL OR e.entry_date<=?)
-                    GROUP BY a.id ORDER BY a.code""",(user["tenant_id"],as_of,as_of)).fetchall()
+                      AND EXISTS (SELECT 1 FROM journal_entries e WHERE e.id=l.entry_id
+                        AND e.tenant_id=l.tenant_id AND (? IS NULL OR e.entry_date<=?))
+                    WHERE a.tenant_id=? AND a.active=1
+                    GROUP BY a.id ORDER BY a.code""",(as_of,as_of,user["tenant_id"])).fetchall()
                 items = [dict(row) for row in rows]
                 return self.send_json(200, {"items":items,"asOfDate":as_of,
                     "totalDebit":sum(x["debit"] for x in items),
@@ -1316,10 +1317,10 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT a.code,a.name,a.account_type AS accountType,
                     COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
-                    LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                      AND EXISTS (SELECT 1 FROM journal_entries e WHERE e.id=l.entry_id
+                        AND e.tenant_id=l.tenant_id AND (? IS NULL OR e.entry_date<=?))
                     WHERE a.tenant_id=? AND a.active=1 AND a.account_type IN ('asset','liability','equity')
-                      AND (l.id IS NULL OR ? IS NULL OR e.entry_date<=?)
-                    GROUP BY a.id ORDER BY a.code""",(user["tenant_id"],as_of,as_of)).fetchall()
+                    GROUP BY a.id ORDER BY a.code""",(as_of,as_of,user["tenant_id"])).fetchall()
                 items = [dict(row) for row in rows]
                 assets = sum(x["debit"]-x["credit"] for x in items if x["accountType"]=="asset")
                 liabilities = sum(x["credit"]-x["debit"] for x in items if x["accountType"]=="liability")
