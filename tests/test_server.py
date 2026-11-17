@@ -2915,6 +2915,99 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_cafe_kitchen_fulfillment_state_machine_is_audited_and_restored(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"cafe-kitchen-queue.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Kitchen Queue","username":"kitchen-owner",
+                "password":"kitchen-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            status,product=self.request("POST","/api/products",{
+                "id":"kitchen-product","name":"قهوه آزمایشی","sellPrice":100000,"costPrice":30000},owner)
+            self.assertEqual(status,201)
+            db=server.connect()
+            try:
+                db.execute("""INSERT INTO inventory_movements
+                    (id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?)""",
+                    ("kitchen-stock",setup["user"]["tenantId"],product["id"],setup["user"]["id"],
+                     "purchase",10,30000,"opening stock",int(time.time())))
+                db.commit()
+            finally:
+                db.close()
+
+            status,viewer_created=self.request("POST","/api/users",{
+                "username":"kitchen-viewer","password":"kitchen-viewer-password","role":"viewer"},owner)
+            self.assertEqual(status,201)
+            status,viewer_login=self.request("POST","/api/login",{
+                "username":"kitchen-viewer","password":"kitchen-viewer-password"})
+            self.assertEqual(status,200)
+            viewer=viewer_login["token"]
+
+            status,order=self.request("POST","/api/orders",{
+                "id":"kitchen-order-main","items":[{"productId":product["id"],"quantity":1}],
+                "discount":0,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,201)
+            status,orders=self.request("GET","/api/orders",token=owner)
+            self.assertEqual(status,200)
+            order_row=next(item for item in orders["items"] if item["id"]==order["id"])
+            self.assertEqual(order_row["fulfillmentStatus"],"queued")
+
+            path="/api/orders/"+order["id"]+"/fulfillment"
+            status,forbidden=self.request("POST",path,{"status":"preparing"},viewer)
+            self.assertEqual(status,403)
+            status,invalid=self.request("POST",path,{"status":"cancelled"},owner)
+            self.assertEqual(status,400)
+            status,skipped=self.request("POST",path,{"status":"ready"},owner)
+            self.assertEqual(status,409)
+
+            status,preparing=self.request("POST",path,{"status":"preparing"},owner)
+            self.assertEqual(status,200)
+            self.assertEqual(preparing["status"],"preparing")
+            status,duplicate=self.request("POST",path,{"status":"preparing"},owner)
+            self.assertEqual(status,200)
+            self.assertTrue(duplicate["duplicate"])
+            status,ready=self.request("POST",path,{"status":"ready"},owner)
+            self.assertEqual(status,200)
+            status,served=self.request("POST",path,{"status":"served"},owner)
+            self.assertEqual(status,200)
+
+            status,cancelled_order=self.request("POST","/api/orders",{
+                "id":"kitchen-order-cancelled","items":[{"productId":product["id"],"quantity":1}],
+                "discount":0,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,201)
+            status,cancelled=self.request("DELETE","/api/orders/"+cancelled_order["id"],token=owner)
+            self.assertEqual(status,200)
+            status,rejected=self.request("POST","/api/orders/"+cancelled_order["id"]+"/fulfillment",
+                {"status":"preparing"},owner)
+            self.assertEqual(status,409)
+
+            status,audit_result=self.request("GET","/api/audit-log",token=owner)
+            self.assertEqual(status,200)
+            transitions=[item for item in audit_result["items"] if item["action"]=="cafe.order.fulfillment.updated"]
+            self.assertEqual(len(transitions),3)
+
+            status,snapshot=self.request("GET","/api/backup",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(snapshot["version"],4)
+            self.assertTrue(all("fulfillment_status" in row for row in snapshot["tables"]["orders"]))
+            db=server.connect()
+            try:
+                db.execute("UPDATE orders SET fulfillment_status='queued' WHERE id=?",(order["id"],))
+                db.commit()
+            finally:
+                db.close()
+            status,restored=self.request("POST","/api/backup/restore",snapshot,owner)
+            self.assertEqual(status,200)
+            status,orders_after_restore=self.request("GET","/api/orders",token=owner)
+            self.assertEqual(status,200)
+            restored_order=next(item for item in orders_after_restore["items"] if item["id"]==order["id"])
+            self.assertEqual(restored_order["fulfillmentStatus"],"served")
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_accounting_period_close_blocks_backdated_postings_and_reversals(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"accounting-period-close.sqlite3"
