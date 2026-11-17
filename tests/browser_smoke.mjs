@@ -142,8 +142,37 @@ try {
   assert.match(managementCsv, /سفارش‌ها/);
   assert.match(managementCsv, /کالای آزمون کافه/);
 
+  await page.locator('#navigation [data-page="settings"]').click();
+  await page.locator("#userForm").waitFor({ state: "visible" });
+  await page.locator('#userForm input[name="username"]').fill("browser-cashier");
+  await page.locator('#userForm input[name="password"]').fill("browser-cashier-password-2026");
+  await page.locator('#userForm select[name="role"]').selectOption("cashier");
+  const userCreatePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/users") && response.request().method() === "POST"
+  );
+  await page.locator("#userForm button[type=submit]").click();
+  const userCreateResponse = await userCreatePromise;
+  const userCreateBody = await userCreateResponse.json();
+  assert.equal(userCreateResponse.status(), 201, "user creation response: " + JSON.stringify(userCreateBody));
+  const createdUserId = userCreateBody.id;
+  assert.ok(createdUserId, "created user response must include its id");
+  const createdUserRow = page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" });
+  await createdUserRow.waitFor({ state: "visible" });
+  await createdUserRow.locator('[data-user-change-role]').click();
+  await createdUserRow.locator('form.userRoleForm select[name="role"]').selectOption("viewer");
+  const roleChangePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/users/" + createdUserId + "/role") && response.request().method() === "POST"
+  );
+  await createdUserRow.locator('form.userRoleForm button[type="submit"]').click();
+  const roleChangeResponse = await roleChangePromise;
+  const roleChangeBody = await roleChangeResponse.json();
+  assert.equal(roleChangeResponse.status(), 200, "role change response: " + JSON.stringify(roleChangeBody));
+  assert.equal(roleChangeBody.changed, true, "role change must report a real change");
+  await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("فقط مشاهده", { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#modulePage").getByText("user.role.changed", { exact: false }).waitFor({ state: "visible" });
+
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports.");
+  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, and owner user-role management.");
 } finally {
   await browser.close();
 }
