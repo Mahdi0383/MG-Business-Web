@@ -94,6 +94,47 @@ try {
   assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
 
+  // Exercise the complete GameNet lifecycle through the real browser UI.
+  await page.locator('#navigation [data-page="gamenet"]').click();
+  await page.locator("#deviceForm").waitFor({ state: "visible" });
+  await page.locator('#deviceForm input[name="name"]').fill("E2E-PC-01");
+  await page.locator('#deviceForm input[name="hourlyRate"]').fill("36000");
+  const deviceResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/gamenet/devices") && response.request().method() === "POST"
+  );
+  await page.locator("#deviceForm button[type=submit]").click();
+  const deviceResponse = await deviceResponsePromise;
+  const deviceBody = await deviceResponse.json();
+  assert.equal(deviceResponse.status(), 201, "GameNet device API response: " + JSON.stringify(deviceBody));
+  const deviceCard = page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" });
+  await deviceCard.waitFor({ state: "visible" });
+  const startSessionPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/gamenet/sessions") && response.request().method() === "POST"
+  );
+  await deviceCard.locator("[data-start-game]").click();
+  const startSessionResponse = await startSessionPromise;
+  const startSessionBody = await startSessionResponse.json();
+  assert.equal(startSessionResponse.status(), 201, "GameNet session start response: " + JSON.stringify(startSessionBody));
+  const activeDeviceCard = page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" });
+  await activeDeviceCard.locator(".game-adjust-form").waitFor({ state: "visible" });
+  await activeDeviceCard.locator('.game-adjust-form select[name="deviceId"]').selectOption({ label: "E2E-PC-01" });
+  await activeDeviceCard.locator('.game-adjust-form input[name="playersCount"]').fill("2");
+  const adjustSessionPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/gamenet/sessions/" + startSessionBody.id + "/adjust") && response.request().method() === "POST"
+  );
+  await activeDeviceCard.locator(".game-adjust-form button[type=submit]").click();
+  const adjustSessionResponse = await adjustSessionPromise;
+  assert.equal(adjustSessionResponse.status(), 200, "GameNet session adjustment must succeed");
+  const endSessionPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/gamenet/sessions/" + startSessionBody.id + "/end") && response.request().method() === "POST"
+  );
+  await activeDeviceCard.locator("[data-end-game]").click();
+  const endSessionResponse = await endSessionPromise;
+  const endSessionBody = await endSessionResponse.json();
+  assert.equal(endSessionResponse.status(), 200, "GameNet session settlement response: " + JSON.stringify(endSessionBody));
+  assert.equal(endSessionBody.paymentMethod, "cash");
+  await page.locator("#modulePage").getByText("E2E-PC-01", { exact: true }).waitFor({ state: "visible" });
+
   await page.locator('#navigation [data-page="accounting"]').click();
   const accountingToday = await page.evaluate(() => {
     const now = new Date();
