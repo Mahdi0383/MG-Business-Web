@@ -1029,6 +1029,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند سرفصل حساب جدید تعریف کند."})
                 code=data.get("code"); name=data.get("name"); account_type=data.get("accountType")
+                if "normalBalance" in data:
+                    return self.send_json(400,{"error":"ماهیت حساب بر اساس نوع حساب تعیین می‌شود و قابل ارسال جداگانه نیست."})
                 if not isinstance(code,str) or not re.fullmatch(r"[0-9]{4,12}",code.strip()):
                     return self.send_json(400,{"error":"کد حساب باید ۴ تا ۱۲ رقم باشد."})
                 if not isinstance(name,str) or not 1<=len(name.strip())<=120:
