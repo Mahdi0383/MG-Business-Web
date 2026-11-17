@@ -47,6 +47,44 @@ try {
   await page.locator("#modal").waitFor({ state: "hidden", timeout: 5000 });
   await page.locator("#transactions").getByText("درآمد آزمون مرورگر", { exact: true }).waitFor({ state: "visible" });
 
+  await page.locator('#navigation [data-page="inventory"]').click();
+  await page.locator("#productForm").waitFor({ state: "visible" });
+  await page.locator('#productForm input[name="name"]').fill("کالای آزمون کافه");
+  await page.locator('#productForm input[name="sellPrice"]').fill("45000");
+  await page.locator('#productForm input[name="costPrice"]').fill("20000");
+  const productResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/products") && response.request().method() === "POST"
+  );
+  await page.locator("#productForm button.primary").click();
+  const productResponse = await productResponsePromise;
+  const productBody = await productResponse.json();
+  assert.equal(productResponse.status(), 201, "product API response: " + JSON.stringify(productBody));
+  await page.locator("#stockForm").waitFor({ state: "visible" });
+  await page.locator('#stockForm select[name="productId"]').selectOption(productBody.id);
+  await page.locator('#stockForm select[name="movementType"]').selectOption("purchase");
+  await page.locator('#stockForm input[name="quantity"]').fill("5");
+  await page.locator('#stockForm input[name="unitCost"]').fill("20000");
+  const stockResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/inventory/movements") && response.request().method() === "POST"
+  );
+  await page.locator("#stockForm button.primary").click();
+  const stockResponse = await stockResponsePromise;
+  assert.equal(stockResponse.status(), 201, "inventory API response: " + await stockResponse.text());
+
+  await page.locator('#navigation [data-page="cafe"]').click();
+  await page.locator("#addCartItem").waitFor({ state: "visible" });
+  await page.locator("#cafeProduct").selectOption(productBody.id);
+  await page.locator("#addCartItem").click();
+  await page.locator("#submitOrder").waitFor({ state: "enabled" });
+  const orderResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/orders") && response.request().method() === "POST"
+  );
+  await page.locator("#submitOrder").click();
+  const orderResponse = await orderResponsePromise;
+  const orderBody = await orderResponse.json();
+  assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
+  await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
+
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
   console.log("Browser E2E passed: setup, login, dashboard, accounting, custom account creation, and transaction posting.");
 } finally {
