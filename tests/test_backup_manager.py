@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backup_manager import create_snapshot, generate_encryption_key, restore_snapshot
+from backup_manager import create_snapshot, generate_encryption_key, restore_snapshot, verify_snapshot
 
 
 class BackupManagerTests(unittest.TestCase):
@@ -26,6 +26,7 @@ class BackupManagerTests(unittest.TestCase):
             db.execute("INSERT INTO records(value) VALUES('third record')")
             db.commit()
             third = create_snapshot(database, backup_dir, retention=2)
+            self.assertTrue(verify_snapshot(third))
             db.close()
 
             self.assertTrue(third.is_file())
@@ -97,6 +98,9 @@ class BackupManagerTests(unittest.TestCase):
 
             key = generate_encryption_key()
             snapshot = create_snapshot(database, backup_dir, encryption_key=key)
+            self.assertTrue(verify_snapshot(snapshot, key))
+            with self.assertRaises(ValueError):
+                verify_snapshot(snapshot)
             self.assertTrue(snapshot.name.endswith(".sqlite3.enc"))
             raw = snapshot.read_bytes()
             self.assertNotIn(b"SQLite format 3", raw)
@@ -135,6 +139,7 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             key = generate_encryption_key()
             snapshot = create_snapshot(database, root / "backups", encryption_key=key)
+            self.assertTrue(verify_snapshot(snapshot, key))
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, root / "target.sqlite3")
             damaged = bytearray(snapshot.read_bytes())
