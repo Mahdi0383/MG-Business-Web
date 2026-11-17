@@ -3095,6 +3095,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not product:
                     db.rollback()
                     return self.send_json(404, {"error": "کالای فعال پیدا نشد."})
+                assert_accounting_period_open(db,user["tenant_id"],time.strftime("%Y-%m-%d"))
                 current = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE tenant_id=? AND product_id=?",
                                      (user["tenant_id"],product_id)).fetchone()[0]
                 if current + delta < 0:
