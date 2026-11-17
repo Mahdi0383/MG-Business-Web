@@ -2341,7 +2341,17 @@ class Handler(SimpleHTTPRequestHandler):
                 existing=db.execute("SELECT invoice_id,amount,payment_method FROM supplier_payments WHERE id=? AND tenant_id=?",
                                     (payid,user["tenant_id"])).fetchone()
                 if existing:
-                    if existing["invoice_id"]==iid and existing["amount"]==amount and existing["payment_method"]==method:
+                    journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='supplier_payment' AND e.source_id=?""",
+                        (user["tenant_id"],payid)).fetchall()
+                    expected_account={"cash":"1000","card":"1010","online":"1020"}[method]
+                    journal_matches=(len(journal_rows)==2 and
+                        any(row["code"]==expected_account and row["debit"]==0 and row["credit"]==amount for row in journal_rows) and
+                        any(row["code"]=="2000" and row["debit"]==amount and row["credit"]==0 for row in journal_rows))
+                    if (existing["invoice_id"]==iid and existing["amount"]==amount and
+                        existing["payment_method"]==method and journal_matches):
                         db.commit()
                         return self.send_json(200,{"paymentId":payid,"paidAmount":inv["paid_amount"],
                             "remainingBalance":inv["total"]-inv["paid_amount"],"status":inv["status"],"duplicate":True})
