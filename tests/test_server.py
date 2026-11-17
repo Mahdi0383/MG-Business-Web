@@ -241,28 +241,6 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             db.close()
 
-        status, reversal = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
-        self.assertEqual(status, 200)
-        self.assertTrue(reversal["voided"])
-        status, repeated_reversal = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
-        self.assertEqual(status, 404)
-        db = server.connect()
-        try:
-            net = db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) FROM journal_lines l
-                JOIN journal_entries e ON e.id=l.entry_id
-                WHERE e.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
-                  AND e.source_type IN ('transaction','transaction_reversal')
-                  AND e.source_id='tx-test-1'""").fetchone()[0]
-            self.assertEqual(net, 0)
-            self.assertEqual(db.execute(
-                "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='tx-test-1'"
-            ).fetchone()[0], 1)
-        finally:
-            db.close()
-        status, visible_transactions = self.request("GET", "/api/transactions", token=token)
-        self.assertEqual(status, 200)
-        self.assertEqual(visible_transactions["items"], [])
-
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-bad", "title": "Invalid amount", "amount": True,
             "kind": "income", "createdAt": "2026-11-16T12:00:00Z"
@@ -1468,6 +1446,45 @@ class ApiIntegrationTests(unittest.TestCase):
             valid_shape = "pbkdf2_sha256$310000$" + ("11" * 16) + "$" + ("00" * 32)
             self.assertFalse(server.verify_password("x" * 257, valid_shape))
 
+
+    def test_transaction_reversal_is_balanced_and_idempotent(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "transaction-reversal.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Reversal Test", "username": "reversal-owner",
+                "password": "reversal-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+            token = setup["token"]
+            status, created = self.request("POST", "/api/transactions", {
+                "id": "reversal-tx-1", "title": "Test income", "amount": 125000,
+                "kind": "income", "category": "Test", "createdAt": "2026-11-17T09:00:00Z"
+            }, token)
+            self.assertEqual(status, 201)
+            status, reversed_result = self.request("DELETE", "/api/transactions/reversal-tx-1", token=token)
+            self.assertEqual(status, 200)
+            self.assertTrue(reversed_result["voided"])
+            status, repeated = self.request("DELETE", "/api/transactions/reversal-tx-1", token=token)
+            self.assertEqual(status, 404)
+            db = server.connect()
+            try:
+                net = db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) FROM journal_lines l
+                    JOIN journal_entries e ON e.id=l.entry_id
+                    WHERE e.tenant_id=? AND e.source_type IN ('transaction','transaction_reversal')
+                      AND e.source_id='reversal-tx-1'""", (setup["user"]["tenantId"],)).fetchone()[0]
+                self.assertEqual(net, 0)
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM journal_entries WHERE tenant_id=? AND source_type='transaction_reversal' AND source_id='reversal-tx-1'",
+                    (setup["user"]["tenantId"],)
+                ).fetchone()[0], 1)
+            finally:
+                db.close()
+            status, visible = self.request("GET", "/api/transactions", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(visible["items"], [])
+        finally:
+            server.DB_PATH = original_db_path
 
 if __name__ == "__main__":
     unittest.main()
