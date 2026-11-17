@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel", "gameSegmentHistoryPanel"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel", "gameSegmentHistoryPanel", "customerLoyaltyPanel"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
@@ -112,6 +112,10 @@ if "userPasswordForm" not in app or "/password" not in app:
     raise SystemExit("User password reset UI is missing")
 if "customerLedgerPanel" not in app or "data-customer-ledger" not in app:
     raise SystemExit("Customer account statement UI is missing")
+if "customerLoyaltyPanel" not in app or "data-customer-loyalty" not in app or "/api/loyalty/program" not in app:
+    raise SystemExit("Customer loyalty club UI is missing")
+if "customer_loyalty_ledger" not in server or "/loyalty" not in server:
+    raise SystemExit("Customer loyalty points ledger API is missing")
 if "reservationForm" not in app or "data-reservation-cancel" not in app:
     raise SystemExit("GameNet reservation management UI is missing")
 if "duplicate" not in server or "mg-business.pending-order" not in app:
