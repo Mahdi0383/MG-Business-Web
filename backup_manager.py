@@ -209,11 +209,9 @@ def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | Non
     if _is_encrypted(snapshot):
         if key is None:
             raise ValueError("This backup is encrypted; set MG_BACKUP_ENCRYPTION_KEY to verify it.")
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix="mg-backup-verify-", suffix=".sqlite3", dir=snapshot.parent
+        temporary = Path(tempfile.gettempdir()) / (
+            "mg-backup-verify-" + secrets.token_hex(16) + ".sqlite3"
         )
-        os.close(descriptor)
-        temporary = Path(temporary_name)
         try:
             _decrypt_file(snapshot, temporary, key)
             check = sqlite3.connect(str(temporary), timeout=30)
