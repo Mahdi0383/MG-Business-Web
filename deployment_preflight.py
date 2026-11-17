@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ipaddress
 import os
 from pathlib import Path
@@ -62,6 +63,17 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
         errors.append("Production requires MG_TRUSTED_PROXIES to identify the actual TLS reverse proxy; otherwise client IP rate limits cannot be enforced correctly.")
     if public_bind and not valid_https_url:
         errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with a valid https:// URL.")
+    backup_key = env.get("MG_BACKUP_ENCRYPTION_KEY", "").strip()
+    if backup_key:
+        try:
+            decoded_backup_key = base64.urlsafe_b64decode(backup_key.encode("ascii"))
+            if len(decoded_backup_key) != 32:
+                raise ValueError
+        except (ValueError, UnicodeError):
+            errors.append("MG_BACKUP_ENCRYPTION_KEY must be a URL-safe base64-encoded 32-byte key.")
+    elif environment == "production":
+        errors.append("Production requires MG_BACKUP_ENCRYPTION_KEY so automatic database backups are encrypted.")
+
     if environment == "production":
         license_secret = env.get("MG_LICENSE_SECRET", "").strip()
         placeholder_secret = license_secret.lower().startswith(("replace_", "replace-", "change_me", "your_", "example"))
