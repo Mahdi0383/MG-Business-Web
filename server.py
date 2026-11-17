@@ -2422,10 +2422,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if not customer:
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری پیدا نشد."})
-                existing=db.execute("SELECT credit FROM customer_ledger WHERE tenant_id=? AND customer_id=? AND source_type='payment' AND source_id=?",
-                                    (user["tenant_id"],customer_id,payment_id)).fetchone()
+                existing=db.execute("SELECT customer_id,credit FROM customer_ledger WHERE tenant_id=? AND source_type='payment' AND source_id=?",
+                                    (user["tenant_id"],payment_id)).fetchone()
                 if existing:
-                    if existing["credit"]==amount:
+                    if existing["customer_id"]==customer_id and existing["credit"]==amount:
                         balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
                                            (user["tenant_id"],customer_id)).fetchone()[0]
                         db.commit()
