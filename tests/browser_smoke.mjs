@@ -213,6 +213,14 @@ try {
   await page.locator("#accountLedgerFilter button[type=submit]").click();
   await page.locator("#accountLedgerResult .ledger-summary").waitFor({ state: "visible" });
   await page.locator("#accountLedgerResult").getByText("مانده اختتامیه", { exact: true }).waitFor({ state: "visible" });
+  const accountLedgerDownloadPromise = page.waitForEvent("download");
+  await page.locator("[data-account-ledger-export]").click();
+  const accountLedgerDownload = await accountLedgerDownloadPromise;
+  const accountLedgerPath = await accountLedgerDownload.path();
+  const accountLedgerBytes = await (await import("node:fs/promises")).readFile(accountLedgerPath);
+  assert.deepEqual([...accountLedgerBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf],
+    "account ledger CSV must include a UTF-8 BOM");
+  assert.match(accountLedgerBytes.toString("utf8"), /دفتر معین MG/);
   await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
   const accountingDownloadPromise = page.waitForEvent("download");
   await page.locator('[data-accounting-export]').click();
