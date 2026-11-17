@@ -44,9 +44,12 @@ class BackupManagerTests(unittest.TestCase):
             database = root / "live.sqlite3"
             backup_dir = root / "backups"
             db = sqlite3.connect(database)
-            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)")
-            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY)")
-            db.execute("CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id))")
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id),
+                username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL,
+                active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
             db.execute("CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
             db.execute("INSERT INTO records(value) VALUES('before restore')")
             db.commit()
@@ -74,6 +77,11 @@ class BackupManagerTests(unittest.TestCase):
                 create_snapshot(Path(directory) / "missing.sqlite3", Path(directory) / "backups", 2)
             invalid = Path(directory) / "not-mg.sqlite3"
             db = sqlite3.connect(invalid)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                role TEXT, active INTEGER, created_at INTEGER)""")
             db.execute("CREATE TABLE random_table(id INTEGER PRIMARY KEY)")
             db.commit()
             db.close()
