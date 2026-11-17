@@ -73,6 +73,8 @@ if "startsDate.toISOString()" not in app or "start_dt.utcoffset() is None" not i
     raise SystemExit("Game reservations must use explicit timezone-aware timestamps")
 if '"duplicate":True' not in server or 'if order["status"]=="cancelled"' not in server:
     raise SystemExit("Cafe order reversal must be idempotent")
+if 'if path == "/api/ready":' not in server or "PRAGMA quick_check" not in server or "/api/ready" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
+    raise SystemExit("Database readiness checks are missing")
 if '"duplicate":True' not in server or "reservation-cancel" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("Game reservation cancellation must be retry-safe")
 if "def public_order_duplicate" not in server or 'item["addons"]=addons_by_product.get' not in server:

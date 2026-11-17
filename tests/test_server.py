@@ -954,6 +954,17 @@ class ApiIntegrationTests(unittest.TestCase):
             else:
                 os.environ["MG_TRUSTED_PROXIES"] = old
 
+    def test_readiness_endpoint_checks_database_schema_and_integrity(self):
+        with urllib.request.urlopen(self.base + "/api/ready", timeout=5) as response:
+            self.assertEqual(response.status,200)
+            payload=json.loads(response.read().decode("utf-8"))
+        self.assertTrue(payload["ready"])
+        self.assertEqual(payload["service"],"mg-business")
+        self.assertEqual(payload["checks"],{
+            "databaseIntegrity":True,"foreignKeys":True,"requiredSchema":True,"migrations":True
+        })
+        self.assertEqual(payload["missingTables"],[])
+
     def test_production_responses_include_hsts_and_cross_origin_guards(self):
         old_env = {key: os.environ.get(key) for key in ("MG_ENV", "MG_PUBLIC_URL")}
         try:

@@ -624,6 +624,23 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if path == "/api/health":
                 return self.send_json(200, {"ok": True, "service": "mg-business", "database": "sqlite"})
+            if path == "/api/ready":
+                required_tables={"tenants","users","sessions","orders","order_items","products",
+                    "inventory_movements","accounts","journal_entries","journal_lines","schema_migrations"}
+                present={row["name"] for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                missing=sorted(required_tables-present)
+                integrity=db.execute("PRAGMA quick_check").fetchone()[0]
+                foreign_key_error=db.execute("PRAGMA foreign_key_check").fetchone()
+                migration_count=db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+                ready=not missing and integrity=="ok" and foreign_key_error is None and migration_count>0
+                return self.send_json(200 if ready else 503,{
+                    "ready":ready,"service":"mg-business",
+                    "checks":{"databaseIntegrity":integrity=="ok",
+                              "foreignKeys":foreign_key_error is None,
+                              "requiredSchema":not missing,"migrations":migration_count>0},
+                    "missingTables":missing if missing else []
+                })
             if path == "/api/setup-status":
                 configured = db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
                 return self.send_json(200, {"configured": configured})
