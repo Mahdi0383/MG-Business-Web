@@ -2684,7 +2684,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
             status,last=self.request("GET",base+"&limit=1&offset=2",token=token)
             self.assertEqual(status,200)
-            self.assertEqual(last["items"][0]["entryId"],tx["id"] if "id" in tx else "ledger-page-base")
+            self.assertEqual(last["items"][0]["sourceId"],tx["id"])
             self.assertEqual(last["items"][0]["runningBalance"],1000)
             self.assertFalse(last["hasMore"])
             self.assertEqual(last["nextOffset"],3)
