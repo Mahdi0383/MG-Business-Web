@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MG Business local-first HTTP application and SQLite API (stdlib only)."""
 from __future__ import annotations
-import base64, hashlib, hmac, json, os, secrets, sqlite3, time, threading
+import base64, hashlib, hmac, ipaddress, json, os, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -528,6 +528,29 @@ class Handler(SimpleHTTPRequestHandler):
     def route(self):
         return urlparse(self.path).path.rstrip("/") or "/"
 
+    def client_ip(self):
+        peer = self.client_address[0]
+        try:
+            peer_address = ipaddress.ip_address(peer)
+        except ValueError:
+            return peer
+        trusted = []
+        for item in os.environ.get("MG_TRUSTED_PROXIES", "").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                trusted.append(ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                continue
+        if any(peer_address in network for network in trusted):
+            forwarded = self.headers.get("X-Real-IP", "").strip()
+            try:
+                return str(ipaddress.ip_address(forwarded))
+            except ValueError:
+                pass
+        return str(peer_address)
+
     def authenticate(self, db):
         header = self.headers.get("Authorization", "")
         if not header.startswith("Bearer "): return None
@@ -1026,7 +1049,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.create_session(db, user_id)
             if path == "/api/login":
                 username, password = str(data.get("username", "")).strip(), data.get("password", "")
-                ip = self.client_address[0]
+                ip = self.client_ip()
                 key = (ip, username.casefold())
                 now = time.time()
                 with LOGIN_LOCK:
