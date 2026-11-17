@@ -309,8 +309,36 @@ try {
   assert.equal(deactivationResponse.status(), 200, "user deactivation response: " + JSON.stringify(deactivationBody));
   await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("غیرفعال", { exact: true }).waitFor({ state: "visible" });
 
+  await page.locator('#navigation [data-page="accounting"]').click();
+  await page.locator("#accountingPeriodCloseForm").waitFor({ state: "visible" });
+  const periodEnd = new Date();
+  periodEnd.setDate(periodEnd.getDate() - 1);
+  const closedDate = periodEnd.toISOString().slice(0, 10);
+  await page.locator('#accountingPeriodCloseForm input[name="startDate"]').fill(closedDate);
+  await page.locator('#accountingPeriodCloseForm input[name="endDate"]').fill(closedDate);
+  const periodClosePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/accounting/periods/close") && response.request().method() === "POST"
+  );
+  await page.locator("#accountingPeriodCloseForm button[type=submit]").click();
+  await page.locator('#confirmOverlay [data-confirm="yes"]').click();
+  const periodCloseResponse = await periodClosePromise;
+  const periodCloseBody = await periodCloseResponse.json();
+  assert.equal(periodCloseResponse.status(), 201, "period close response: " + JSON.stringify(periodCloseBody));
+  await page.locator("#modulePage").getByText(closedDate, { exact: true }).waitFor({ state: "visible" });
+  const backdatedPosting = await page.evaluate(async ({ date }) => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/transactions", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "browser-backdated-after-close", title: "Closed period posting", amount: 1000,
+        kind: "income", category: "QA", createdAt: date + "T12:00:00Z" })
+    });
+    return { status: response.status, body: await response.json() };
+  }, { date: closedDate });
+  assert.equal(backdatedPosting.status, 409, "posting into a closed accounting period must be rejected");
+
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, login, accounting, account-level general ledger, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, and owner user-role management/deactivation.");
+  console.log("Browser E2E passed: setup, login, accounting, account-level general ledger, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, owner user-role management/deactivation, and audited period closure.");
 } finally {
   await browser.close();
 }
