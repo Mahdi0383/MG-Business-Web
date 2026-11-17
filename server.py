@@ -2107,8 +2107,10 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM orders WHERE id=? AND tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
                 if existing:
                     old_items={}
-                    for row in db.execute("SELECT product_id,quantity,addons_json FROM order_items WHERE tenant_id=? AND order_id=?",
-                                          (user["tenant_id"],order_id)).fetchall():
+                    stored_order_lines=db.execute("""SELECT product_id,quantity,unit_cost,addons_json
+                        FROM order_items WHERE tenant_id=? AND order_id=?""",
+                        (user["tenant_id"],order_id)).fetchall()
+                    for row in stored_order_lines:
                         try:
                             saved_addons=json.loads(row["addons_json"] or "[]")
                             saved_ids=tuple(sorted(item["id"] for item in saved_addons if isinstance(item,dict) and isinstance(item.get("id"),str)))
@@ -2117,12 +2119,42 @@ class Handler(SimpleHTTPRequestHandler):
                         old_key=(row["product_id"],saved_ids)
                         old_items[old_key]=old_items.get(old_key,0)+row["quantity"]
                     if (old_items==normalized_lines and existing["customer_id"]==customer_id and
-                        existing["discount"]==discount and existing["payment_method"]==payment):
-                        db.commit()
-                        return self.send_json(200,{"id":existing["id"],"orderNumber":existing["order_number"],
-                            "total":existing["total"],"duplicate":True})
+                        existing["discount"]==discount and existing["payment_method"]==payment and
+                        existing["status"]=="paid"):
+                        expected_payment_account={"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment]
+                        transaction_id="order-"+order_id
+                        tx=db.execute("""SELECT amount,kind FROM transactions
+                            WHERE tenant_id=? AND id=?""",(user["tenant_id"],transaction_id)).fetchone()
+                        sales_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                            JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?""",
+                            (user["tenant_id"],transaction_id)).fetchall()
+                        expected_sales=[(expected_payment_account,existing["total"],0),("4000",0,existing["total"])]
+                        actual_sales=sorted((row["code"],row["debit"],row["credit"]) for row in sales_rows)
+                        expected_sales_cost=sum(row["unit_cost"]*row["quantity"] for row in stored_order_lines)
+                        cogs_entry=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                            AND source_type='order_cogs' AND source_id=?""",(user["tenant_id"],order_id)).fetchone()
+                        cogs_rows=[]
+                        if cogs_entry:
+                            cogs_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_lines l
+                                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                                WHERE l.tenant_id=? AND l.entry_id=?""",
+                                (user["tenant_id"],cogs_entry["id"])).fetchall()
+                        expected_cogs=sorted([("5100",expected_sales_cost,0),("1200",0,expected_sales_cost)]) if expected_sales_cost else []
+                        actual_cogs=sorted((row["code"],row["debit"],row["credit"]) for row in cogs_rows)
+                        journals_valid=(tx is not None and tx["amount"]==existing["total"] and
+                            tx["kind"]=="income" and len(sales_rows)==2 and actual_sales==sorted(expected_sales) and
+                            ((expected_sales_cost==0 and cogs_entry is None) or
+                             (expected_sales_cost>0 and cogs_entry is not None and len(cogs_rows)==2 and actual_cogs==expected_cogs)))
+                        if journals_valid:
+                            db.commit()
+                            return self.send_json(200,{"id":existing["id"],"orderNumber":existing["order_number"],
+                                "total":existing["total"],"duplicate":True})
+                        db.rollback()
+                        return self.send_json(409,{"error":"سندهای حسابداری سفارش ناقص یا نامعتبر هستند؛ تکرار سفارش پذیرفته نشد."})
                     db.rollback()
-                    return self.send_json(409,{"error":"شناسه سفارش قبلاً برای اطلاعات متفاوتی استفاده شده است."})
+                    return self.send_json(409,{"error":"شناسه سفارش قبلاً برای اطلاعات متفاوت یا سفارش برگشت‌خورده استفاده شده است."})
                 if customer_id and not db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?", (customer_id,user["tenant_id"])).fetchone():
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری انتخاب‌شده پیدا نشد."})
