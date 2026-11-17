@@ -932,7 +932,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "service": "mg-business", "database": "sqlite"})
             if path == "/api/ready":
                 required_tables={"tenants","users","sessions","orders","order_items","products",
-                    "inventory_movements","accounts","journal_entries","journal_lines","schema_migrations"}
+                    "inventory_movements","accounts","journal_entries","journal_lines","accounting_periods","schema_migrations"}
                 present={row["name"] for row in db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
                 missing=sorted(required_tables-present)
