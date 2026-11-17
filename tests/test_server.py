@@ -2746,15 +2746,6 @@ class ApiIntegrationTests(unittest.TestCase):
             status,duplicate=self.request("POST","/api/accounting/periods/close",close_payload,owner)
             self.assertEqual(status,409)
 
-            status,product=self.request("POST","/api/products",{
-                "id":"period-zero-cost-product","name":"کالای بدون بهای خرید",
-                "sellPrice":10000,"costPrice":0},owner)
-            self.assertEqual(status,201)
-            status,zero_cost_movement=self.request("POST","/api/inventory/movements",{
-                "id":"period-zero-cost-movement","productId":product["id"],
-                "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"period close test"},owner)
-            self.assertEqual(status,409,"zero-cost inventory changes must also respect closed periods")
-
             status,backdated=self.request("POST","/api/transactions",{
                 "id":"period-backdated-new","title":"ثبت در دوره بسته","amount":1000,
                 "kind":"income","category":"test","createdAt":yesterday+"T13:00:00Z"},owner)
@@ -2773,13 +2764,25 @@ class ApiIntegrationTests(unittest.TestCase):
                 "id":"period-current-open","title":"ثبت روز باز","amount":5000,
                 "kind":"income","category":"test","createdAt":today+"T12:00:00Z"},owner)
             self.assertEqual(status,201)
+
+            status,closedToday=self.request("POST","/api/accounting/periods/close",{
+                "startDate":today,"endDate":today},owner)
+            self.assertEqual(status,201)
+            status,product=self.request("POST","/api/products",{
+                "id":"period-zero-cost-product","name":"کالای بدون بهای خرید",
+                "sellPrice":10000,"costPrice":0},owner)
+            self.assertEqual(status,201)
+            status,zero_cost_movement=self.request("POST","/api/inventory/movements",{
+                "id":"period-zero-cost-movement","productId":product["id"],
+                "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"period close test"},owner)
+            self.assertEqual(status,409,"zero-cost inventory changes must also respect closed periods")
             status,audit_result=self.request("GET","/api/audit-log",token=owner)
             self.assertEqual(status,200)
             self.assertTrue(any(item["action"]=="accounting.period.closed" for item in audit_result["items"]))
 
             status,snapshot=self.request("GET","/api/backup",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(len(snapshot["tables"]["accounting_periods"]),1)
+            self.assertEqual(len(snapshot["tables"]["accounting_periods"]),2)
             db=server.connect()
             try:
                 db.execute("DELETE FROM accounting_periods WHERE tenant_id=?",(setup["user"]["tenantId"],))
@@ -2790,8 +2793,8 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             status,periods_after_restore=self.request("GET","/api/accounting/periods",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(len(periods_after_restore["items"]),1)
-            self.assertEqual(periods_after_restore["items"][0]["startDate"],yesterday)
+            self.assertEqual(len(periods_after_restore["items"]),2)
+            self.assertEqual({item["startDate"] for item in periods_after_restore["items"]},{yesterday,today})
         finally:
             server.DB_PATH=original_db_path
 
