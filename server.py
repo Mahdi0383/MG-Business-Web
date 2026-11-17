@@ -35,7 +35,7 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -580,6 +580,11 @@ def connect():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(14,?)", (int(time.time()),))
     if not db.execute("SELECT 1 FROM schema_migrations WHERE version=15").fetchone():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(15,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=16").fetchone():
+        shift_columns={row["name"] for row in db.execute("PRAGMA table_info(cash_register_shifts)").fetchall()}
+        if "journal_cursor" not in shift_columns:
+            db.execute("ALTER TABLE cash_register_shifts ADD COLUMN journal_cursor INTEGER NOT NULL DEFAULT -1")
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(16,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -646,14 +651,24 @@ def assert_accounting_period_open(db, tenant_id, entry_date):
         raise sqlite3.IntegrityError("Accounting period is closed; backdated posting or reversal is not allowed.")
 
 
-def cash_register_expected_cash(db, tenant_id, opened_at, opening_cash, as_of=None):
+def cash_register_expected_cash(db, tenant_id, opened_at, opening_cash, journal_cursor=-1, as_of=None):
     as_of=int(time.time()) if as_of is None else int(as_of)
-    movement=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) AS net_cash
-        FROM journal_entries e
-        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
-        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
-        WHERE e.tenant_id=? AND a.code='1000' AND e.created_at>=? AND e.created_at<=?""",
-        (tenant_id,int(opened_at),as_of)).fetchone()["net_cash"]
+    if int(journal_cursor)>=0:
+        movement=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) AS net_cash
+            FROM journal_entries e
+            JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE e.tenant_id=? AND a.code='1000' AND e.rowid>? AND e.created_at<=?""",
+            (tenant_id,int(journal_cursor),as_of)).fetchone()["net_cash"]
+    else:
+        # Version 3 backups predate the rowid cursor; retain their timestamp-based
+        # calculation until the next shift is opened under the current schema.
+        movement=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) AS net_cash
+            FROM journal_entries e
+            JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE e.tenant_id=? AND a.code='1000' AND e.created_at>=? AND e.created_at<=?""",
+            (tenant_id,int(opened_at),as_of)).fetchone()["net_cash"]
     return int(opening_cash)+int(movement)
 
 
@@ -1392,7 +1407,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not require_any_module(db,user["tenant_id"],"cafe","accounting","gamenet"):
                     return self.send_json(403,{"error":"ماژول صندوق در لایسنس فعال نیست."})
                 rows=db.execute("""SELECT s.id,s.opened_at AS openedAt,s.opening_cash AS openingCash,
-                    s.status,s.closed_at AS closedAt,s.expected_cash AS expectedCash,
+                    s.status,s.closed_at AS closedAt,s.expected_cash AS expectedCash,s.journal_cursor AS journalCursor,
                     s.counted_cash AS countedCash,s.difference,s.open_note AS openNote,
                     s.close_note AS closeNote,op.username AS openedBy,cp.username AS closedBy
                     FROM cash_register_shifts s JOIN users op ON op.id=s.opened_by
@@ -1403,7 +1418,7 @@ class Handler(SimpleHTTPRequestHandler):
                 active=next((item for item in items if item["status"]=="open"),None)
                 if active:
                     active["expectedCash"]=cash_register_expected_cash(
-                        db,user["tenant_id"],active["openedAt"],active["openingCash"])
+                        db,user["tenant_id"],active["openedAt"],active["openingCash"],active["journalCursor"])
                 return self.send_json(200,{"items":items,"active":active})
             if path == "/api/accounting/periods":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
@@ -2030,16 +2045,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(409,{"error":"یک شیفت صندوق هنوز باز است؛ ابتدا آن را ببندید."})
                 shift_id=secrets.token_urlsafe(18)
                 opened_at=int(time.time())
+                journal_cursor=db.execute("SELECT COALESCE(MAX(rowid),0) FROM journal_entries WHERE tenant_id=?",
+                    (user["tenant_id"],)).fetchone()[0]
                 db.execute("""INSERT INTO cash_register_shifts
-                    (id,tenant_id,opened_by,opened_at,opening_cash,status,open_note)
-                    VALUES(?,?,?,?,?,'open',?)""",
-                    (shift_id,user["tenant_id"],user["id"],opened_at,opening_cash,note))
+                    (id,tenant_id,opened_by,opened_at,opening_cash,status,open_note,journal_cursor)
+                    VALUES(?,?,?,?,?,'open',?,?)""",
+                    (shift_id,user["tenant_id"],user["id"],opened_at,opening_cash,note,journal_cursor))
                 audit(db,user["tenant_id"],user["id"],"cash_register.shift.opened","cash_register_shift",shift_id,
                     {"openingCash":opening_cash})
                 db.commit()
                 return self.send_json(201,{"ok":True,"id":shift_id,"openedAt":opened_at,
                     "openingCash":opening_cash,"status":"open",
-                    "expectedCash":cash_register_expected_cash(db,user["tenant_id"],opened_at,opening_cash)})
+                    "expectedCash":cash_register_expected_cash(db,user["tenant_id"],opened_at,opening_cash,journal_cursor)})
             if path.startswith("/api/cash-register/shifts/") and path.endswith("/close"):
                 if not require_any_module(db,user["tenant_id"],"cafe","accounting","gamenet"):
                     return self.send_json(403,{"error":"ماژول صندوق در لایسنس فعال نیست."})
@@ -2057,7 +2074,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not 1<=len(shift_id)<=100:
                     return self.send_json(400,{"error":"شناسه شیفت صندوق معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
-                shift=db.execute("""SELECT id,opened_by,opened_at,opening_cash,status FROM cash_register_shifts
+                shift=db.execute("""SELECT id,opened_by,opened_at,opening_cash,status,journal_cursor FROM cash_register_shifts
                     WHERE id=? AND tenant_id=?""",(shift_id,user["tenant_id"])).fetchone()
                 if not shift:
                     db.rollback()
@@ -2070,7 +2087,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"فقط افتتاح‌کننده شیفت یا مالک/مدیر می‌تواند آن را ببندد."})
                 closed_at=int(time.time())
                 expected_cash=cash_register_expected_cash(
-                    db,user["tenant_id"],shift["opened_at"],shift["opening_cash"],closed_at)
+                    db,user["tenant_id"],shift["opened_at"],shift["opening_cash"],shift["journal_cursor"],closed_at)
                 difference=counted_cash-expected_cash
                 db.execute("""UPDATE cash_register_shifts SET status='closed',closed_by=?,closed_at=?,
                     expected_cash=?,counted_cash=?,difference=?,close_note=?
