@@ -27,6 +27,17 @@ def make_license(modules, license_id):
 
 
 class ApiIntegrationTests(unittest.TestCase):
+    def test_order_discount_allocator_is_exact_and_deterministic(self):
+        items=[("line-a",233333),("line-b",186666)]
+        shares=server.allocate_proportional_discount(items,30001)
+        self.assertEqual(sum(shares.values()),30001)
+        self.assertEqual(shares,server.allocate_proportional_discount(items,30001))
+        with self.assertRaises(ValueError):
+            server.allocate_proportional_discount([("line-a",100)],100)
+        with self.assertRaises(ValueError):
+            server.allocate_proportional_discount([("line-a",100)],-1)
+
+
     @classmethod
     def setUpClass(cls):
         os.environ['MG_LICENSE_SECRET'] = 'integration-test-secret-which-is-long-enough-123456'
