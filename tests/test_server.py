@@ -289,6 +289,13 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        status, daily_best = self.request("GET","/api/reports/best-selling-today",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(len(daily_best["items"]),1)
+        self.assertEqual(daily_best["items"][0]["productId"],"product-1")
+        self.assertEqual(daily_best["items"][0]["quantity"],2)
+        self.assertEqual(daily_best["items"][0]["revenue"],165000)
+        self.assertEqual(daily_best["items"][0]["orderCount"],1)
         status, duplicate_order = self.request("POST", "/api/orders", {
             "id":"order-test-1","customerId":"customer-1","discount":5000,
             "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]
