@@ -775,6 +775,17 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertEqual(json.loads(saved["addons_json"])[0]["name"],"Extra shot")
             finally:
                 db.close()
+            status, restored = self.request("POST", "/api/backup/restore", snapshot, token)
+            self.assertEqual(status, 200)
+            status, restored_addons = self.request("GET", "/api/product-addons", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(restored_addons["items"][0]["id"],"addon-01")
+            db = server.connect()
+            try:
+                restored_item = db.execute("SELECT addons_json FROM order_items WHERE order_id='addon-order-01'").fetchone()
+                self.assertEqual(json.loads(restored_item["addons_json"])[0]["price"],25)
+            finally:
+                db.close()
         finally:
             server.DB_PATH = original_db_path
 
