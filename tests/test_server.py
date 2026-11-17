@@ -528,14 +528,27 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,409)
         status, result = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
-            "invoiceDate":"2026-11-16","discount":30000,
+            "invoiceDate":"2026-11-16","discount":30001,
             "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000},{"productId":"product-purchase-test-2","quantity":5,"unitCost":40000}]
         }, token)
         self.assertEqual(status,201)
-        self.assertEqual(result["total"],420000)
+        self.assertEqual(result["total"],419999)
+        db=server.connect()
+        try:
+            discounted_lines=db.execute("""SELECT product_id,SUM(quantity) AS quantity,
+                SUM(line_total) AS line_total FROM purchase_invoice_items
+                WHERE tenant_id=(SELECT tenant_id FROM users WHERE id=?)
+                AND invoice_id='purchase-invoice-1' GROUP BY product_id""",(setup["user"]["id"],)).fetchall()
+            by_product={row["product_id"]:row for row in discounted_lines}
+            self.assertEqual(by_product["product-purchase-test"]["line_total"],236363)
+            self.assertEqual(by_product["product-purchase-test-2"]["line_total"],183636)
+            self.assertEqual(sum(row["line_total"] for row in discounted_lines),419999)
+            self.assertEqual(sum(row["quantity"] for row in discounted_lines),15)
+        finally:
+            db.close()
         status, retry_invoice = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
-            "invoiceDate":"2026-11-16","discount":30000,
+            "invoiceDate":"2026-11-16","discount":30001,
             "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000},{"productId":"product-purchase-test-2","quantity":5,"unitCost":40000}]
         }, token)
         self.assertEqual(status,200)
@@ -554,12 +567,12 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"partial")
-        self.assertEqual(result["remainingBalance"],320000)
+        self.assertEqual(result["remainingBalance"],319999)
         status, partial_statement = self.request("GET", "/api/suppliers/supplier-1/ledger", token=token)
         self.assertEqual(status,200)
-        self.assertEqual(partial_statement["totalPurchases"],420000)
+        self.assertEqual(partial_statement["totalPurchases"],419999)
         self.assertEqual(partial_statement["totalPayments"],100000)
-        self.assertEqual(partial_statement["balance"],320000)
+        self.assertEqual(partial_statement["balance"],319999)
         status, unknown_supplier = self.request("GET", "/api/suppliers/missing-supplier/ledger", token=token)
         self.assertEqual(status,404)
         status, duplicate_supplier_payment = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
@@ -567,24 +580,24 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,200)
         self.assertTrue(duplicate_supplier_payment["duplicate"])
-        self.assertEqual(duplicate_supplier_payment["remainingBalance"],320000)
+        self.assertEqual(duplicate_supplier_payment["remainingBalance"],319999)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
-            "amount":320000,"paymentMethod":"cash"
+            "amount":319999,"paymentMethod":"cash"
         }, token)
         self.assertEqual(status,201)
         self.assertEqual(result["status"],"paid")
         self.assertEqual(result["remainingBalance"],0)
         status, statement = self.request("GET", "/api/suppliers/supplier-1/ledger", token=token)
         self.assertEqual(status,200)
-        self.assertEqual(statement["totalPurchases"],420000)
-        self.assertEqual(statement["totalPayments"],420000)
+        self.assertEqual(statement["totalPurchases"],419999)
+        self.assertEqual(statement["totalPayments"],419999)
         self.assertEqual(statement["balance"],0)
         self.assertEqual(len(statement["items"]),3)
-        self.assertEqual([row["balanceAfter"] for row in statement["items"]],[0,320000,420000])
+        self.assertEqual([row["balanceAfter"] for row in statement["items"]],[0,319999,419999])
         self.assertEqual(statement["items"][0]["sourceType"],"payment")
         self.assertEqual(statement["items"][0]["balanceAfter"],0)
         self.assertEqual(statement["items"][-1]["sourceType"],"invoice")
-        self.assertEqual(statement["items"][-1]["balanceAfter"],420000)
+        self.assertEqual(statement["items"][-1]["balanceAfter"],419999)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "amount":1,"paymentMethod":"cash"
         }, token)
