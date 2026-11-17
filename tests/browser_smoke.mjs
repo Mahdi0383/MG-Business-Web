@@ -135,7 +135,7 @@ try {
   const endSessionBody = await endSessionResponse.json();
   assert.equal(endSessionResponse.status(), 200, "GameNet session settlement response: " + JSON.stringify(endSessionBody));
   assert.equal(endSessionBody.paymentMethod, "cash");
-  await page.locator("#modulePage").getByText("E2E-PC-01", { exact: true }).waitFor({ state: "visible" });
+  await page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" }).locator(".device-card-head b", { hasText: "E2E-PC-01" }).waitFor({ state: "visible" });
 
   await page.locator('#navigation [data-page="accounting"]').click();
   const accountingToday = await page.evaluate(() => {
