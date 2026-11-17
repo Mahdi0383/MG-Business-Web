@@ -203,6 +203,24 @@ CREATE TABLE IF NOT EXISTS customer_ledger(
  FOREIGN KEY(customer_id) REFERENCES customers(id)
 );
 CREATE INDEX IF NOT EXISTS idx_customer_ledger_customer_date ON customer_ledger(tenant_id,customer_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS loyalty_programs(
+ tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ spend_amount INTEGER NOT NULL DEFAULT 100000 CHECK(spend_amount BETWEEN 10000 AND 1000000000000),
+ points_awarded INTEGER NOT NULL DEFAULT 1 CHECK(points_awarded BETWEEN 1 AND 1000),
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS customer_loyalty_ledger(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ customer_id TEXT NOT NULL REFERENCES customers(id),
+ created_by TEXT NOT NULL REFERENCES users(id),
+ source_type TEXT NOT NULL CHECK(source_type IN ('order_earn','order_reversal')),
+ source_id TEXT NOT NULL, points_delta INTEGER NOT NULL CHECK(points_delta<>0),
+ note TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+ UNIQUE(tenant_id,source_type,source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_loyalty_customer_date
+ ON customer_loyalty_ledger(tenant_id,customer_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS orders(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  order_number TEXT NOT NULL, customer_id TEXT, created_by TEXT NOT NULL REFERENCES users(id),
@@ -356,6 +374,8 @@ def connect():
                  session["started_at"],session["ended_at"],session["players_count"],
                  session["rate_per_hour"],session["is_free"]))
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(9,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone():
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(10,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -438,6 +458,27 @@ def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_i
     for account_id,debit,credit in ((accounts[cash_code],amount,0),(accounts["1100"],0,amount)):
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+
+
+def award_customer_loyalty_points(db, tenant_id, customer_id, actor_id, order_id, amount, now):
+    if not customer_id or amount <= 0:
+        return 0
+    program = db.execute("""SELECT enabled,spend_amount,points_awarded
+        FROM loyalty_programs WHERE tenant_id=?""", (tenant_id,)).fetchone()
+    if not program or not program["enabled"]:
+        return 0
+    points = (int(amount) // int(program["spend_amount"])) * int(program["points_awarded"])
+    if points <= 0:
+        return 0
+    if points > 9007199254740991:
+        raise ValueError("loyalty points exceed the supported integer range")
+    cursor = db.execute("""INSERT OR IGNORE INTO customer_loyalty_ledger
+        (id,tenant_id,customer_id,created_by,source_type,source_id,points_delta,note,created_at)
+        VALUES(?,?,?,?, 'order_earn',?,?,?,?)""",
+        (secrets.token_urlsafe(18),tenant_id,customer_id,actor_id,order_id,points,
+         "امتیاز خرید سفارش "+order_id,now))
+    return points if cursor.rowcount else 0
+
 
 def post_order_cogs_journal(db, tenant_id, user_id, order_id, cost_total):
     if cost_total <= 0:
@@ -726,6 +767,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "product_addons": "SELECT * FROM product_addons WHERE tenant_id=?",
                     "customers": "SELECT * FROM customers WHERE tenant_id=?",
                     "customer_ledger": "SELECT * FROM customer_ledger WHERE tenant_id=?",
+                    "loyalty_programs": "SELECT * FROM loyalty_programs WHERE tenant_id=?",
+                    "customer_loyalty_ledger": "SELECT * FROM customer_loyalty_ledger WHERE tenant_id=?",
                     "inventory_movements": "SELECT * FROM inventory_movements WHERE tenant_id=?",
                     "suppliers": "SELECT * FROM suppliers WHERE tenant_id=?",
                     "purchase_invoices": "SELECT * FROM purchase_invoices WHERE tenant_id=?",
@@ -853,6 +896,29 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM purchase_invoices i JOIN suppliers s ON s.id=i.supplier_id WHERE i.tenant_id=?
                     ORDER BY i.invoice_date DESC,i.created_at DESC LIMIT 2000""",(user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(r) for r in rows]})
+            if path == "/api/loyalty/program":
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error":"ماژول مشتریان در لایسنس فعال نیست."})
+                row=db.execute("SELECT enabled,spend_amount AS spendAmount,points_awarded AS pointsAwarded,updated_at AS updatedAt FROM loyalty_programs WHERE tenant_id=?",
+                    (user["tenant_id"],)).fetchone()
+                return self.send_json(200, {"program":dict(row) if row else {
+                    "enabled":False,"spendAmount":100000,"pointsAwarded":1,"updatedAt":None}})
+            if path.startswith("/api/customers/") and path.endswith("/loyalty"):
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error":"ماژول مشتریان در لایسنس فعال نیست."})
+                customer_id=path.split("/")[-2]
+                customer=db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",
+                    (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    return self.send_json(404, {"error":"مشتری پیدا نشد."})
+                rows=db.execute("""SELECT id,source_type AS sourceType,source_id AS sourceId,
+                    points_delta AS pointsDelta,note,created_at AS createdAt
+                    FROM customer_loyalty_ledger WHERE tenant_id=? AND customer_id=?
+                    ORDER BY created_at DESC,id DESC LIMIT 1000""",
+                    (user["tenant_id"],customer_id)).fetchall()
+                balance=db.execute("SELECT COALESCE(SUM(points_delta),0) FROM customer_loyalty_ledger WHERE tenant_id=? AND customer_id=?",
+                    (user["tenant_id"],customer_id)).fetchone()[0]
+                return self.send_json(200, {"customerId":customer_id,"balance":balance,"items":[dict(row) for row in rows]})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
@@ -1116,6 +1182,17 @@ class Handler(SimpleHTTPRequestHandler):
                     db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                         VALUES(?,?,?,?,?,?,0,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order["customer_id"],user["id"],
                         "order_reversal",order_id,order["total"],"برگشت فروش اعتباری "+order["order_number"],now))
+                earned=db.execute("""SELECT points_delta FROM customer_loyalty_ledger
+                    WHERE tenant_id=? AND source_type='order_earn' AND source_id=?""",
+                    (user["tenant_id"],order_id)).fetchone()
+                if earned and order["customer_id"]:
+                    db.execute("""INSERT OR IGNORE INTO customer_loyalty_ledger
+                        (id,tenant_id,customer_id,created_by,source_type,source_id,points_delta,note,created_at)
+                        VALUES(?,?,?,?, 'order_reversal',?,?,?,?)""",
+                        (secrets.token_urlsafe(18),user["tenant_id"],order["customer_id"],user["id"],
+                         order_id,-int(earned["points_delta"]),"برگشت امتیاز سفارش "+order["order_number"],now))
+                    audit(db,user["tenant_id"],user["id"],"loyalty.points.reversed","customer",order["customer_id"],
+                        {"orderId":order_id,"points":int(earned["points_delta"])})
                 db.execute("UPDATE orders SET status='cancelled' WHERE id=? AND tenant_id=?", (order_id,user["tenant_id"]))
                 audit(db,user["tenant_id"],user["id"],"order.cancelled","order",order_id)
                 db.commit()
@@ -1380,7 +1457,7 @@ class Handler(SimpleHTTPRequestHandler):
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
-                allowed = ("users","accounts","products","product_addons","customers","customer_ledger","game_devices","transactions","journal_entries",
+                allowed = ("users","accounts","products","product_addons","customers","customer_ledger","loyalty_programs","customer_loyalty_ledger","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","suppliers","purchase_invoices","purchase_invoice_items","supplier_payments",
                            "orders","order_items","game_sessions","game_session_segments","gamenet_reservations","audit_log")
                 if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
@@ -1435,11 +1512,11 @@ class Handler(SimpleHTTPRequestHandler):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("gamenet_reservations","game_session_segments","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
-                                    "inventory_movements","journal_lines","journal_entries","transactions","customer_ledger",
+                                    "inventory_movements","journal_lines","journal_entries","transactions","customer_loyalty_ledger","loyalty_programs","customer_ledger",
                                     "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
-                    insert_order = ("accounts","products","product_addons","customers","customer_ledger","suppliers","game_devices","transactions",
+                    insert_order = ("accounts","products","product_addons","customers","loyalty_programs","customer_loyalty_ledger","customer_ledger","suppliers","game_devices","transactions",
                                     "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
                                     "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","audit_log")
                     for name in insert_order:
@@ -1786,6 +1863,30 @@ class Handler(SimpleHTTPRequestHandler):
                       {"amount":amount,"elapsedSeconds":elapsed})
                 db.commit()
                 return self.send_json(200, {"ok":True,"amountDue":amount,"elapsedSeconds":elapsed})
+            if path == "/api/loyalty/program":
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error":"ماژول مشتریان در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"فقط مالک یا مدیر می‌تواند تنظیمات باشگاه مشتریان را تغییر دهد."})
+                enabled=data.get("enabled")
+                spend_amount=data.get("spendAmount")
+                points_awarded=data.get("pointsAwarded")
+                if (type(enabled) is not bool or type(spend_amount) is not int or
+                    not 10000<=spend_amount<=1000000000000 or type(points_awarded) is not int or
+                    not 1<=points_awarded<=1000):
+                    return self.send_json(400, {"error":"وضعیت، مبلغ مبنا یا تعداد امتیاز معتبر نیست."})
+                now=int(time.time())
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""INSERT INTO loyalty_programs(tenant_id,enabled,spend_amount,points_awarded,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET
+                    enabled=excluded.enabled,spend_amount=excluded.spend_amount,
+                    points_awarded=excluded.points_awarded,updated_at=excluded.updated_at""",
+                    (user["tenant_id"],int(enabled),spend_amount,points_awarded,now,now))
+                audit(db,user["tenant_id"],user["id"],"loyalty.program.updated","loyalty_program",user["tenant_id"],
+                    {"enabled":enabled,"spendAmount":spend_amount,"pointsAwarded":points_awarded})
+                db.commit()
+                return self.send_json(200, {"ok":True,"program":{"enabled":enabled,
+                    "spendAmount":spend_amount,"pointsAwarded":points_awarded,"updatedAt":now}})
             if path == "/api/orders":
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
@@ -1893,6 +1994,9 @@ class Handler(SimpleHTTPRequestHandler):
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
                     VALUES(?,?,?,?,?,'paid',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
+                # Credit orders accrue only after settlement; cash/card/online sales earn immediately.
+                earned_points=0 if payment=="credit" else award_customer_loyalty_points(
+                    db,user["tenant_id"],customer_id,user["id"],order_id,total,now)
                 if payment == "credit":
                     db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                         VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
