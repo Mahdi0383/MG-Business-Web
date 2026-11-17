@@ -1990,6 +1990,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if overlap:
                     db.rollback()
                     return self.send_json(409,{"error":"این بازه با یک دوره مالی بسته‌شده هم‌پوشانی دارد."})
+                unbalanced=db.execute("""SELECT e.id FROM journal_entries e
+                    LEFT JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                    WHERE e.tenant_id=? AND e.entry_date>=? AND e.entry_date<=?
+                    GROUP BY e.id
+                    HAVING COALESCE(SUM(l.debit),0)<=0 OR COALESCE(SUM(l.debit),0)<>COALESCE(SUM(l.credit),0)
+                    LIMIT 1""",(user["tenant_id"],start_date,end_date)).fetchone()
+                if unbalanced:
+                    db.rollback()
+                    return self.send_json(409,{"error":"به دلیل وجود سند حسابداری نامتوازن، بستن این دوره مجاز نیست."})
                 period_id=secrets.token_urlsafe(18)
                 closed_at=int(time.time())
                 db.execute("""INSERT INTO accounting_periods
