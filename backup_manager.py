@@ -43,7 +43,8 @@ def _encrypt_file(source: Path, destination: Path, key: bytes) -> None:
 
     nonce = os.urandom(NONCE_BYTES)
     encryptor = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
-    with source.open("rb") as input_file, destination.open("xb") as output_file:
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with source.open("rb") as input_file, os.fdopen(descriptor, "wb") as output_file:
         output_file.write(MAGIC + nonce)
         while True:
             chunk = input_file.read(CHUNK_BYTES)
@@ -74,7 +75,8 @@ def _decrypt_file(source: Path, destination: Path, key: bytes) -> None:
         input_file.seek(len(header))
         decryptor = Cipher(algorithms.AES(key), modes.GCM(nonce, tag)).decryptor()
         remaining = ciphertext_length
-        with destination.open("xb") as output_file:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as output_file:
             while remaining:
                 chunk = input_file.read(min(CHUNK_BYTES, remaining))
                 if not chunk:
@@ -249,6 +251,10 @@ def restore_snapshot(
     try:
         source = sqlite3.connect(str(restore_source), timeout=30)
         destination = sqlite3.connect(str(temp_path), timeout=30)
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            pass
         source.backup(destination, pages=256, sleep=0.05)
         _validate_mg_database(destination)
         destination.close()
