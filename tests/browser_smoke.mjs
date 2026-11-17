@@ -22,7 +22,7 @@ try {
   await page.locator('#accountCreateForm input[name="name"]').fill("حساب آزمایشی مرورگر");
   await page.locator('#accountCreateForm select[name="accountType"]').selectOption("asset");
   await page.locator('#accountCreateForm button[type="submit"]').click();
-  await page.locator("#modulePage").getByText("حساب آزمایشی مرورگر", { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#modulePage .module-table").last().getByText("حساب آزمایشی مرورگر", { exact: true }).waitFor({ state: "visible" });
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
   console.log("Browser E2E passed: setup, authenticated dashboard, accounting navigation, custom account creation.");
 } finally {
