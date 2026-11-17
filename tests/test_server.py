@@ -2643,6 +2643,19 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(custom["1300"]["name"],"سپرده کوتاه‌مدت")
             self.assertEqual(custom["1400"]["normalBalance"],"credit")
             self.assertEqual(custom["1400"]["name"],"بدهی کوتاه‌مدت")
+            status,denied_deactivate=self.request("DELETE","/api/accounting/accounts/"+created["id"],token=tokens["cashier"])
+            self.assertEqual(status,403)
+            status,deactivated=self.request("DELETE","/api/accounting/accounts/"+created["id"],token=tokens["manager"])
+            self.assertEqual(status,200)
+            self.assertTrue(deactivated["deactivated"])
+            status,repeated_deactivate=self.request("DELETE","/api/accounting/accounts/"+created["id"],token=owner)
+            self.assertEqual(status,404)
+            status,used_account=self.request("DELETE","/api/accounting/accounts/"+custom["1000"]["id"],token=owner)
+            self.assertEqual(status,409)
+            status,after_deactivate=self.request("GET","/api/accounting/accounts",token=owner)
+            self.assertEqual(status,200)
+            self.assertFalse(any(item["code"]=="1300" for item in after_deactivate["items"]))
+            self.assertTrue(any(item["code"]=="1000" for item in after_deactivate["items"]))
             db=server.connect()
             try:
                 tenant_id=setup["user"]["tenantId"]
@@ -2650,6 +2663,10 @@ class ApiIntegrationTests(unittest.TestCase):
                     (tenant_id,)).fetchone()[0],3)
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND action='account.created'",
                     (tenant_id,)).fetchone()[0],3)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND action='account.deactivated'",
+                    (tenant_id,)).fetchone()[0],1)
+                self.assertEqual(db.execute("SELECT active FROM accounts WHERE tenant_id=? AND id=?",
+                    (tenant_id,created["id"])).fetchone()["active"],0)
             finally:
                 db.close()
         finally:
