@@ -689,6 +689,31 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
+    def test_backup_scheduler_retries_transient_failures_with_backoff(self):
+        delays = []
+
+        class StopAfterThreeWaits:
+            def is_set(self):
+                return False
+
+            def wait(self, seconds):
+                delays.append(seconds)
+                return len(delays) >= 3
+
+        original_interval = server.BACKUP_INTERVAL_SECONDS
+        try:
+            server.BACKUP_INTERVAL_SECONDS = 86400
+            with unittest.mock.patch("server.create_snapshot", side_effect=[
+                OSError("temporary disk issue"),
+                OSError("temporary disk issue"),
+                Path("/tmp/mg-test-snapshot.sqlite3"),
+            ]) as create:
+                server.backup_scheduler(StopAfterThreeWaits())
+                self.assertEqual(create.call_count, 3)
+            self.assertEqual(delays, [60, 120, 86400])
+        finally:
+            server.BACKUP_INTERVAL_SECONDS = original_interval
+
     def test_backup_export_rejects_oversized_workspace_before_fetching_rows(self):
         original_limit = server.BACKUP_MAX_ROWS
         original_db_path = server.DB_PATH
