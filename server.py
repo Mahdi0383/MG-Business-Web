@@ -2045,7 +2045,7 @@ class Handler(SimpleHTTPRequestHandler):
                         return self.send_json(409,{"error":"روش تسویه با پرداخت ثبت‌شده این نشست مطابقت ندارد."})
                     amount=int(session["amount_due"])
                     tx_id="game-"+session_id
-                    tx=db.execute("SELECT amount,kind FROM transactions WHERE tenant_id=? AND id=?",
+                    tx=db.execute("SELECT amount,kind,status FROM transactions WHERE tenant_id=? AND id=?",
                         (user["tenant_id"],tx_id)).fetchone()
                     journal_entries=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
                         AND source_type='transaction' AND source_id=?""",(user["tenant_id"],tx_id)).fetchall()
@@ -2068,7 +2068,7 @@ class Handler(SimpleHTTPRequestHandler):
                         ledger_valid=((payment_method=="credit" and len(ledger_rows)==1 and
                                        ledger_rows[0]["debit"]==amount and ledger_rows[0]["credit"]==0) or
                                       (payment_method!="credit" and not ledger_rows))
-                        journal_valid=(tx is not None and tx["amount"]==amount and tx["kind"]=="income" and
+                        journal_valid=(tx is not None and tx["amount"]==amount and tx["kind"]=="income" and tx["status"]=="posted" and
                             len(journal_entries)==1 and len(journal_rows)==2 and actual==expected and ledger_valid)
                     if not journal_valid:
                         db.rollback()
