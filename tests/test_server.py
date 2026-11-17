@@ -2775,7 +2775,7 @@ class ApiIntegrationTests(unittest.TestCase):
             status,zero_cost_movement=self.request("POST","/api/inventory/movements",{
                 "id":"period-zero-cost-movement","productId":product["id"],
                 "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"period close test"},owner)
-            self.assertEqual(status,201,"new inventory movements on dates after a closed period must remain allowed")
+            self.assertEqual(status,409,"zero-value inventory changes must be rejected when their posting date is closed")
             status,audit_result=self.request("GET","/api/audit-log",token=owner)
             self.assertEqual(status,200)
             self.assertTrue(any(item["action"]=="accounting.period.closed" for item in audit_result["items"]))
