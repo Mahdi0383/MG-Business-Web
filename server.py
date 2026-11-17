@@ -1775,8 +1775,10 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403, {"error": "دسترسی شروع نشست بازی ندارید."})
                 device_id, customer_id = data.get("deviceId"), data.get("customerId")
                 players = data.get("playersCount",1)
-                if not isinstance(device_id,str) or type(players) is not int or not 1 <= players <= 16:
-                    return self.send_json(400, {"error": "دستگاه یا تعداد بازیکنان معتبر نیست."})
+                if (not isinstance(device_id,str) or not 1<=len(device_id)<=100 or
+                        (customer_id is not None and (not isinstance(customer_id,str) or not 1<=len(customer_id)<=100)) or
+                        type(players) is not int or not 1 <= players <= 16):
+                    return self.send_json(400, {"error": "دستگاه، مشتری یا تعداد بازیکنان معتبر نیست."})
                 session_id=str(data.get("id") or secrets.token_urlsafe(18))
                 if not 1<=len(session_id)<=100: return self.send_json(400,{"error":"شناسه نشست معتبر نیست."})
                 db.execute("BEGIN IMMEDIATE")
