@@ -173,21 +173,20 @@ try {
     const now = new Date();
     return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
   });
-  const accountingReportRequests = [];
-  page.on("request", request => {
-    const url = new URL(request.url());
-    if (["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"].includes(url.pathname)) {
-      accountingReportRequests.push(url);
-    }
-  });
   await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
   await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
+  const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
+  const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === path && url.searchParams.get("fromDate") === accountingToday &&
+      url.searchParams.get("toDate") === accountingToday;
+  }));
   await page.locator('#accountingDateFilter button[type="submit"]').click();
-  await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
-  for (const path of ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"]) {
-    assert.ok(accountingReportRequests.some(url => url.pathname === path && url.searchParams.get("fromDate") === accountingToday && url.searchParams.get("toDate") === accountingToday),
-      "accounting date range must reach " + path);
+  const reportResults = await Promise.all(reportResponses);
+  for (let index = 0; index < reportPaths.length; index++) {
+    assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
   }
+  await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
   const accountLedgerCheck = await page.evaluate(async (reportDate) => {
     const token = sessionStorage.getItem("mg-business.session");
     const headers = { Authorization: "Bearer " + token };
