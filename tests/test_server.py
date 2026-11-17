@@ -2760,6 +2760,15 @@ class ApiIntegrationTests(unittest.TestCase):
             finally:
                 db.close()
 
+            status,product=self.request("POST","/api/products",{
+                "id":"period-zero-cost-product","name":"کالای بدون بهای خرید",
+                "sellPrice":10000,"costPrice":0},owner)
+            self.assertEqual(status,201)
+            status,open_zero_cost_movement=self.request("POST","/api/inventory/movements",{
+                "id":"period-zero-cost-open-movement","productId":product["id"],
+                "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"open period test"},owner)
+            self.assertEqual(status,201,"inventory movements after the prior closed period must remain allowed")
+
             status,current=self.request("POST","/api/transactions",{
                 "id":"period-current-open","title":"ثبت روز باز","amount":5000,
                 "kind":"income","category":"test","createdAt":today+"T12:00:00Z"},owner)
@@ -2768,13 +2777,9 @@ class ApiIntegrationTests(unittest.TestCase):
             status,closedToday=self.request("POST","/api/accounting/periods/close",{
                 "startDate":today,"endDate":today},owner)
             self.assertEqual(status,201)
-            status,product=self.request("POST","/api/products",{
-                "id":"period-zero-cost-product","name":"کالای بدون بهای خرید",
-                "sellPrice":10000,"costPrice":0},owner)
-            self.assertEqual(status,201)
             status,zero_cost_movement=self.request("POST","/api/inventory/movements",{
-                "id":"period-zero-cost-movement","productId":product["id"],
-                "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"period close test"},owner)
+                "id":"period-zero-cost-closed-movement","productId":product["id"],
+                "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"closed period test"},owner)
             self.assertEqual(status,409,"zero-value inventory changes must be rejected when their posting date is closed")
             status,audit_result=self.request("GET","/api/audit-log",token=owner)
             self.assertEqual(status,200)
