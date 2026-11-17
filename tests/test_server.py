@@ -2746,6 +2746,15 @@ class ApiIntegrationTests(unittest.TestCase):
             status,duplicate=self.request("POST","/api/accounting/periods/close",close_payload,owner)
             self.assertEqual(status,409)
 
+            status,product=self.request("POST","/api/products",{
+                "id":"period-zero-cost-product","name":"کالای بدون بهای خرید",
+                "sellPrice":10000,"costPrice":0},owner)
+            self.assertEqual(status,201)
+            status,zero_cost_movement=self.request("POST","/api/inventory/movements",{
+                "id":"period-zero-cost-movement","productId":product["id"],
+                "movementType":"adjustment","quantityDelta":1,"unitCost":0,"note":"period close test"},owner)
+            self.assertEqual(status,409,"zero-cost inventory changes must also respect closed periods")
+
             status,backdated=self.request("POST","/api/transactions",{
                 "id":"period-backdated-new","title":"ثبت در دوره بسته","amount":1000,
                 "kind":"income","category":"test","createdAt":yesterday+"T13:00:00Z"},owner)
