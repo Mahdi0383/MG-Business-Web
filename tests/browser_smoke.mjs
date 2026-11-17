@@ -134,6 +134,28 @@ try {
   const orderBody = await orderResponse.json();
   assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
+  let kitchenAction = page.locator('[data-order-fulfillment="' + orderBody.id + '"]');
+  await kitchenAction.waitFor({ state: "visible" });
+  for (const nextStatus of ["preparing", "ready", "served"]) {
+    const fulfillmentPromise = page.waitForResponse(response =>
+      response.url().endsWith("/api/orders/" + orderBody.id + "/fulfillment") &&
+      response.request().method() === "POST"
+    );
+    await kitchenAction.click();
+    const fulfillmentResponse = await fulfillmentPromise;
+    const fulfillmentBody = await fulfillmentResponse.json();
+    assert.equal(fulfillmentResponse.status(), 200, "kitchen fulfillment transition: " + JSON.stringify(fulfillmentBody));
+    assert.equal(fulfillmentBody.status, nextStatus);
+    if (nextStatus !== "served") {
+      kitchenAction = page.locator('[data-order-fulfillment="' + orderBody.id + '"]');
+      await kitchenAction.waitFor({ state: "visible" });
+      await page.waitForFunction(({ id, status }) => {
+        const button = document.querySelector('[data-order-fulfillment="' + id + '"]');
+        return Boolean(button && button.dataset.nextStatus === status);
+      }, { id: orderBody.id, status: nextStatus === "preparing" ? "ready" : "served" });
+    }
+  }
+  await page.locator('[data-order-fulfillment="' + orderBody.id + '"]').waitFor({ state: "detached" });
   const shiftState = await page.evaluate(async () => {
     const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/cash-register/shifts", { headers: { Authorization: "Bearer " + token } });
