@@ -2133,6 +2133,20 @@ class Handler(SimpleHTTPRequestHandler):
                         expected_sales=[(expected_payment_account,existing["total"],0),("4000",0,existing["total"])]
                         actual_sales=sorted((row["code"],row["debit"],row["credit"]) for row in sales_rows)
                         expected_sales_cost=sum(row["unit_cost"]*row["quantity"] for row in stored_order_lines)
+                        expected_stock={}
+                        for row in stored_order_lines:
+                            product_id=row["product_id"]
+                            if product_id in expected_stock and expected_stock[product_id][1]!=row["unit_cost"]:
+                                expected_stock[product_id]=(expected_stock[product_id][0]+row["quantity"],None)
+                            else:
+                                expected_stock[product_id]=(expected_stock.get(product_id,(0,row["unit_cost"]))[0]+row["quantity"],row["unit_cost"])
+                        actual_stock=db.execute("""SELECT product_id,SUM(quantity_delta) AS quantity_delta,unit_cost
+                            FROM inventory_movements WHERE tenant_id=? AND movement_type='sale' AND note=?
+                            GROUP BY product_id,unit_cost""",
+                            (user["tenant_id"],"سفارش "+existing["order_number"])).fetchall()
+                        stock_valid=(all(cost is not None for quantity,cost in expected_stock.values()) and
+                            sorted((row["product_id"],row["quantity_delta"],row["unit_cost"]) for row in actual_stock)==
+                            sorted((product_id,-quantity,cost) for product_id,(quantity,cost) in expected_stock.items()))
                         cogs_entry=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
                             AND source_type='order_cogs' AND source_id=?""",(user["tenant_id"],order_id)).fetchone()
                         cogs_rows=[]
@@ -2144,7 +2158,7 @@ class Handler(SimpleHTTPRequestHandler):
                         expected_cogs=sorted([("5100",expected_sales_cost,0),("1200",0,expected_sales_cost)]) if expected_sales_cost else []
                         actual_cogs=sorted((row["code"],row["debit"],row["credit"]) for row in cogs_rows)
                         journals_valid=(tx is not None and tx["amount"]==existing["total"] and
-                            tx["kind"]=="income" and len(sales_rows)==2 and actual_sales==sorted(expected_sales) and
+                            tx["kind"]=="income" and len(sales_rows)==2 and actual_sales==sorted(expected_sales) and stock_valid and
                             ((expected_sales_cost==0 and cogs_entry is None) or
                              (expected_sales_cost>0 and cogs_entry is not None and len(cogs_rows)==2 and actual_cogs==expected_cogs)))
                         if journals_valid:
