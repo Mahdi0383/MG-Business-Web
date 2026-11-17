@@ -1520,6 +1520,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 db.close()
             status, removed = self.request("DELETE","/api/product-addons/public-addon-01",token=token)
             self.assertEqual(status,200)
+            with server.LOGIN_LOCK:
+                server.PUBLIC_ORDER_FAILURES.pop("127.0.0.1",None)
             status, duplicate = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,200)
             self.assertTrue(duplicate["duplicate"])
