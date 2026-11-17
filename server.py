@@ -442,6 +442,33 @@ def connect():
         order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)").fetchall()}
         if "request_fingerprint" not in order_columns:
             db.execute("ALTER TABLE orders ADD COLUMN request_fingerprint TEXT")
+        legacy_public_orders = db.execute("""SELECT o.id,o.tenant_id,c.full_name,c.phone
+            FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
+            WHERE o.id LIKE 'public-%' AND o.request_fingerprint IS NULL""").fetchall()
+        for legacy_order in legacy_public_orders:
+            if not legacy_order["full_name"] or not legacy_order["phone"]:
+                continue
+            normalized_lines = {}
+            for item in db.execute("""SELECT product_id,quantity,addons_json FROM order_items
+                WHERE tenant_id=? AND order_id=?""",
+                (legacy_order["tenant_id"],legacy_order["id"])).fetchall():
+                try:
+                    saved_addons = json.loads(item["addons_json"] or "[]")
+                    if not isinstance(saved_addons,list):
+                        saved_addons = []
+                    addon_ids = tuple(sorted(
+                        addon["id"] for addon in saved_addons
+                        if isinstance(addon,dict) and isinstance(addon.get("id"),str)
+                    ))
+                except (TypeError,ValueError):
+                    addon_ids = ()
+                key = (item["product_id"],addon_ids)
+                normalized_lines[key] = normalized_lines.get(key,0) + item["quantity"]
+            if normalized_lines:
+                fingerprint = public_order_fingerprint(
+                    legacy_order["full_name"],legacy_order["phone"],normalized_lines)
+                db.execute("UPDATE orders SET request_fingerprint=? WHERE id=? AND tenant_id=?",
+                           (fingerprint,legacy_order["id"],legacy_order["tenant_id"]))
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(13,?)", (int(time.time()),))
     db.commit()
     return db
