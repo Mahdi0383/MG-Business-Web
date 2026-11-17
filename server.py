@@ -1906,7 +1906,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if not session:
                     db.rollback()
                     return self.send_json(404, {"error": "نشست پیدا نشد."})
+                payment_method=data.get("paymentMethod","credit" if session["customer_id"] else "cash")
+                if payment_method not in ("cash","card","online","credit"):
+                    db.rollback()
+                    return self.send_json(400,{"error":"روش تسویه نشست معتبر نیست."})
                 if session["status"]=="ended":
+                    if payment_method != session["payment_method"]:
+                        db.rollback()
+                        return self.send_json(409,{"error":"روش تسویه با پرداخت ثبت‌شده این نشست مطابقت ندارد."})
                     elapsed=max(0,int(session["ended_at"] or session["started_at"])-session["started_at"])
                     db.commit()
                     return self.send_json(200,{"ok":True,"amountDue":session["amount_due"],
@@ -1914,10 +1921,6 @@ class Handler(SimpleHTTPRequestHandler):
                 if session["status"]!="running":
                     db.rollback()
                     return self.send_json(409,{"error":"این نشست قابل پایان‌دادن نیست."})
-                payment_method=data.get("paymentMethod","credit" if session["customer_id"] else "cash")
-                if payment_method not in ("cash","card","online","credit"):
-                    db.rollback()
-                    return self.send_json(400,{"error":"روش تسویه نشست معتبر نیست."})
                 if payment_method=="credit" and not session["customer_id"]:
                     db.rollback()
                     return self.send_json(400,{"error":"برای تسویه اعتباری باید مشتری نشست مشخص باشد."})
