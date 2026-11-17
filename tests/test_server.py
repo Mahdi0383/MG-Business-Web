@@ -1127,6 +1127,28 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertEqual(stored["active"],0)
             finally:
                 db.close()
+            # A valid user ID from another tenant must remain invisible to this owner.
+            db=server.connect()
+            try:
+                now=int(time.time())
+                db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)",
+                           ("foreign-role-tenant","Foreign Role Tenant",now))
+                db.execute("""INSERT INTO users(id,tenant_id,username,password_hash,role,active,created_at)
+                    VALUES(?,?,?,?,?,1,?)""",
+                    ("foreign-role-user","foreign-role-tenant","foreign-role-user",
+                     server.password_hash("foreign-role-password-2026"),"manager",now))
+                db.commit()
+            finally:
+                db.close()
+            status,foreign=self.request("POST","/api/users/foreign-role-user/role",
+                                        {"role":"viewer"},owner_token)
+            self.assertEqual(status,404)
+            db=server.connect()
+            try:
+                foreign_role=db.execute("SELECT role FROM users WHERE id='foreign-role-user'").fetchone()[0]
+                self.assertEqual(foreign_role,"manager")
+            finally:
+                db.close()
             status,audit=self.request("GET","/api/audit-log",token=owner_token)
             self.assertEqual(status,200)
             role_events=[item for item in audit["items"] if item["action"]=="user.role.changed" and item["entityId"]==cashier["id"]]
