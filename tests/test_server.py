@@ -277,6 +277,21 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,200)
         self.assertTrue(duplicate_movement["duplicate"])
+        db = server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            journal_id = db.execute("""SELECT id FROM journal_entries
+                WHERE tenant_id=? AND source_type='inventory_movement' AND source_id=?""",
+                (setup["user"]["tenantId"],"move-in-1")).fetchone()["id"]
+            db.execute("DELETE FROM journal_lines WHERE entry_id=?", (journal_id,))
+            db.commit()
+        finally:
+            db.close()
+        status, corrupted_retry = self.request("POST", "/api/inventory/movements", {
+            "id":"move-in-1","productId":"product-1","movementType":"purchase",
+            "quantityDelta":20,"unitCost":30000
+        }, token)
+        self.assertEqual(status,409)
         status, result = self.request("POST", "/api/inventory/movements", {
             "id": "move-out-1", "productId": "product-1", "movementType": "sale",
             "quantityDelta": -5, "unitCost": 30000
