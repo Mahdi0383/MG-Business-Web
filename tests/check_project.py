@@ -59,6 +59,11 @@ if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
 if "supplierLedgerPanel" not in app or "supplierStatementForm" not in app or "data-supplier-ledger-close" not in app:
     raise SystemExit("Supplier account statement UI is missing")
+if "function persist(){if(apiMode)return true;" not in app:
+    raise SystemExit("Server-backed financial records must not be written to browser local storage.")
+if "apiMode=true;localStorage.removeItem(key);" not in app:
+    raise SystemExit("Legacy browser financial cache must be cleared after server authentication.")
+
 if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
     raise SystemExit("Supplier account statement CSV export is missing")
 if "const safe=" not in app or "[=+@-]" not in app:
