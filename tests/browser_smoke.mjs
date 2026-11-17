@@ -22,7 +22,7 @@ try {
   await page.locator('#accountCreateForm input[name="name"]').fill("حساب آزمایشی مرورگر");
   await page.locator('#accountCreateForm select[name="accountType"]').selectOption("asset");
   await page.locator('#accountCreateForm button[type="submit"]').click();
-  await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "حساب آزمایشی مرورگر" }).last().waitFor({ state: "visible" });
+  await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" }).first().waitFor({ state: "visible" });
   const unusedAccountRow = page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" });
   const accountDeactivationPromise = page.waitForResponse(response =>
     response.url().includes("/api/accounting/accounts/") && response.request().method() === "DELETE"
