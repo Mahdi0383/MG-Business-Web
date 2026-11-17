@@ -83,7 +83,7 @@ git pull --ff-only
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger` و `POST /api/customers/{id}/payments`، `GET /api/customers/{id}/loyalty` برای مانده و گردش امتیازهای باشگاه
 - `GET /api/inventory` و `POST /api/inventory/movements`
 - `GET/POST /api/suppliers`، `GET /api/suppliers/{id}/ledger` برای گردش حساب و مانده بدهی تأمین‌کننده، `GET/POST /api/purchase-invoices` و `POST /api/purchase-invoices/{id}/payments` برای خرید، ورود موجودی، بدهی تأمین‌کننده و پرداخت جزئی/کامل
-- `GET /api/accounting/accounts`، `GET /api/accounting/journal`، `GET /api/accounting/trial-balance`، `GET /api/accounting/balance-sheet` و `GET /api/accounting/profit-loss`
+- `GET/POST /api/accounting/accounts` برای مشاهده و تعریف سرفصل سفارشی (فقط مالک/مدیر؛ کد یکتا در فضای کاری و ماهیت حساب غیرقابل‌تحمیل از سمت کلاینت)، `GET /api/accounting/journal`، `GET /api/accounting/trial-balance`، `GET /api/accounting/balance-sheet` و `GET /api/accounting/profit-loss`
 - `GET/POST /api/gamenet/devices`، `POST/DELETE /api/gamenet/devices/{id}`، `GET /api/gamenet/sessions`، `POST /api/gamenet/sessions/{id}/adjust` برای انتقال نشست/تغییر تعداد بازیکن و حالت رایگان یا پولی با ثبت تاریخچه تعرفه، `GET /api/gamenet/sessions/{id}/segments` برای ریزبخش‌های صورتحساب و `POST /api/gamenet/sessions/{id}/end` برای تسویه تجمیعی با روش نقدی، کارت‌خوان، آنلاین یا اعتباری. هزینه هر بخش بر اساس دقیقه گرد می‌شود و مجموع بخش‌ها در پایان نشست تسویه می‌شود.
 - `GET/POST /api/gamenet/reservations` و `POST /api/gamenet/reservations/{id}/cancel` برای رزرو دستگاه و جلوگیری از تداخل زمان‌ها؛ زمان‌های ورودی باید ISO-8601 همراه منطقه زمانی/اختلاف UTC باشند و لغو رزرو در retry تکراری امن است
 
@@ -99,7 +99,7 @@ git pull --ff-only
 - خروجی پشتیبان JSON و بازیابی پشتیبان با اعتبارسنجی ساختار، نسخه، تعداد رکوردها و شناسه‌های تکراری.
 - نگهداری موقت برخی داده‌های رابط در مرورگر؛ در قطع ارتباط با سرور، رابط فقط پیام وضعیت آفلاین نشان می‌دهد و عملیات نوشتن را متوقف می‌کند تا داده‌های جداگانه و همگام‌نشده ایجاد نشوند.
 - سرور API مبتنی بر Python و SQLite، ایجاد فضای کاری/مالک، ورود با نشست bearer، محدودسازی تلاش ورود، ثبت/خواندن/برگشت تراکنش و audit log.
-- دفتر حساب‌ها پایه، ثبت خودکار سند دوبل برای درآمد/هزینه و سند معکوس به‌جای حذف سند مالی.
+- دفتر حساب‌ها پایه با امکان تعریف سرفصل سفارشی توسط مالک/مدیر (کد ۴ تا ۱۲ رقم، نام و نوع حساب؛ ماهیت بدهکار/بستانکار به‌صورت قطعی از نوع حساب تعیین می‌شود)، ثبت رویداد ممیزی برای ایجاد سرفصل، ثبت خودکار سند دوبل برای درآمد/هزینه و سند معکوس به‌جای حذف سند مالی.
 - کاتالوگ کالا، پرونده مشتری، دفتر بدهکار/بستانکار مشتری با مشاهده گردش کامل حساب، دریافت جزئی از بدهی، گردش انبار، محاسبه موجودی و جلوگیری از موجودی منفی.
 - مدیریت تأمین‌کنندگان، گردش حساب و مانده بدهی، فاکتور خرید چندقلمی، ورود اتمیک کالا به انبار، تخصیص متناسب تخفیف فاکتور با توزیع دقیق باقیمانده ریالی و ثبت بهای خرید خالص، ایجاد بدهی در دفتر کل و پرداخت جزئی/کامل تأمین‌کننده.
 - گزارش سود و زیان، تراز آزمایشی و ترازنامه پایه بر مبنای دفتر کل؛ معادله دارایی = بدهی + حقوق مالکانه بررسی می‌شود.
