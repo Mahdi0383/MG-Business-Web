@@ -2324,6 +2324,13 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 200)
             viewer_token = login["token"]
 
+            # Read-only access must not expose owner/manager administrative datasets.
+            for path in ("/api/backup", "/api/audit-log", "/api/users"):
+                with self.subTest(read_path=path):
+                    status, result = self.request("GET", path, token=viewer_token)
+                    self.assertEqual(status, 403)
+                    self.assertIn("error", result)
+
             attempts = [
                 ("POST", "/api/orders", {"items": []}),
                 ("POST", "/api/gamenet/devices", {
