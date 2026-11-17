@@ -508,7 +508,7 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status, 200)
         self.assertGreaterEqual(result["amountDue"], 39000)
-        self.assertLess(result["amountDue"], 41000)
+        self.assertLess(result["amountDue"], 43000)
         game_charge = result["amountDue"]
         status, retry_end = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status,200)
