@@ -505,9 +505,21 @@ class Handler(SimpleHTTPRequestHandler):
         token = header[7:].strip()
         if len(token) < 32: return None
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        row = db.execute("""SELECT u.*,s.expires_at FROM sessions s
+        now = int(time.time())
+        row = db.execute("""SELECT u.*,s.expires_at,s.created_at AS session_created_at FROM sessions s
             JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.active=1""",
-            (token_hash, int(time.time()))).fetchone()
+            (token_hash, now)).fetchone()
+        if not row:
+            return None
+        # Expiry in the database is the idle deadline; created_at is the hard lifetime.
+        if now - row["session_created_at"] >= SESSION_SECONDS:
+            db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
+            db.commit()
+            return None
+        refreshed_expiry = min(row["session_created_at"] + SESSION_SECONDS, now + 30 * 60)
+        if refreshed_expiry - row["expires_at"] >= 60:
+            db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (refreshed_expiry, token_hash))
+            db.commit()
         return row
 
     def do_GET(self):
@@ -1828,10 +1840,10 @@ class Handler(SimpleHTTPRequestHandler):
             (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 9)""",
             (user_id,user_id))
         db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
-                   (hashlib.sha256(token.encode()).hexdigest(), user_id, now + SESSION_SECONDS, now))
+                   (hashlib.sha256(token.encode()).hexdigest(), user_id, now + 30 * 60, now))
         db.commit()
         row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        return self.send_json(200, {"token": token, "expiresAt": now + SESSION_SECONDS, "user": public_user(row)})
+        return self.send_json(200, {"token": token, "expiresAt": now + 30 * 60, "user": public_user(row)})
 
     def log_error(self, message, *args):
         rendered = message % args if args else message

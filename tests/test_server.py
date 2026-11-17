@@ -671,6 +671,47 @@ class ApiIntegrationTests(unittest.TestCase):
                 urllib.request.urlopen(self.base + path, timeout=5)
             self.assertEqual(caught.exception.code, 404)
 
+    def test_session_idle_expiry_and_absolute_lifetime(self):
+        # Use an isolated database so this security test cannot contaminate
+        # the shared integration fixtures or depend on test execution order.
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "session-test.sqlite3"
+        try:
+            status, result = self.request("POST", "/api/setup", {
+                "businessName": "Session Test Shop", "username": "session-owner",
+                "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            token = result["token"]
+            token_hash = server.hashlib.sha256(token.encode()).hexdigest()
+            db = server.connect()
+            try:
+                now = int(server.time.time())
+                db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (now - 1, token_hash))
+                db.commit()
+            finally:
+                db.close()
+            status, _ = self.request("GET", "/api/me", token=token)
+            self.assertEqual(status, 401)
+
+            status, result = self.request("POST", "/api/login", {
+                "username": "session-owner", "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            token = result["token"]
+            token_hash = server.hashlib.sha256(token.encode()).hexdigest()
+            db = server.connect()
+            try:
+                db.execute("UPDATE sessions SET created_at=? WHERE token_hash=?",
+                           (int(server.time.time()) - server.SESSION_SECONDS - 1, token_hash))
+                db.commit()
+            finally:
+                db.close()
+            status, _ = self.request("GET", "/api/me", token=token)
+            self.assertEqual(status, 401)
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_password_hash_is_salted_and_verified(self):
         encoded = server.password_hash("a-long-test-password")
         self.assertTrue(server.verify_password("a-long-test-password", encoded))
