@@ -1034,8 +1034,22 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertTrue(retry_cancel["duplicate"])
         status, missing_cancel = self.request("POST", "/api/gamenet/reservations/not-found/cancel", {}, token)
         self.assertEqual(status,404)
+        # Include non-empty license state so backup/restore exercises its FK order.
+        db=server.connect()
+        try:
+            backup_tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
+            db.execute("""INSERT INTO licenses(id,tenant_id,code_hash,plan,expires_at,activated_at,status)
+                VALUES(?,?,?,?,?,?,?)""",("backup-license-test",backup_tenant_id,"backup-license-hash-test",
+                "test",int(time.time())+86400,int(time.time()),"active"))
+            db.execute("""INSERT INTO tenant_modules(tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+                VALUES(?,?,?,?,?,?)""",(backup_tenant_id,"backup-test",1,None,"backup-license-test",int(time.time())))
+            db.commit()
+        finally:
+            db.close()
         status, snapshot = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
+        self.assertTrue(any(row["id"]=="backup-license-test" for row in snapshot["tables"]["licenses"]))
+        self.assertTrue(any(row["module_key"]=="backup-test" for row in snapshot["tables"]["tenant_modules"]))
         self.assertIn("licenses",snapshot["tables"])
         self.assertIn("tenant_modules",snapshot["tables"])
         altered = json.loads(json.dumps(snapshot))
@@ -1094,6 +1108,14 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/backup/restore", snapshot, token)
         self.assertEqual(status, 200)
         self.assertGreater(result["restoredRows"], 0)
+        db=server.connect()
+        try:
+            self.assertIsNotNone(db.execute("SELECT 1 FROM licenses WHERE id=? AND tenant_id=?",
+                ("backup-license-test",backup_tenant_id)).fetchone())
+            self.assertIsNotNone(db.execute("SELECT 1 FROM tenant_modules WHERE tenant_id=? AND module_key=?",
+                (backup_tenant_id,"backup-test")).fetchone())
+        finally:
+            db.close()
         status, restored_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
         self.assertEqual(status,200)
         self.assertEqual(restored_loyalty["balance"],0)
