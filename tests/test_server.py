@@ -1066,6 +1066,15 @@ class ApiIntegrationTests(unittest.TestCase):
             status, order = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,201)
             self.assertEqual(order["total"],250)
+            # Customer profiles are mutable; a retry must remain idempotent even
+            # if the customer record changes after the original order was accepted.
+            db=server.connect()
+            try:
+                db.execute("UPDATE customers SET full_name=?,phone=? WHERE phone=?",
+                           ("Updated Profile","+49123456780","+49123456789"))
+                db.commit()
+            finally:
+                db.close()
             status, duplicate = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,200)
             self.assertTrue(duplicate["duplicate"])
