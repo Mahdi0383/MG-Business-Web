@@ -29,7 +29,7 @@ try {
   await page.locator('#transactionForm input[name="title"]').fill("درآمد آزمون مرورگر");
   await page.locator('#transactionForm input[name="amount"]').fill("25000");
   await page.locator('#transactionForm select[name="kind"]').selectOption("income");
-  await page.locator('#transactionForm button[type="submit"]').click();
+  await page.locator("#transactionForm button.primary").click();
   await page.locator("#modal").waitFor({ state: "hidden" });
   await page.locator("#transactions").getByText("درآمد آزمون مرورگر", { exact: true }).waitFor({ state: "visible" });
 
