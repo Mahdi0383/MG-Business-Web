@@ -33,13 +33,15 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
         if not host:
             errors.append("MG_HOST must not be empty.")
 
-    public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
-    valid_https_url = public_url.scheme == "https" and bool(public_url.hostname) and not public_url.username and not public_url.password and not public_url.fragment
-    if valid_https_url:
-        try:
+    try:
+        public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
+        valid_https_url = (public_url.scheme == "https" and bool(public_url.hostname)
+                           and not public_url.username and not public_url.password
+                           and not public_url.fragment)
+        if valid_https_url:
             valid_https_url = public_url.port is None or 1 <= public_url.port <= 65535
-        except ValueError:
-            valid_https_url = False
+    except ValueError:
+        valid_https_url = False
     if public_bind and not valid_https_url:
         errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with a valid https:// URL.")
     if environment == "production":
@@ -59,10 +61,12 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
     for name, path in resolved.items():
         if path == root or root in path.parents:
             errors.append(f"{name} must be outside the public application directory.")
-    if resolved["MG_BACKUP_DIR"] == resolved["MG_DB_PATH"]:
-        errors.append("MG_BACKUP_DIR must not be the database file.")
+    if resolved["MG_BACKUP_DIR"] == resolved["MG_DB_PATH"] or resolved["MG_BACKUP_DIR"] in resolved["MG_DB_PATH"].parents:
+        errors.append("MG_BACKUP_DIR must not contain or replace the live database file.")
     if resolved["MG_BACKUP_DIR"] == resolved["MG_DATA_DIR"]:
         errors.append("MG_BACKUP_DIR must be a dedicated subdirectory, not MG_DATA_DIR itself.")
+    if resolved["MG_DB_PATH"] == resolved["MG_DATA_DIR"]:
+        errors.append("MG_DB_PATH must identify a database file inside or outside MG_DATA_DIR, not the data directory itself.")
 
     try:
         interval = int(env.get("MG_BACKUP_INTERVAL_HOURS", "24"))
