@@ -1396,8 +1396,9 @@ class Handler(SimpleHTTPRequestHandler):
                         remember_login_failure(key, ip, now)
                     return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
                 with LOGIN_LOCK:
+                    # A successful login for one account must not erase failures
+                    # accumulated against other accounts from the same source IP.
                     LOGIN_FAILURES.pop(key, None)
-                    LOGIN_IP_FAILURES.pop(ip, None)
                 return self.create_session(db, user["id"])
             if path == "/api/public/orders":
                 ip = self.client_ip()
