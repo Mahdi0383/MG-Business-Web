@@ -31,6 +31,13 @@ class ProductionDeploymentAssetTests(unittest.TestCase):
         ):
             self.assertIn(directive, unit)
 
+    def test_systemd_startup_runs_preflight_before_server(self):
+        unit = (ROOT / "deploy/systemd/mg-business.service").read_text(encoding="utf-8")
+        startup = (ROOT / "deploy/systemd/start.sh").read_text(encoding="utf-8")
+        self.assertIn("ExecStart=/bin/sh /opt/mg-business/deploy/systemd/start.sh", unit)
+        self.assertLess(startup.index("deployment_preflight.py --production"),
+                        startup.index("exec /usr/bin/python3 server.py"))
+
     def test_production_environment_template_keeps_backend_private(self):
         env = (ROOT / "deploy/systemd/mg-business.env.example").read_text(encoding="utf-8")
         self.assertIn("MG_ENV=production", env)
