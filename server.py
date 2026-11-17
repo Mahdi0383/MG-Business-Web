@@ -1299,7 +1299,7 @@ class Handler(SimpleHTTPRequestHandler):
                     COALESCE(SUM(l.credit),0) AS credit
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
                     LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
-                    WHERE a.tenant_id=? AND a.active=1 AND (? IS NULL OR e.entry_date<=?)
+                    WHERE a.tenant_id=? AND a.active=1 AND (l.id IS NULL OR ? IS NULL OR e.entry_date<=?)
                     GROUP BY a.id ORDER BY a.code""",(user["tenant_id"],as_of,as_of)).fetchall()
                 items = [dict(row) for row in rows]
                 return self.send_json(200, {"items":items,"asOfDate":as_of,
@@ -1318,7 +1318,7 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.tenant_id=a.tenant_id
                     LEFT JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
                     WHERE a.tenant_id=? AND a.active=1 AND a.account_type IN ('asset','liability','equity')
-                      AND (? IS NULL OR e.entry_date<=?)
+                      AND (l.id IS NULL OR ? IS NULL OR e.entry_date<=?)
                     GROUP BY a.id ORDER BY a.code""",(user["tenant_id"],as_of,as_of)).fetchall()
                 items = [dict(row) for row in rows]
                 assets = sum(x["debit"]-x["credit"] for x in items if x["accountType"]=="asset")
