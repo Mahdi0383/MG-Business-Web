@@ -1157,6 +1157,10 @@ class ApiIntegrationTests(unittest.TestCase):
             status, duplicate = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,200)
             self.assertTrue(duplicate["duplicate"])
+            # Keep the independent unavailable-stock assertion isolated from
+            # the public endpoint's per-IP abuse throttle.
+            with server.LOGIN_LOCK:
+                server.PUBLIC_ORDER_FAILURES.pop("127.0.0.1",None)
             unavailable=dict(payload)
             unavailable["clientOrderId"]="public-addon-order-02"
             status, result = self.request("POST","/api/public/orders",unavailable)
