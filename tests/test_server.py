@@ -932,6 +932,32 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(card_retry["duplicate"])
         self.assertEqual(card_retry["paymentMethod"],"card")
+        # An ended GameNet session cannot report a successful retry after its journal is damaged.
+        db=server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            entry_id=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                AND source_type='transaction' AND source_id='game-session-card'""",(tenant_id,)).fetchone()["id"]
+            saved_game_lines=[dict(row) for row in db.execute(
+                "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,entry_id))]
+            db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,entry_id))
+            db.commit()
+        finally:
+            db.close()
+        status, damaged_game_retry=self.request("POST","/api/gamenet/sessions/session-card/end",{
+            "paymentMethod":"card"
+        },token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(saved_game_lines[0])
+            placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in saved_game_lines])
+            db.commit()
+        finally:
+            db.close()
         status, customers_after_card = self.request("GET","/api/customers",token=token)
         self.assertEqual(next(x for x in customers_after_card["items"] if x["id"]=="customer-1")["balance"],35000+game_charge)
         db=server.connect()
