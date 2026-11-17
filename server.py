@@ -32,6 +32,7 @@ LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
+BACKUP_MAX_ROWS = 500000
 
 def remember_login_failure(key, ip, now):
     LOGIN_FAILURES.setdefault(key, []).append(now)
@@ -619,6 +620,12 @@ class Handler(SimpleHTTPRequestHandler):
                     "gamenet_reservations": "SELECT * FROM gamenet_reservations WHERE tenant_id=?",
                     "audit_log": "SELECT * FROM audit_log WHERE tenant_id=?"
                 }
+                total_rows = sum(db.execute(
+                    "SELECT COUNT(*) FROM " + name + " WHERE tenant_id=?", (tenant_id,)
+                ).fetchone()[0] for name in tables)
+                if total_rows > BACKUP_MAX_ROWS:
+                    db.rollback()
+                    return self.send_json(413, {"error":"حجم اطلاعات فضای کاری از سقف خروجی پشتیبان بیشتر است؛ از پشتیبان‌گیری محلی پایگاه داده استفاده کنید."})
                 snapshot = {"schema":"mg-business-server-backup","version":1,
                             "exportedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
                             "tenant":dict(db.execute("SELECT id,name,created_at FROM tenants WHERE id=?",(tenant_id,)).fetchone()),
