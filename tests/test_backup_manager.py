@@ -101,6 +101,8 @@ class BackupManagerTests(unittest.TestCase):
             raw = snapshot.read_bytes()
             self.assertNotIn(b"SQLite format 3", raw)
             self.assertNotIn(b"confidential backup payload", raw)
+            self.assertFalse(list(backup_dir.glob("*.plain.tmp")))
+            self.assertFalse(list(backup_dir.glob("*.tmp")))
 
             restored = root / "restored.sqlite3"
             with self.assertRaises(ValueError):
