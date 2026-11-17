@@ -2824,6 +2824,12 @@ class ApiIntegrationTests(unittest.TestCase):
             legacy_v2["tables"].pop("cash_register_shifts")
             for journal in legacy_v2["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
+            status,legacy_active_restore=self.request("POST","/api/backup/restore",legacy_v2,owner)
+            self.assertEqual(status,409,"legacy v2 restore must not replace journal rows while a cash shift is active")
+            status,closed_for_legacy=self.request("POST",f"/api/cash-register/shifts/{active_shift['id']}/close",{
+                "countedCash":2300},owner)
+            self.assertEqual(status,200)
+            self.assertEqual(closed_for_legacy["difference"],0)
             status,legacy_restore=self.request("POST","/api/backup/restore",legacy_v2,owner)
             self.assertEqual(status,200)
             status,preserved=self.request("GET","/api/cash-register/shifts",token=owner)
