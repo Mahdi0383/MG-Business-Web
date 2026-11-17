@@ -2607,10 +2607,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 {"code":"12A4","name":"Invalid code","accountType":"asset"},
                 {"code":"1400","name":"Invalid type","accountType":"other"},
                 {"code":"1500","name":"Invalid balance","accountType":"asset","normalBalance":"credit"},
-                {"code":"1600","name":"Invalid name","accountType":"asset"},
+                {"code":"1600","name":"","accountType":"asset"},
             ):
-                if "normalBalance" in invalid:
-                    invalid["accountType"]="unknown"
                 status,_=self.request("POST","/api/accounting/accounts",invalid,owner)
                 self.assertEqual(status,400)
             status,refreshed=self.request("GET","/api/accounting/accounts",token=owner)
