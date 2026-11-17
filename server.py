@@ -1435,6 +1435,35 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path.startswith("/api/accounting/accounts/"):
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند سرفصل حساب را غیرفعال کند."})
+                account_id=path.rsplit("/",1)[-1]
+                if not account_id or len(account_id)>100:
+                    return self.send_json(404,{"error":"سرفصل حساب پیدا نشد."})
+                db.execute("BEGIN IMMEDIATE")
+                account=db.execute("SELECT id,code,active FROM accounts WHERE id=? AND tenant_id=?",
+                    (account_id,user["tenant_id"])).fetchone()
+                if not account or not account["active"]:
+                    db.rollback()
+                    return self.send_json(404,{"error":"سرفصل حساب فعال پیدا نشد."})
+                used=db.execute("""SELECT 1 FROM journal_lines
+                    WHERE tenant_id=? AND account_id=? LIMIT 1""",
+                    (user["tenant_id"],account_id)).fetchone()
+                if used:
+                    db.rollback()
+                    return self.send_json(409,{"error":"این سرفصل در اسناد حسابداری استفاده شده و قابل غیرفعال‌سازی نیست."})
+                changed=db.execute("UPDATE accounts SET active=0 WHERE id=? AND tenant_id=? AND active=1",
+                    (account_id,user["tenant_id"])).rowcount
+                if changed!=1:
+                    db.rollback()
+                    return self.send_json(409,{"error":"وضعیت سرفصل هم‌زمان تغییر کرده است؛ دوباره تلاش کنید."})
+                audit(db,user["tenant_id"],user["id"],"account.deactivated","account",account_id,
+                    {"code":account["code"]})
+                db.commit()
+                return self.send_json(200,{"ok":True,"deactivated":True})
             if path.startswith("/api/gamenet/devices/"):
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
