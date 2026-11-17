@@ -26,7 +26,6 @@ class BackupManagerTests(unittest.TestCase):
             db.execute("INSERT INTO records(value) VALUES('third record')")
             db.commit()
             third = create_snapshot(database, backup_dir, retention=2)
-            self.assertTrue(verify_snapshot(third))
             db.close()
 
             self.assertTrue(third.is_file())
@@ -63,6 +62,7 @@ class BackupManagerTests(unittest.TestCase):
             db.commit()
             db.close()
             snapshot = create_snapshot(database, backup_dir, retention=5)
+            self.assertTrue(verify_snapshot(snapshot))
 
             db = sqlite3.connect(database)
             db.execute("INSERT INTO records(value) VALUES('after snapshot')")
