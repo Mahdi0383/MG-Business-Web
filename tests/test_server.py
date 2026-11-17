@@ -308,6 +308,16 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        db=server.connect()
+        try:
+            allocated=db.execute("""SELECT SUM(discount_amount) AS discount,
+                SUM(line_total-discount_amount) AS net
+                FROM order_items WHERE tenant_id=? AND order_id=?""",
+                (result["tenantId"],"order-test-1")).fetchone()
+            self.assertEqual(allocated["discount"],5000)
+            self.assertEqual(allocated["net"],165000)
+        finally:
+            db.close()
         status, loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
         self.assertEqual(status,200)
         self.assertEqual(loyalty["balance"],2)
