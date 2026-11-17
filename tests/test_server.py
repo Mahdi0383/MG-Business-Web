@@ -1290,6 +1290,28 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(any(row["id"]=="backup-license-test" for row in snapshot["tables"]["licenses"]))
         self.assertTrue(any(row["username"]=="backup-preserved-user" for row in snapshot["tables"]["users"]))
+        # A snapshot containing a running GameNet session is unsafe to restore.
+        running_snapshot = json.loads(json.dumps(snapshot))
+        running_snapshot["tables"]["game_sessions"][0]["status"] = "running"
+        status, running_result = self.request("POST", "/api/backup/restore", running_snapshot, token)
+        self.assertEqual(status, 409)
+        self.assertIn("نشست‌های فعال", running_result["error"])
+        # Live sessions must also be closed before restore, even with a clean snapshot.
+        db=server.connect()
+        try:
+            db.execute("UPDATE game_sessions SET status='running' WHERE id='session-01'")
+            db.commit()
+        finally:
+            db.close()
+        status, live_result = self.request("POST", "/api/backup/restore", snapshot, token)
+        self.assertEqual(status, 409)
+        self.assertIn("نشست فعال", live_result["error"])
+        db=server.connect()
+        try:
+            db.execute("UPDATE game_sessions SET status='ended' WHERE id='session-01'")
+            db.commit()
+        finally:
+            db.close()
         # Restore must not roll back current credentials, roles, or account activation.
         status, changed_backup_user = self.request("POST","/api/users/"+backup_user["id"]+"/role",{"role":"cashier"},token)
         self.assertEqual(status,200)
