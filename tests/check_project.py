@@ -155,6 +155,14 @@ if "reservationForm" not in app or "data-reservation-cancel" not in app:
     raise SystemExit("GameNet reservation management UI is missing")
 if "duplicate" not in server or "mg-business.pending-order" not in app:
     raise SystemExit("POS order retry idempotency is missing")
+if 'id="accountingDateFilter"' not in app or 'id="reportsDateFilter"' not in app:
+    raise SystemExit("Accounting and management report date filters are missing")
+if "accountingReportQuery()" not in app or "reportsDateQuery()" not in app:
+    raise SystemExit("Report date filters must be passed to the financial API endpoints")
+if "data-clear-accounting-dates" not in app or "data-clear-reports-dates" not in app:
+    raise SystemExit("Report date filters must provide a way to restore all-time reporting")
+if "تاریخ شروع نمی‌تواند بعد از تاریخ پایان باشد." not in app:
+    raise SystemExit("Report date filters must reject reversed date ranges before requesting data")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
