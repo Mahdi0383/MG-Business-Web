@@ -157,6 +157,10 @@ if "duplicate" not in server or "mg-business.pending-order" not in app:
     raise SystemExit("POS order retry idempotency is missing")
 if 'id="accountingDateFilter"' not in app or 'id="reportsDateFilter"' not in app:
     raise SystemExit("Accounting and management report date filters are missing")
+if "apiRequest('/api/accounting/journal'+accountingReportQuery())" not in app:
+    raise SystemExit("The general ledger journal must follow the accounting report date range")
+if "day>=accountingFromDate" not in app or "day<=accountingToDate" not in app:
+    raise SystemExit("The transaction ledger list must follow the accounting report date range")
 if "accountingReportQuery()" not in app or "reportsDateQuery()" not in app:
     raise SystemExit("Report date filters must be passed to the financial API endpoints")
 if "data-clear-accounting-dates" not in app or "data-clear-reports-dates" not in app:
