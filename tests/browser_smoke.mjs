@@ -116,7 +116,9 @@ try {
   const startSessionBody = await startSessionResponse.json();
   assert.equal(startSessionResponse.status(), 201, "GameNet session start response: " + JSON.stringify(startSessionBody));
   const activeDeviceCard = page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" });
-  await activeDeviceCard.locator(".game-adjust-form").waitFor({ state: "visible" });
+  const gameAdjustForm = activeDeviceCard.locator(".game-adjust-form");
+  await gameAdjustForm.locator("xpath=..").locator("summary").click();
+  await gameAdjustForm.waitFor({ state: "visible" });
   await activeDeviceCard.locator('.game-adjust-form select[name="deviceId"]').selectOption({ label: "E2E-PC-01" });
   await activeDeviceCard.locator('.game-adjust-form input[name="playersCount"]').fill("2");
   const adjustSessionPromise = page.waitForResponse(response =>
