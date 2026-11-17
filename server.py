@@ -2434,6 +2434,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if current + delta < 0:
                     db.rollback()
                     return self.send_json(409, {"error": "موجودی کافی نیست؛ موجودی فعلی: %s" % current})
+                if current + delta > 9007199254740991:
+                    db.rollback()
+                    return self.send_json(409, {"error": "موجودی نهایی از محدوده عددی مجاز بیشتر است."})
                 now = int(time.time())
                 db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,user["tenant_id"],product_id,user["id"],movement_type,delta,unit_cost,note,now))
