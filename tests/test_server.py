@@ -1112,8 +1112,8 @@ class ApiIntegrationTests(unittest.TestCase):
             # through the role editor; the endpoint should leave the stored role intact.
             db=server.connect()
             try:
-                db.execute("UPDATE users SET active=0 WHERE id=? AND tenant_id=?",
-                           (cashier["id"],setup["user"]["tenantId"]))
+                db.execute("UPDATE users SET active=0 WHERE id=?",
+                           (cashier["id"],))
                 db.commit()
             finally:
                 db.close()
