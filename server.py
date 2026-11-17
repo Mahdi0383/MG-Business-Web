@@ -2974,7 +2974,10 @@ class Handler(SimpleHTTPRequestHandler):
                 code=data.get("code"); name=data.get("name"); account_type=data.get("accountType")
                 if "normalBalance" in data:
                     return self.send_json(400,{"error":"ماهیت حساب بر اساس نوع حساب تعیین می‌شود و قابل ارسال جداگانه نیست."})
-                if not isinstance(code,str) or not re.fullmatch(r"[0-9]{4,12}",code.strip()):
+                if not isinstance(code,str):
+                    return self.send_json(400,{"error":"کد حساب باید ۴ تا ۱۲ رقم باشد."})
+                code=code.strip().translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩","01234567890123456789"))
+                if not re.fullmatch(r"[0-9]{4,12}",code):
                     return self.send_json(400,{"error":"کد حساب باید ۴ تا ۱۲ رقم باشد."})
                 if not isinstance(name,str) or not 1<=len(name.strip())<=120:
                     return self.send_json(400,{"error":"نام حساب معتبر نیست."})
