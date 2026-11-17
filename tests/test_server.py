@@ -1305,6 +1305,39 @@ class ApiIntegrationTests(unittest.TestCase):
                 urllib.request.urlopen(self.base + path, timeout=5)
             self.assertEqual(caught.exception.code, 404)
 
+    def test_successful_login_does_not_clear_ip_wide_failures(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "login-throttle-test.sqlite3"
+        ip = "127.0.0.1"
+        with server.LOGIN_LOCK:
+            original_user = server.LOGIN_FAILURES.copy()
+            original_ip = server.LOGIN_IP_FAILURES.copy()
+            server.LOGIN_FAILURES.clear()
+            server.LOGIN_IP_FAILURES.clear()
+            server.LOGIN_FAILURES[(ip, "other-account")] = [int(server.time.time())]
+            server.LOGIN_IP_FAILURES[ip] = [int(server.time.time())]
+        try:
+            status, _ = self.request("POST", "/api/setup", {
+                "businessName": "Throttle Test Shop", "username": "throttle-owner",
+                "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            status, _ = self.request("POST", "/api/login", {
+                "username": "throttle-owner", "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            with server.LOGIN_LOCK:
+                self.assertIn(ip, server.LOGIN_IP_FAILURES)
+                self.assertEqual(server.LOGIN_FAILURES.get((ip, "other-account")), [server.LOGIN_IP_FAILURES[ip][0]])
+                self.assertNotIn((ip, "throttle-owner"), server.LOGIN_FAILURES)
+        finally:
+            with server.LOGIN_LOCK:
+                server.LOGIN_FAILURES.clear()
+                server.LOGIN_FAILURES.update(original_user)
+                server.LOGIN_IP_FAILURES.clear()
+                server.LOGIN_IP_FAILURES.update(original_ip)
+            server.DB_PATH = original_db_path
+
     def test_session_idle_expiry_and_absolute_lifetime(self):
         # Use an isolated database so this security test cannot contaminate
         # the shared integration fixtures or depend on test execution order.
