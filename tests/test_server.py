@@ -900,6 +900,10 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/gamenet/sessions/session-free/end", {}, token)
         self.assertEqual(status, 200)
         self.assertEqual(result["amountDue"], 0)
+        status, free_retry = self.request("POST", "/api/gamenet/sessions/session-free/end", {}, token)
+        self.assertEqual(status,200)
+        self.assertTrue(free_retry["duplicate"])
+        self.assertEqual(free_retry["amountDue"],0)
         status, result = self.request("POST", "/api/gamenet/devices", {
             "id":"pc-card","name":"Card PC","deviceType":"pc","hourlyRate":120000,"isFree":False
         },token)
