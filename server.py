@@ -55,6 +55,31 @@ def remember_public_order_attempt(ip, now):
         PUBLIC_ORDER_FAILURES.pop(next(iter(PUBLIC_ORDER_FAILURES)))
     return True
 
+def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normalized_lines):
+    existing=db.execute("""SELECT id,order_number,total,customer_id,status FROM orders
+        WHERE id=? AND tenant_id=?""",(order_id,tenant_id)).fetchone()
+    if not existing:
+        return None
+    if existing["status"] != "paid":
+        return False
+    customer=db.execute("SELECT full_name,phone FROM customers WHERE id=? AND tenant_id=?",
+                        (existing["customer_id"],tenant_id)).fetchone()
+    if not customer or customer["full_name"] != customer_name or customer["phone"] != phone:
+        return False
+    old_items={}
+    for row in db.execute("SELECT product_id,quantity,addons_json FROM order_items WHERE tenant_id=? AND order_id=?",
+                          (tenant_id,order_id)).fetchall():
+        try:
+            saved=json.loads(row["addons_json"] or "[]")
+            addon_ids=tuple(sorted(item["id"] for item in saved if isinstance(item,dict) and isinstance(item.get("id"),str)))
+        except (TypeError,ValueError):
+            addon_ids=()
+        key=(row["product_id"],addon_ids)
+        old_items[key]=old_items.get(key,0)+row["quantity"]
+    if old_items != normalized_lines:
+        return False
+    return {"orderNumber":existing["order_number"],"total":existing["total"]}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tenants(
@@ -615,7 +640,15 @@ class Handler(SimpleHTTPRequestHandler):
                     ON m.product_id=p.id AND m.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? AND p.active=1 GROUP BY p.id ORDER BY p.category,p.name""",
                     (tenant["id"],)).fetchall()
-                return self.send_json(200, {"businessName":tenant["name"],"items":[dict(row) for row in rows if row["available"]>0]})
+                items=[dict(row) for row in rows if row["available"]>0]
+                addon_rows=db.execute("""SELECT id,product_id AS productId,name,price FROM product_addons
+                    WHERE tenant_id=? AND active=1 ORDER BY name""",(tenant["id"],)).fetchall()
+                addons_by_product={}
+                for addon in addon_rows:
+                    addons_by_product.setdefault(addon["productId"],[]).append(dict(addon))
+                for item in items:
+                    item["addons"]=addons_by_product.get(item["id"],[])
+                return self.send_json(200, {"businessName":tenant["name"],"items":items})
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
             if path == "/api/me":
@@ -1108,7 +1141,7 @@ class Handler(SimpleHTTPRequestHandler):
                     LOGIN_IP_FAILURES.pop(ip, None)
                 return self.create_session(db, user["id"])
             if path == "/api/public/orders":
-                ip = self.client_address[0]
+                ip = self.client_ip()
                 now = time.time()
                 with LOGIN_LOCK:
                     if not remember_public_order_attempt(ip, now):
@@ -1121,11 +1154,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "شماره تماس معتبر نیست."})
                 if not isinstance(items,list) or not 1 <= len(items) <= 30:
                     return self.send_json(400, {"error": "سفارش باید حداقل یک قلم و حداکثر ۳۰ قلم داشته باشد."})
-                normalized = {}
+                normalized, normalized_lines = {}, {}
                 for line in items:
                     if not isinstance(line,dict) or not isinstance(line.get("productId"),str) or type(line.get("quantity")) is not int or not 1 <= line["quantity"] <= 30:
                         return self.send_json(400, {"error": "قلم سفارش معتبر نیست."})
-                    normalized[line["productId"]] = normalized.get(line["productId"],0)+line["quantity"]
+                    addon_ids=line.get("addons",[])
+                    if (not isinstance(addon_ids,list) or len(addon_ids)>20
+                            or any(not isinstance(addon_id,str) or not 1<=len(addon_id)<=100 for addon_id in addon_ids)
+                            or len(set(addon_ids))!=len(addon_ids)):
+                        return self.send_json(400,{"error":"فهرست افزودنی‌های سفارش آنلاین معتبر نیست."})
+                    key=(line["productId"],tuple(sorted(addon_ids)))
+                    normalized_lines[key]=normalized_lines.get(key,0)+line["quantity"]
+                    normalized[line["productId"]]=normalized.get(line["productId"],0)+line["quantity"]
                 tenants = db.execute("SELECT id FROM tenants ORDER BY created_at LIMIT 2").fetchall()
                 if len(tenants) > 1:
                     return self.send_json(409, {"error": "برای پذیرش سفارش چند کسب‌وکار، ابتدا دامنه اختصاصی هر کسب‌وکار را پیکربندی کنید."})
@@ -1137,10 +1177,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if client_order_id is not None and (not isinstance(client_order_id,str) or not 8 <= len(client_order_id) <= 100):
                     return self.send_json(400, {"error": "شناسه سفارش آنلاین معتبر نیست."})
                 if client_order_id:
-                    existing_order = db.execute("SELECT id,order_number AS orderNumber,total FROM orders WHERE id=? AND tenant_id=?",
-                                                 ("public-"+client_order_id,tenant_id)).fetchone()
-                    if existing_order:
-                        return self.send_json(200, {"ok":True,"orderNumber":existing_order["orderNumber"],"total":existing_order["total"],"duplicate":True})
+                    duplicate=public_order_duplicate(db,"public-"+client_order_id,tenant_id,name.strip(),phone.strip(),normalized_lines)
+                    if duplicate is False:
+                        return self.send_json(409,{"error":"شناسه سفارش آنلاین قبلاً با اطلاعات متفاوتی استفاده شده است."})
+                    if duplicate:
+                        return self.send_json(200,{"ok":True,"orderNumber":duplicate["orderNumber"],"total":duplicate["total"],"duplicate":True})
                 actor = db.execute("SELECT id FROM users WHERE tenant_id=? AND active=1 ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1",
                                    (tenant_id,)).fetchone()
                 if not actor:
@@ -1148,18 +1189,20 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("BEGIN IMMEDIATE")
                 # Recheck idempotency under the write lock to serialize concurrent retries.
                 if client_order_id:
-                    existing_order = db.execute("SELECT id,order_number AS orderNumber,total FROM orders WHERE id=? AND tenant_id=?",
-                                                 ("public-"+client_order_id,tenant_id)).fetchone()
-                    if existing_order:
+                    duplicate=public_order_duplicate(db,"public-"+client_order_id,tenant_id,name.strip(),phone.strip(),normalized_lines)
+                    if duplicate is False:
                         db.rollback()
-                        return self.send_json(200, {"ok":True,"orderNumber":existing_order["orderNumber"],"total":existing_order["total"],"duplicate":True})
+                        return self.send_json(409,{"error":"شناسه سفارش آنلاین قبلاً با اطلاعات متفاوتی استفاده شده است."})
+                    if duplicate:
+                        db.rollback()
+                        return self.send_json(200,{"ok":True,"orderNumber":duplicate["orderNumber"],"total":duplicate["total"],"duplicate":True})
                 customer = db.execute("SELECT id FROM customers WHERE tenant_id=? AND phone=?",
                                       (tenant_id,phone.strip())).fetchone()
                 customer_id = customer["id"] if customer else secrets.token_urlsafe(18)
                 if not customer:
                     db.execute("""INSERT INTO customers(id,tenant_id,full_name,phone,created_at,updated_at)
                         VALUES(?,?,?,?,?,?)""", (customer_id,tenant_id,name.strip(),phone.strip(),int(now),int(now)))
-                products, subtotal, cogs_total = {}, 0, 0
+                products, subtotal, cogs_total, order_lines = {}, 0, 0, []
                 for product_id,quantity in normalized.items():
                     product = db.execute("SELECT id,name,sell_price,cost_price FROM products WHERE id=? AND tenant_id=? AND active=1",
                                          (product_id,tenant_id)).fetchone()
@@ -1174,14 +1217,30 @@ class Handler(SimpleHTTPRequestHandler):
                         db.rollback()
                         return self.send_json(409, {"error": "موجودی کالای %s کافی نیست." % product["name"]})
                     average_cost = max(0,stock["stock_value"]//stock["quantity"]) if stock["quantity"] else product["cost_price"]
-                    line_total = product["sell_price"]*quantity
                     line_cost = average_cost*quantity
-                    if subtotal+line_total > 9007199254740991 or cogs_total+line_cost > 9007199254740991:
+                    if cogs_total+line_cost > 9007199254740991:
                         db.rollback()
-                        return self.send_json(400, {"error": "مبلغ سفارش بیش از حد مجاز است."})
-                    subtotal += line_total
+                        return self.send_json(400, {"error": "بهای تمام‌شده سفارش بیش از حد مجاز است."})
                     cogs_total += line_cost
-                    products[product_id]=(product,quantity,line_total,average_cost)
+                    products[product_id]=(product,quantity,average_cost)
+                for (product_id,addon_ids),quantity in normalized_lines.items():
+                    product=products[product_id][0]
+                    addon_rows=[]
+                    if addon_ids:
+                        placeholders=",".join("?" for _ in addon_ids)
+                        addon_rows=db.execute("SELECT id,name,price FROM product_addons WHERE tenant_id=? AND product_id=? AND active=1 AND id IN ("+placeholders+")",
+                                              (tenant_id,product_id,*addon_ids)).fetchall()
+                        if len(addon_rows)!=len(addon_ids):
+                            db.rollback()
+                            return self.send_json(409,{"error":"یکی از افزودنی‌های انتخاب‌شده دیگر فعال یا معتبر نیست."})
+                    addon_snapshot=[{"id":row["id"],"name":row["name"],"price":row["price"]} for row in addon_rows]
+                    unit_price=product["sell_price"]+sum(row["price"] for row in addon_rows)
+                    line_total=unit_price*quantity
+                    if subtotal+line_total>9007199254740991:
+                        db.rollback()
+                        return self.send_json(400,{"error":"مبلغ سفارش بیش از حد مجاز است."})
+                    subtotal+=line_total
+                    order_lines.append((product_id,product,quantity,unit_price,products[product_id][2],line_total,addon_snapshot))
                 if subtotal <= 0:
                     db.rollback()
                     return self.send_json(400, {"error": "مبلغ سفارش معتبر نیست."})
@@ -1191,9 +1250,10 @@ class Handler(SimpleHTTPRequestHandler):
                     VALUES(?,?,?,?,?,'paid',?,0,?,'credit',?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created))
                 db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                     VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),tenant_id,customer_id,actor["id"],"order",order_id,subtotal,"سفارش آنلاین "+order_number,created))
-                for product_id,(product,quantity,line_total,average_cost) in products.items():
-                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total)
-                        VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),tenant_id,order_id,product_id,product["name"],quantity,product["sell_price"],average_cost,line_total))
+                for product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot in order_lines:
+                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total,addons_json)
+                        VALUES(?,?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),tenant_id,order_id,product_id,product["name"],quantity,unit_price,average_cost,line_total,json.dumps(addon_snapshot,ensure_ascii=False,separators=(",",":"))))
+                for product_id,(product,quantity,average_cost) in products.items():
                     movement_id=secrets.token_urlsafe(16)
                     db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                         VALUES(?,?,?,?,?,?,?,?,?)""", (movement_id,tenant_id,product_id,actor["id"],"sale",-quantity,average_cost,"سفارش آنلاین "+order_number,created))
@@ -1204,7 +1264,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,'income','سفارش آنلاین',?,?)""", (tx_id,tenant_id,actor["id"],title,subtotal,occurred_at,created))
                 post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100")
-                audit(db,tenant_id,actor["id"],"online_order.created","order",order_id,{"total":subtotal,"items":len(products)})
+                audit(db,tenant_id,actor["id"],"online_order.created","order",order_id,{"total":subtotal,"items":len(order_lines)})
                 db.commit()
                 return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
             user = self.authenticate(db)

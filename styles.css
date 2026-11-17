@@ -55,3 +55,10 @@
 .productAddonEditForm input{min-width:90px;max-width:150px;padding:8px}
 .module-table-row.movements [data-addon-deactivate]{white-space:nowrap}
 @media(max-width:700px){.addon-options-list{display:grid;grid-template-columns:1fr}.productAddonEditForm input{max-width:100%;min-width:0;width:100%}}
+
+.public-addons{display:flex!important;flex-direction:column;align-items:stretch!important;gap:8px;padding:9px;border-top:1px solid #2c3d58;background:#101d30;border-radius:9px}
+.public-addons>small{font-size:10px;color:#91a2b9}
+.public-addons label{display:flex;align-items:center;justify-content:flex-start;gap:7px;font-size:10px;cursor:pointer}
+.public-addons input{width:auto;margin:0;accent-color:#60a5fa}
+.public-addons label b{margin-inline-start:auto;color:#73d8ad;white-space:nowrap}
+@media(max-width:600px){.public-addons{padding:7px}.public-addons label{font-size:9px}}

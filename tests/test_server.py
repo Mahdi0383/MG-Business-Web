@@ -690,6 +690,78 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
+    def test_public_orders_support_addons_and_reject_reused_ids_with_changed_content(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "public-addons-test.sqlite3"
+        with server.LOGIN_LOCK:
+            server.PUBLIC_ORDER_FAILURES.pop("127.0.0.1",None)
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName":"Online Addon Cafe","username":"online-addon-owner",
+                "password":"online-addon-owner-password-2026"
+            })
+            self.assertEqual(status,200)
+            token=setup["token"]
+            code=make_license(["cafe","inventory","accounting"],"public-addon-license")
+            status, _ = self.request("POST","/api/licenses/activate",{"code":code},token)
+            self.assertEqual(status,200)
+            status, product = self.request("POST","/api/products",{
+                "id":"public-addon-product","name":"Latte","sellPrice":100,"costPrice":30
+            },token)
+            self.assertEqual(status,201)
+            db=server.connect()
+            try:
+                tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='online-addon-owner'").fetchone()[0]
+                db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,
+                    quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    ("public-addon-stock",tenant_id,"public-addon-product",setup["user"]["id"],"purchase",4,30,"opening",int(time.time())))
+                db.commit()
+            finally:
+                db.close()
+            status, addon = self.request("POST","/api/product-addons",{
+                "id":"public-addon-01","productId":"public-addon-product","name":"Oat milk","price":25
+            },token)
+            self.assertEqual(status,201)
+            status, menu = self.request("GET","/api/public/menu")
+            self.assertEqual(status,200)
+            menu_product=next(x for x in menu["items"] if x["id"]=="public-addon-product")
+            self.assertEqual(menu_product["addons"],[{"id":"public-addon-01","productId":"public-addon-product","name":"Oat milk","price":25}])
+            payload={
+                "clientOrderId":"public-addon-order-01","customerName":"Online Guest",
+                "phone":"+49123456789",
+                "items":[{"productId":"public-addon-product","quantity":2,"addons":["public-addon-01"]}]
+            }
+            status, order = self.request("POST","/api/public/orders",payload)
+            self.assertEqual(status,201)
+            self.assertEqual(order["total"],250)
+            status, duplicate = self.request("POST","/api/public/orders",payload)
+            self.assertEqual(status,200)
+            self.assertTrue(duplicate["duplicate"])
+            changed=dict(payload)
+            changed["items"]=[{"productId":"public-addon-product","quantity":2}]
+            status, conflict = self.request("POST","/api/public/orders",changed)
+            self.assertEqual(status,409)
+            db=server.connect()
+            try:
+                item=db.execute("SELECT unit_price,line_total,addons_json FROM order_items WHERE order_id='public-public-addon-order-01'").fetchone()
+                self.assertEqual((item["unit_price"],item["line_total"]),(125,250))
+                self.assertEqual(json.loads(item["addons_json"]),[{"id":"public-addon-01","name":"Oat milk","price":25}])
+            finally:
+                db.close()
+            status, removed = self.request("DELETE","/api/product-addons/public-addon-01",token=token)
+            self.assertEqual(status,200)
+            status, duplicate = self.request("POST","/api/public/orders",payload)
+            self.assertEqual(status,200)
+            self.assertTrue(duplicate["duplicate"])
+            unavailable=dict(payload)
+            unavailable["clientOrderId"]="public-addon-order-02"
+            status, result = self.request("POST","/api/public/orders",unavailable)
+            self.assertEqual(status,409)
+        finally:
+            server.DB_PATH=original_db_path
+            with server.LOGIN_LOCK:
+                server.PUBLIC_ORDER_FAILURES.pop("127.0.0.1",None)
+
     def test_cafe_product_addons_are_priced_snapshotted_and_idempotent(self):
         original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp.name) / "product-addons-test.sqlite3"
