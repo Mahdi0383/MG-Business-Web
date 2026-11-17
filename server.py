@@ -1888,15 +1888,21 @@ class Handler(SimpleHTTPRequestHandler):
                     ORDER BY started_at DESC LIMIT 1""",(user["tenant_id"],session_id)).fetchone()
                 if not active_segment:
                     db.rollback(); return self.send_json(409, {"error":"بخش فعال صورتحساب نشست پیدا نشد."})
-                db.execute("UPDATE game_session_segments SET ended_at=? WHERE id=? AND ended_at IS NULL",
-                    (max(now,session["started_at"]),active_segment["id"]))
+                segment_closed=db.execute("UPDATE game_session_segments SET ended_at=? WHERE id=? AND tenant_id=? AND session_id=? AND ended_at IS NULL",
+                    (max(now,session["started_at"]),active_segment["id"],user["tenant_id"],session_id)).rowcount
+                if segment_closed != 1:
+                    db.rollback()
+                    return self.send_json(409, {"error":"بخش فعال نشست هم‌زمان تغییر کرده است؛ دوباره تلاش کنید."})
                 db.execute("""INSERT INTO game_session_segments
                     (id,tenant_id,session_id,device_id,started_at,players_count,rate_per_hour,is_free)
                     VALUES(?,?,?,?,?,?,?,?)""",
                     (secrets.token_urlsafe(18),user["tenant_id"],session_id,target_id,now,players,rate,int(free)))
-                db.execute("""UPDATE game_sessions SET device_id=?,players_count=?,rate_per_hour=?,is_free=?
+                session_changed=db.execute("""UPDATE game_sessions SET device_id=?,players_count=?,rate_per_hour=?,is_free=?
                     WHERE id=? AND tenant_id=? AND status='running'""",
-                    (target_id,players,rate,int(free),session_id,user["tenant_id"]))
+                    (target_id,players,rate,int(free),session_id,user["tenant_id"])).rowcount
+                if session_changed != 1:
+                    db.rollback()
+                    return self.send_json(409, {"error":"وضعیت نشست هم‌زمان تغییر کرده است؛ دوباره تلاش کنید."})
                 audit(db,user["tenant_id"],user["id"],"gamenet.session.adjusted","game_session",session_id,
                     {"deviceId":target_id,"playersCount":players,"ratePerHour":rate,"isFree":bool(free)})
                 db.commit()
