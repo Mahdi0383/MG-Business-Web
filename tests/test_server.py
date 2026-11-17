@@ -2425,5 +2425,94 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+
+    def test_cashier_manager_owner_permission_matrix_for_inventory_and_users(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "role-matrix-inventory.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Role Matrix",
+                "username": "matrix-owner",
+                "password": "matrix-owner-password-2026"
+            })
+            self.assertEqual(status, 200)
+            owner_token = setup["token"]
+
+            created_tokens = {}
+            for role in ("manager", "cashier"):
+                status, created = self.request("POST", "/api/users", {
+                    "username": "matrix-" + role,
+                    "password": "matrix-" + role + "-password-2026",
+                    "role": role
+                }, owner_token)
+                self.assertEqual(status, 201)
+                status, login = self.request("POST", "/api/login", {
+                    "username": "matrix-" + role,
+                    "password": "matrix-" + role + "-password-2026"
+                })
+                self.assertEqual(status, 200)
+                created_tokens[role] = login["token"]
+
+            # Cashiers may use operational screens but cannot change master data,
+            # stock valuation, supplier liabilities, or user administration.
+            denied = [
+                ("POST", "/api/products", {"name": "Cashier product", "sellPrice": 100}),
+                ("POST", "/api/product-addons", {"productId": "missing", "name": "Cashier addon", "price": 10}),
+                ("POST", "/api/suppliers", {"name": "Cashier supplier"}),
+                ("POST", "/api/purchase-invoices", {"supplierId": "missing", "invoiceNumber": "C-1",
+                    "invoiceDate": "2026-11-17", "items": [{"productId": "missing", "quantity": 1, "unitCost": 100}]}),
+                ("POST", "/api/inventory/movements", {"productId": "missing", "quantityDelta": 1,
+                    "movementType": "purchase", "unitCost": 100}),
+                ("POST", "/api/users", {"username": "cashier-created-user",
+                    "password": "cashier-created-password-2026", "role": "viewer"})
+            ]
+            for method, path, payload in denied:
+                with self.subTest(role="cashier", path=path):
+                    status, result = self.request(method, path, payload, created_tokens["cashier"])
+                    self.assertEqual(status, 403)
+                    self.assertIn("error", result)
+
+            # Managers can administer inventory and suppliers, but user creation
+            # remains an owner-only operation.
+            status, product = self.request("POST", "/api/products", {
+                "id": "manager-created-product", "name": "Manager product",
+                "sellPrice": 2500, "costPrice": 1000
+            }, created_tokens["manager"])
+            self.assertEqual(status, 201)
+            status, supplier = self.request("POST", "/api/suppliers", {
+                "id": "manager-created-supplier", "name": "Manager supplier"
+            }, created_tokens["manager"])
+            self.assertEqual(status, 201)
+            status, movement = self.request("POST", "/api/inventory/movements", {
+                "id": "manager-stock-receipt", "productId": product["id"],
+                "quantityDelta": 5, "movementType": "purchase", "unitCost": 1000
+            }, created_tokens["manager"])
+            self.assertEqual(status, 201)
+
+            status, denied_user = self.request("POST", "/api/users", {
+                "username": "manager-created-user",
+                "password": "manager-created-password-2026", "role": "viewer"
+            }, created_tokens["manager"])
+            self.assertEqual(status, 403)
+            self.assertIn("error", denied_user)
+
+            status, stock = self.request("GET", "/api/inventory", token=created_tokens["cashier"])
+            self.assertEqual(status, 200)
+            self.assertEqual(next(item for item in stock["items"] if item["productId"] == product["id"])["quantity"], 5)
+
+            db = server.connect()
+            try:
+                tenant_id = setup["user"]["tenantId"]
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM products WHERE tenant_id=? AND name='Cashier product'",
+                    (tenant_id,)).fetchone()[0], 0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM suppliers WHERE tenant_id=? AND name='Cashier supplier'",
+                    (tenant_id,)).fetchone()[0], 0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM users WHERE tenant_id=? AND username='manager-created-user'",
+                    (tenant_id,)).fetchone()[0], 0)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
 if __name__ == "__main__":
     unittest.main()
