@@ -333,6 +333,18 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(account_ledger["closingBalance"], 150000)
         self.assertEqual(len(account_ledger["items"]), 1)
         self.assertEqual(account_ledger["items"][0]["runningBalance"], 150000)
+        status, unbounded_account_ledger = self.request("GET",
+            "/api/accounting/account-ledger?accountId="+cash_account["id"], token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(unbounded_account_ledger["openingBalance"], 0)
+        self.assertEqual(unbounded_account_ledger["periodDebit"], 150000)
+        self.assertEqual(unbounded_account_ledger["closingBalance"], 150000)
+        status, upper_bounded_account_ledger = self.request("GET",
+            "/api/accounting/account-ledger?accountId="+cash_account["id"]+
+            "&toDate=2026-11-16", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(upper_bounded_account_ledger["openingBalance"], 0)
+        self.assertEqual(upper_bounded_account_ledger["closingBalance"], 150000)
         status, missing_account_ledger = self.request("GET", "/api/accounting/account-ledger", token=token)
         self.assertEqual(status, 400)
         status, unknown_account_ledger = self.request("GET",
