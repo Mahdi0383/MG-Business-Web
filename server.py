@@ -2524,10 +2524,35 @@ class Handler(SimpleHTTPRequestHandler):
                         (user["tenant_id"],existing["id"])).fetchall()
                     requested_items=sorted((product["id"],qty,cost) for product,qty,cost,line in prepared)
                     stored_items=[(row["product_id"],row["quantity"],row["unit_cost"]) for row in existing_items]
+                    movement_rows=db.execute("""SELECT id,product_id,quantity_delta,unit_cost FROM inventory_movements
+                        WHERE tenant_id=? AND movement_type='purchase' AND note=?""",
+                        (user["tenant_id"],"فاکتور خرید "+number.strip())).fetchall()
+                    stored_movements=sorted((row["product_id"],row["quantity_delta"],row["unit_cost"]) for row in movement_rows)
+                    movement_journals_valid=True
+                    for movement in movement_rows:
+                        amount=movement["quantity_delta"]*movement["unit_cost"]
+                        entries=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                            AND source_type='inventory_movement' AND source_id=?""",
+                            (user["tenant_id"],movement["id"])).fetchall()
+                        if amount==0:
+                            if entries: movement_journals_valid=False
+                            continue
+                        if len(entries)!=1:
+                            movement_journals_valid=False
+                            continue
+                        lines=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_lines l
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            WHERE l.tenant_id=? AND l.entry_id=?""",
+                            (user["tenant_id"],entries[0]["id"])).fetchall()
+                        if not (len(lines)==2 and
+                            any(row["code"]=="1200" and row["debit"]==amount and row["credit"]==0 for row in lines) and
+                            any(row["code"]=="2000" and row["debit"]==0 and row["credit"]==amount for row in lines)):
+                            movement_journals_valid=False
                     if (existing["id"]==invoice_id and existing["supplier_id"]==sid and
                         existing["invoice_number"]==number.strip() and existing["invoice_date"]==inv_date and
                         existing["subtotal"]==subtotal and existing["discount"]==discount and
-                        existing["total"]==total and stored_items==requested_items):
+                        existing["total"]==total and stored_items==requested_items and
+                        stored_movements==requested_items and movement_journals_valid):
                         db.commit()
                         return self.send_json(200,{"id":invoice_id,"total":total,
                             "paidAmount":existing["paid_amount"],"status":existing["status"],"duplicate":True})
