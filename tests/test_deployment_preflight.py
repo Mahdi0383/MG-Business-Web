@@ -56,6 +56,26 @@ class DeploymentPreflightTests(unittest.TestCase):
         }
         self.assertEqual(validate_config(env, ROOT), [])
 
+    def test_unknown_environment_cannot_bypass_production_checks(self):
+        errors = validate_config({
+            "MG_ENV": "prod",
+            "MG_HOST": "127.0.0.1",
+        }, ROOT)
+        self.assertTrue(any("MG_ENV must be one of" in error for error in errors))
+
+    def test_public_https_url_rejects_credentials_and_invalid_ports(self):
+        for url in ("https://user:password@business.example.com",
+                    "https://business.example.com:99999",
+                    "https://business.example.com#fragment"):
+            errors = validate_config({
+                "MG_HOST": "0.0.0.0",
+                "MG_PUBLIC_URL": url,
+                "MG_DATA_DIR": "/var/lib/mg-business",
+                "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
+                "MG_BACKUP_DIR": "/var/backups/mg-business",
+            }, ROOT)
+            self.assertTrue(any("valid https://" in error for error in errors), url)
+
     def test_web_root_database_is_rejected(self):
         errors = validate_config({"MG_DB_PATH": str(ROOT / "database.sqlite3")}, ROOT)
         self.assertTrue(any("MG_DB_PATH" in error for error in errors))
