@@ -943,7 +943,7 @@ class ApiIntegrationTests(unittest.TestCase):
         invalid_sql_value = json.loads(json.dumps(snapshot))
         invalid_sql_value["tables"]["products"][0]["sell_price"] = {"unexpected": "object"}
         status, result = self.request("POST", "/api/backup/restore", invalid_sql_value, token)
-        self.assertEqual(status, 409)
+        self.assertEqual(status, 400)
         self.assertIn("نوع نامعتبر", result["error"])
         # A failed restore must leave the pre-restore workspace intact.
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
