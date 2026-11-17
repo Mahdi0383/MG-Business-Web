@@ -1027,6 +1027,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "gamenet_reservations": "SELECT * FROM gamenet_reservations WHERE tenant_id=?",
                     "licenses": "SELECT * FROM licenses WHERE tenant_id=?",
                     "tenant_modules": "SELECT * FROM tenant_modules WHERE tenant_id=?",
+                    "accounting_periods": "SELECT * FROM accounting_periods WHERE tenant_id=?",
                     "audit_log": "SELECT * FROM audit_log WHERE tenant_id=?"
                 }
                 total_rows = sum(db.execute(
@@ -2006,7 +2007,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
                 allowed = ("users","accounts","products","product_addons","customers","customer_ledger","loyalty_programs","customer_loyalty_ledger","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","suppliers","purchase_invoices","purchase_invoice_items","supplier_payments",
-                           "orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","audit_log")
+                           "orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","accounting_periods","audit_log")
                 # A restore replaces the complete workspace dataset. Missing tables
                 # must never be interpreted as empty lists, or a partial/corrupt
                 # snapshot could silently erase otherwise valid business data.
@@ -2086,12 +2087,12 @@ class Handler(SimpleHTTPRequestHandler):
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("tenant_modules","licenses","gamenet_reservations","game_session_segments","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
                                     "inventory_movements","journal_lines","journal_entries","transactions","customer_loyalty_ledger","loyalty_programs","customer_ledger",
-                                    "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
+                                    "product_addons","products","customers","suppliers","game_devices","accounting_periods","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
                     insert_order = ("accounts","products","product_addons","customers","loyalty_programs","customer_loyalty_ledger","customer_ledger","suppliers","game_devices","transactions",
                                     "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
-                                    "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","audit_log")
+                                    "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","accounting_periods","audit_log")
                     for name in insert_order:
                         records = tables.get(name,[])
                         if name == "journal_entries":
