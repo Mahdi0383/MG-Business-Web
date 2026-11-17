@@ -1604,10 +1604,13 @@ class ApiIntegrationTests(unittest.TestCase):
             status,foreign=self.request("POST","/api/users/foreign-role-user/role",
                                         {"role":"viewer"},owner_token)
             self.assertEqual(status,404)
+            status,foreign_deactivation=self.request("DELETE","/api/users/foreign-role-user",token=owner_token)
+            self.assertEqual(status,404)
             db=server.connect()
             try:
-                foreign_role=db.execute("SELECT role FROM users WHERE id='foreign-role-user'").fetchone()[0]
-                self.assertEqual(foreign_role,"manager")
+                foreign_user=db.execute("SELECT role,active FROM users WHERE id='foreign-role-user'").fetchone()
+                self.assertEqual(foreign_user["role"],"manager")
+                self.assertEqual(foreign_user["active"],1)
             finally:
                 db.close()
             status,audit=self.request("GET","/api/audit-log",token=owner_token)
