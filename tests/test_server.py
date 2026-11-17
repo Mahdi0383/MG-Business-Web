@@ -295,6 +295,46 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             db.close()
 
+        # Exercise the expense-side idempotency mapping and damaged-journal rejection.
+        expense_payload={
+            "id":"tx-expense-retry","title":"Utilities","amount":25000,
+            "kind":"expense","category":"Utilities","createdAt":"2026-11-16T13:00:00.000Z"
+        }
+        status, expense_created=self.request("POST","/api/transactions",expense_payload,token)
+        self.assertEqual(status,201)
+        status, expense_duplicate=self.request("POST","/api/transactions",expense_payload,token)
+        self.assertEqual(status,200)
+        self.assertTrue(expense_duplicate["duplicate"])
+        db=server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            journal_id=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                AND source_type='transaction' AND source_id='tx-expense-retry'""",(tenant_id,)).fetchone()["id"]
+            saved_expense_lines=[dict(row) for row in db.execute(
+                "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
+            ).fetchall()]
+            db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
+            db.commit()
+        finally:
+            db.close()
+        status, damaged_expense_retry=self.request("POST","/api/transactions",expense_payload,token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(saved_expense_lines[0])
+            placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in saved_expense_lines])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.commit()
+        finally:
+            db.close()
+        status, expense_report=self.request("GET","/api/accounting/profit-loss",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(expense_report["expenses"],25000)
+
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-bad", "title": "Invalid amount", "amount": True,
             "kind": "income", "createdAt": "2026-11-16T12:00:00Z"
