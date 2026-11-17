@@ -40,6 +40,10 @@ if "data-game-segments" not in js or "/api/gamenet/sessions/" not in js:
     raise SystemExit("GameNet billing segment history UI is missing")
 if "game-payment-method" not in js or "paymentMethod" not in server:
     raise SystemExit("GameNet settlement payment-method UI/API is missing")
+if "allocate_proportional_discount" not in server or "discount_amount" not in server:
+    raise SystemExit("Order discounts must be allocated to product lines for net sales reports")
+if "SUM(i.line_total-i.discount_amount)" not in server:
+    raise SystemExit("Product sales reports must use net line revenue")
 if "def log_error(self, message, *args):" not in server:
     raise SystemExit("HTTP handler must safely format standard-library error log arguments")
 if 'resolved.name in ("server.py","license_tool.py","backup_manager.py","README.md")' not in server:

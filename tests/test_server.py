@@ -27,6 +27,17 @@ def make_license(modules, license_id):
 
 
 class ApiIntegrationTests(unittest.TestCase):
+    def test_order_discount_allocator_is_exact_and_deterministic(self):
+        items=[("line-a",233333),("line-b",186666)]
+        shares=server.allocate_proportional_discount(items,30001)
+        self.assertEqual(sum(shares.values()),30001)
+        self.assertEqual(shares,server.allocate_proportional_discount(items,30001))
+        with self.assertRaises(ValueError):
+            server.allocate_proportional_discount([("line-a",100)],100)
+        with self.assertRaises(ValueError):
+            server.allocate_proportional_discount([("line-a",100)],-1)
+
+
     @classmethod
     def setUpClass(cls):
         os.environ['MG_LICENSE_SECRET'] = 'integration-test-secret-which-is-long-enough-123456'
@@ -314,8 +325,15 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(daily_best["items"]),1)
         self.assertEqual(daily_best["items"][0]["productId"],"product-1")
         self.assertEqual(daily_best["items"][0]["quantity"],2)
-        self.assertEqual(daily_best["items"][0]["revenue"],170000)  # Product line revenue is before invoice-level discount allocation.
+        self.assertEqual(daily_best["items"][0]["revenue"],165000)  # Net of the order-level discount allocated to this line.
         self.assertEqual(daily_best["items"][0]["orderCount"],1)
+        status, sales_by_product = self.request("GET","/api/reports/sales-by-product",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(sales_by_product["items"][0]["revenue"],165000)
+        status, order_detail = self.request("GET","/api/orders/order-test-1",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(order_detail["items"][0]["discountAmount"],5000)
+        self.assertEqual(order_detail["items"][0]["lineTotal"]-order_detail["items"][0]["discountAmount"],165000)
         status, duplicate_order = self.request("POST", "/api/orders", {
             "id":"order-test-1","customerId":"customer-1","discount":5000,
             "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]
@@ -817,6 +835,17 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertEqual(restored_loyalty["balance"],0)
         self.assertEqual(len(restored_loyalty["items"]),2)
+        status, restored_order_detail = self.request("GET","/api/orders/order-test-1",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(restored_order_detail["items"][0]["discountAmount"],5000)
+        legacy_snapshot=json.loads(json.dumps(snapshot))
+        for item in legacy_snapshot["tables"]["order_items"]:
+            item.pop("discount_amount",None)
+        status, legacy_restore = self.request("POST","/api/backup/restore",legacy_snapshot,token)
+        self.assertEqual(status,200)
+        status, legacy_restored_order = self.request("GET","/api/orders/order-test-1",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(legacy_restored_order["items"][0]["discountAmount"],5000)
         db = server.connect()
         try:
             journal_id = db.execute("SELECT id FROM journal_entries LIMIT 1").fetchone()[0]
