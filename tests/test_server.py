@@ -894,6 +894,7 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["schema"], "mg-business-server-backup")
+        self.assertEqual(result["version"], 2)
         self.assertIn("transactions", result["tables"])
         self.assertIn("suppliers", result["tables"])
         self.assertIn("purchase_invoices", result["tables"])
@@ -2800,6 +2801,16 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             self.assertEqual(len(periods_after_restore["items"]),2)
             self.assertEqual({item["startDate"] for item in periods_after_restore["items"]},{yesterday,today})
+
+            legacy_snapshot=json.loads(json.dumps(snapshot))
+            legacy_snapshot["version"]=1
+            legacy_snapshot["tables"].pop("accounting_periods")
+            status,legacy_restored=self.request("POST","/api/backup/restore",legacy_snapshot,owner)
+            self.assertEqual(status,200)
+            status,periods_after_legacy_restore=self.request("GET","/api/accounting/periods",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(periods_after_legacy_restore["items"]),2,
+                "legacy v1 restores must preserve current period locks absent from the old format")
         finally:
             server.DB_PATH=original_db_path
 
