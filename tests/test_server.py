@@ -447,6 +447,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn("purchase_invoices", result["tables"])
         self.assertIn("supplier_payments", result["tables"])
         self.assertIn("gamenet_reservations", result["tables"])
+        self.assertIn("game_session_segments", result["tables"])
         self.assertNotIn("password_hash", result["tables"]["users"][0])
 
         status, result = self.request("POST", "/api/gamenet/devices", {
@@ -470,20 +471,40 @@ class ApiIntegrationTests(unittest.TestCase):
             "id": "session-02", "deviceId": "pc-01", "playersCount": 1
         }, token)
         self.assertEqual(status, 409)
+        status, result = self.request("POST", "/api/gamenet/devices", {
+            "id":"pc-02","name":"PC-02","deviceType":"pc","hourlyRate":180000,"isFree":False
+        }, token)
+        self.assertEqual(status,201)
         status, result = self.request("POST", "/api/gamenet/devices/pc-01", {
             "name": "PC-01 Updated", "deviceType": "pc", "hourlyRate": 130000, "isFree": False
         }, token)
         self.assertEqual(status, 200)
         db = server.connect()
         try:
-            db.execute("UPDATE game_sessions SET started_at=? WHERE id='session-01'", (int(__import__('time').time())-3600,))
+            old_start=int(__import__('time').time())-1200
+            db.execute("UPDATE game_sessions SET started_at=? WHERE id='session-01'", (old_start,))
+            db.execute("UPDATE game_session_segments SET started_at=? WHERE session_id='session-01'", (old_start,))
+            db.commit()
+        finally:
+            db.close()
+        status, moved = self.request("POST", "/api/gamenet/sessions/session-01/adjust", {
+            "deviceId":"pc-02","playersCount":3,"isFree":True
+        }, token)
+        self.assertEqual(status,200)
+        self.assertEqual(moved["deviceId"],"pc-02")
+        self.assertEqual(moved["playersCount"],3)
+        self.assertTrue(moved["isFree"])
+        db = server.connect()
+        try:
+            db.execute("UPDATE game_session_segments SET started_at=? WHERE session_id='session-01' AND ended_at IS NULL",
+                (int(__import__('time').time())-600,))
             db.commit()
         finally:
             db.close()
         status, result = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status, 200)
-        self.assertGreaterEqual(result["amountDue"], 120000)
-        self.assertLess(result["amountDue"], 130000)
+        self.assertGreaterEqual(result["amountDue"], 39000)
+        self.assertLess(result["amountDue"], 41000)
         game_charge = result["amountDue"]
         status, retry_end = self.request("POST", "/api/gamenet/sessions/session-01/end", {}, token)
         self.assertEqual(status,200)
@@ -496,6 +517,14 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["status"], "ended")
+        status, segments = self.request("GET","/api/gamenet/sessions/session-01/segments",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(len(segments["items"]),2)
+        self.assertEqual(segments["items"][0]["deviceId"],"pc-01")
+        self.assertEqual(segments["items"][1]["deviceId"],"pc-02")
+        self.assertEqual(segments["items"][0]["playersCount"],2)
+        self.assertEqual(segments["items"][1]["playersCount"],3)
+        self.assertTrue(segments["items"][1]["isFree"])
 
         status, result = self.request("POST", "/api/gamenet/devices", {
             "id": "pc-free", "name": "Free PC", "deviceType": "pc",
