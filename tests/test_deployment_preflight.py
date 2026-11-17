@@ -62,8 +62,24 @@ class DeploymentPreflightTests(unittest.TestCase):
             "MG_DATA_DIR": "/var/lib/mg-business",
             "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
             "MG_BACKUP_DIR": "/var/backups/mg-business",
+            "MG_TRUSTED_PROXIES": "127.0.0.1/32,::1/128",
         }
         self.assertEqual(validate_config(env, ROOT), [])
+
+    def test_production_requires_trusted_reverse_proxy_for_client_ip_limits(self):
+        env = {
+            "MG_ENV": "production",
+            "MG_LICENSE_SECRET": "production-secret-with-more-than-32-characters",
+            "MG_HOST": "127.0.0.1",
+            "MG_PUBLIC_URL": "https://business.example.com",
+            "MG_DATA_DIR": "/var/lib/mg-business",
+            "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
+            "MG_BACKUP_DIR": "/var/backups/mg-business",
+        }
+        errors = validate_config(env, ROOT)
+        self.assertTrue(any("MG_TRUSTED_PROXIES" in error for error in errors))
+        env["MG_TRUSTED_PROXIES"] = "127.0.0.1/32,::1/128"
+        self.assertFalse(any("MG_TRUSTED_PROXIES" in error for error in validate_config(env, ROOT)))
 
     def test_unknown_environment_cannot_bypass_production_checks(self):
         errors = validate_config({
