@@ -831,6 +831,14 @@ class ApiIntegrationTests(unittest.TestCase):
             "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
         }, token)
         self.assertEqual(status,201)
+        status, malformed_session = self.request("POST", "/api/gamenet/sessions", {
+            "id":"session-invalid-customer","deviceId":"pc-free","customerId":["customer-1"],"playersCount":1
+        },token)
+        self.assertEqual(status,400)
+        status, malformed_device = self.request("POST", "/api/gamenet/sessions", {
+            "id":"session-invalid-device","deviceId":"d"*101,"playersCount":1
+        },token)
+        self.assertEqual(status,400)
         status, retry_reservation = self.request("POST", "/api/gamenet/reservations", {
             "id":"reservation-01","deviceId":"pc-free","customerId":"customer-1",
             "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
