@@ -609,6 +609,9 @@ def seed_accounts(db, tenant_id):
                    (secrets.token_urlsafe(16),tenant_id,code,name,account_type,normal))
 
 def assert_accounting_period_open(db, tenant_id, entry_date):
+    # Serialize the guard with period closure so a posting cannot race the close.
+    if not db.in_transaction:
+        db.execute("BEGIN IMMEDIATE")
     if not isinstance(entry_date,str) or len(entry_date)!=10:
         raise sqlite3.IntegrityError("Accounting entry date is invalid.")
     try:
@@ -638,6 +641,8 @@ def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind,
                    (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
 
 def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost, note=''):
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
     amount = abs(quantity_delta) * unit_cost
     if amount <= 0:
         return
@@ -654,8 +659,6 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
         lines = ((accounts["1200"],amount,0),(accounts["4100"],0,amount))
     else:
         lines = ((accounts["5200"],amount,0),(accounts["1200"],0,amount))
-    entry_date=time.strftime("%Y-%m-%d")
-    assert_accounting_period_open(db,tenant_id,entry_date)
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"گردش انبار "+movement_id,
