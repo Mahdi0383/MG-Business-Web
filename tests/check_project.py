@@ -92,6 +92,8 @@ if '"duplicate":True' not in server or "reservation-cancel" not in (root / "test
     raise SystemExit("Game reservation cancellation must be retry-safe")
 if "def public_order_duplicate" not in server or 'item["addons"]=addons_by_product.get' not in server:
     raise SystemExit("Public order add-on snapshots and retry validation are missing")
+if "def public_order_fingerprint" not in server or "request_fingerprint" not in server or "version=13" not in server:
+    raise SystemExit("Public order retries must use a persisted canonical request fingerprint")
 if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
     raise SystemExit("Supplier account statement CSV export is missing")
 if "const safe=" not in app or "[=+@-]" not in app:
