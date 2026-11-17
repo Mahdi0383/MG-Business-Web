@@ -59,6 +59,12 @@ class ApiIntegrationTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def test_request_body_limit_is_small_except_for_backup_restore(self):
+        oversized = {"padding": "x" * (server.MAX_BODY + 1)}
+        status, result = self.request("POST", "/api/login", oversized)
+        self.assertEqual(status, 400)
+        self.assertIn("حجم درخواست", result["error"])
+
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
         tenant_ids = ("tenant-public-a", "tenant-public-b")
         db = server.connect()
