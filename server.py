@@ -1252,12 +1252,26 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                conditions = ["e.tenant_id=?"]
+                values = [user["tenant_id"]]
+                if "fromDate" in dates:
+                    conditions.append("e.entry_date>=?")
+                    values.append(time.strftime("%Y-%m-%d",dates["fromDate"]))
+                if "toDate" in dates:
+                    conditions.append("e.entry_date<=?")
+                    values.append(time.strftime("%Y-%m-%d",dates["toDate"]))
                 rows = db.execute("""SELECT e.id,e.entry_date AS entryDate,e.memo,e.source_type AS sourceType,
                     e.source_id AS sourceId,COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
                     FROM journal_entries e LEFT JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
-                    WHERE e.tenant_id=? GROUP BY e.id ORDER BY e.created_at DESC LIMIT 1000""",
-                    (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                    WHERE """+" AND ".join(conditions)+""" GROUP BY e.id ORDER BY e.created_at DESC LIMIT 1000""",
+                    values).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows],
+                    "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
+                    "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
             if path == "/api/accounting/profit-loss":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
