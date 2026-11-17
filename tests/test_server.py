@@ -828,6 +828,17 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertEqual(restored_loyalty["balance"],0)
         self.assertEqual(len(restored_loyalty["items"]),2)
+        status, restored_order_detail = self.request("GET","/api/orders/order-test-1",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(restored_order_detail["items"][0]["discountAmount"],5000)
+        legacy_snapshot=json.loads(json.dumps(snapshot))
+        for item in legacy_snapshot["tables"]["order_items"]:
+            item.pop("discount_amount",None)
+        status, legacy_restore = self.request("POST","/api/backup/restore",legacy_snapshot,token)
+        self.assertEqual(status,200)
+        status, legacy_restored_order = self.request("GET","/api/orders/order-test-1",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(legacy_restored_order["items"][0]["discountAmount"],5000)
         db = server.connect()
         try:
             journal_id = db.execute("SELECT id FROM journal_entries LIMIT 1").fetchone()[0]
