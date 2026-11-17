@@ -1058,6 +1058,51 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me", token=token)
         self.assertEqual(status, 401)
 
+    def test_owner_can_change_user_roles_and_revoke_existing_sessions(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"user-role-change.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Role Change","username":"role-owner",
+                "password":"role-owner-password-2026"
+            })
+            self.assertEqual(status,200)
+            owner_token=setup["token"]
+            status,manager=self.request("POST","/api/users",{
+                "username":"role-manager","password":"role-manager-password-2026","role":"manager"
+            },owner_token)
+            self.assertEqual(status,201)
+            status,cashier=self.request("POST","/api/users",{
+                "username":"role-cashier","password":"role-cashier-password-2026","role":"cashier"
+            },owner_token)
+            self.assertEqual(status,201)
+            status,manager_login=self.request("POST","/api/login",{
+                "username":"role-manager","password":"role-manager-password-2026"
+            })
+            self.assertEqual(status,200)
+            status,denied=self.request("POST",f"/api/users/{cashier['id']}/role",{"role":"viewer"},manager_login["token"])
+            self.assertEqual(status,403)
+            status,cashier_login=self.request("POST","/api/login",{
+                "username":"role-cashier","password":"role-cashier-password-2026"
+            })
+            self.assertEqual(status,200)
+            status,changed=self.request("POST",f"/api/users/{cashier['id']}/role",{"role":"viewer"},owner_token)
+            self.assertEqual(status,200)
+            self.assertTrue(changed["sessionsRevoked"])
+            status,old_session=self.request("GET","/api/me",token=cashier_login["token"])
+            self.assertEqual(status,401)
+            status,viewer_login=self.request("POST","/api/login",{
+                "username":"role-cashier","password":"role-cashier-password-2026"
+            })
+            self.assertEqual(status,200)
+            self.assertEqual(viewer_login["user"]["role"],"viewer")
+            status,denied_users=self.request("GET","/api/users",token=viewer_login["token"])
+            self.assertEqual(status,403)
+            status,invalid=self.request("POST",f"/api/users/{cashier['id']}/role",{"role":"owner"},owner_token)
+            self.assertEqual(status,400)
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_public_orders_support_addons_and_reject_reused_ids_with_changed_content(self):
         original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp.name) / "public-addons-test.sqlite3"
