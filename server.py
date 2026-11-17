@@ -2555,7 +2555,14 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("BEGIN IMMEDIATE")
                 inv=db.execute("SELECT * FROM purchase_invoices WHERE id=? AND tenant_id=?",(iid,user["tenant_id"])).fetchone()
                 if not inv: db.rollback(); return self.send_json(404,{"error":"فاکتور خرید پیدا نشد."})
-                existing=db.execute("SELECT invoice_id,amount,payment_method FROM supplier_payments WHERE id=? AND tenant_id=?",
+                payment_totals=db.execute("""SELECT COALESCE(SUM(amount),0) AS paid,COUNT(*) AS count
+                    FROM supplier_payments WHERE tenant_id=? AND invoice_id=? AND supplier_id=?""",
+                    (user["tenant_id"],iid,inv["supplier_id"])).fetchone()
+                expected_status="unpaid" if payment_totals["paid"]==0 else ("paid" if payment_totals["paid"]==inv["total"] else "partial")
+                if payment_totals["paid"]!=inv["paid_amount"] or inv["status"]!=expected_status or payment_totals["paid"]>inv["total"]:
+                    db.rollback()
+                    return self.send_json(409,{"error":"مانده و وضعیت فاکتور با سوابق پرداخت تأمین‌کننده سازگار نیست."})
+                existing=db.execute("SELECT invoice_id,supplier_id,amount,payment_method FROM supplier_payments WHERE id=? AND tenant_id=?",
                                     (payid,user["tenant_id"])).fetchone()
                 if existing:
                     journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
@@ -2563,12 +2570,15 @@ class Handler(SimpleHTTPRequestHandler):
                         JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                         WHERE e.tenant_id=? AND e.source_type='supplier_payment' AND e.source_id=?""",
                         (user["tenant_id"],payid)).fetchall()
+                    journal_entries=db.execute("""SELECT COUNT(*) AS count FROM journal_entries
+                        WHERE tenant_id=? AND source_type='supplier_payment' AND source_id=?""",
+                        (user["tenant_id"],payid)).fetchone()["count"]
                     expected_account={"cash":"1000","card":"1010","online":"1020"}[method]
-                    journal_matches=(len(journal_rows)==2 and
+                    journal_matches=(journal_entries==1 and len(journal_rows)==2 and
                         any(row["code"]==expected_account and row["debit"]==0 and row["credit"]==amount for row in journal_rows) and
                         any(row["code"]=="2000" and row["debit"]==amount and row["credit"]==0 for row in journal_rows))
-                    if (existing["invoice_id"]==iid and existing["amount"]==amount and
-                        existing["payment_method"]==method and journal_matches):
+                    if (existing["invoice_id"]==iid and existing["supplier_id"]==inv["supplier_id"] and
+                        existing["amount"]==amount and existing["payment_method"]==method and journal_matches):
                         db.commit()
                         return self.send_json(200,{"paymentId":payid,"paidAmount":inv["paid_amount"],
                             "remainingBalance":inv["total"]-inv["paid_amount"],"status":inv["status"],"duplicate":True})
