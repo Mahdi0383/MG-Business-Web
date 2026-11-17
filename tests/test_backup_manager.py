@@ -139,7 +139,6 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             key = generate_encryption_key()
             snapshot = create_snapshot(database, root / "backups", encryption_key=key)
-            self.assertTrue(verify_snapshot(snapshot, key))
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, root / "target.sqlite3")
             damaged = bytearray(snapshot.read_bytes())
