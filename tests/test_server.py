@@ -590,8 +590,15 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(trial["totalDebit"],trial["totalCredit"])
 
         # GameNet reservations prevent overlapping bookings and bind check-in to the reserved customer.
-        start_at=__import__("datetime").datetime.fromtimestamp(time.time()-10).strftime("%Y-%m-%dT%H:%M:%S")
-        end_at=__import__("datetime").datetime.fromtimestamp(time.time()+3600).strftime("%Y-%m-%dT%H:%M:%S")
+        datetime_module=__import__("datetime")
+        start_at=datetime_module.datetime.fromtimestamp(time.time()-10,datetime_module.timezone.utc).isoformat(timespec="seconds")
+        end_at=datetime_module.datetime.fromtimestamp(time.time()+3600,datetime_module.timezone.utc).isoformat(timespec="seconds")
+        naive_start=datetime_module.datetime.fromtimestamp(time.time()+7200).isoformat(timespec="seconds")
+        naive_end=datetime_module.datetime.fromtimestamp(time.time()+10800).isoformat(timespec="seconds")
+        status, invalid_timezone=self.request("POST","/api/gamenet/reservations",{
+            "id":"reservation-naive-time","deviceId":"pc-01","startsAt":naive_start,"endsAt":naive_end
+        },token)
+        self.assertEqual(status,400)
         status, reservation = self.request("POST", "/api/gamenet/reservations", {
             "id":"reservation-01","deviceId":"pc-free","customerId":"customer-1",
             "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
@@ -622,8 +629,8 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/gamenet/sessions/session-reserved/end", {}, token)
         self.assertEqual(status,200)
         self.assertEqual(result["amountDue"],0)
-        future_start=__import__("datetime").datetime.fromtimestamp(time.time()+7200).strftime("%Y-%m-%dT%H:%M")
-        future_end=__import__("datetime").datetime.fromtimestamp(time.time()+10800).strftime("%Y-%m-%dT%H:%M")
+        future_start=datetime_module.datetime.fromtimestamp(time.time()+7200,datetime_module.timezone.utc).isoformat(timespec="seconds")
+        future_end=datetime_module.datetime.fromtimestamp(time.time()+10800,datetime_module.timezone.utc).isoformat(timespec="seconds")
         status, result = self.request("POST", "/api/gamenet/reservations", {
             "id":"reservation-cancel","deviceId":"pc-01","startsAt":future_start,"endsAt":future_end
         }, token)
