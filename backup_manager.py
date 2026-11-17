@@ -8,6 +8,7 @@ import os
 import secrets
 import sqlite3
 import time
+import tempfile
 from pathlib import Path
 
 MAGIC = b"MGBK1"
@@ -200,6 +201,38 @@ def _validate_mg_database(connection: sqlite3.Connection) -> None:
         raise sqlite3.DatabaseError("Selected file has no applied MG Business schema migration.")
 
 
+def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | None = None) -> bool:
+    snapshot = Path(snapshot_path).expanduser().resolve()
+    key = decode_encryption_key(encryption_key)
+    if not snapshot.is_file():
+        raise FileNotFoundError("Selected MG snapshot does not exist.")
+    if _is_encrypted(snapshot):
+        if key is None:
+            raise ValueError("This backup is encrypted; set MG_BACKUP_ENCRYPTION_KEY to verify it.")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix="mg-backup-verify-", suffix=".sqlite3", dir=snapshot.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            _decrypt_file(snapshot, temporary, key)
+            check = sqlite3.connect(str(temporary), timeout=30)
+            try:
+                _validate_mg_database(check)
+            finally:
+                check.close()
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    else:
+        check = sqlite3.connect(str(snapshot), timeout=30)
+        try:
+            _validate_mg_database(check)
+        finally:
+            check.close()
+    return True
+
+
 def restore_snapshot(
     snapshot_path: str | Path,
     db_path: str | Path,
@@ -298,10 +331,14 @@ if __name__ == "__main__":
     parser.add_argument("--db", default=os.environ.get("MG_DB_PATH", str(Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).expanduser() / "mg-business.sqlite3")))
     parser.add_argument("--backup-dir", default=os.environ.get("MG_BACKUP_DIR", str(Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).expanduser() / "backups")))
     parser.add_argument("--restore", help="Path to a verified snapshot to restore; stop the MG server first.")
+    parser.add_argument("--verify", help="Authenticate and validate a snapshot without restoring it.")
     parser.add_argument("--retention", type=int, default=int(os.environ.get("MG_BACKUP_RETENTION", "14")))
     args = parser.parse_args()
     if args.generate_key:
         print(generate_encryption_key())
+    elif args.verify:
+        verify_snapshot(args.verify, os.environ.get("MG_BACKUP_ENCRYPTION_KEY"))
+        print("Verified MG database snapshot:", args.verify)
     elif args.restore:
         print("Restored database:", restore_snapshot(args.restore, args.db, args.backup_dir,
                                                      os.environ.get("MG_BACKUP_ENCRYPTION_KEY")))
