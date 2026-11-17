@@ -1527,6 +1527,8 @@ class Handler(SimpleHTTPRequestHandler):
                     if not isinstance(line,dict):
                         return self.send_json(400, {"error": "ردیف سند حسابداری در نسخه پشتیبان معتبر نیست."})
                     debit, credit, entry_id = line.get("debit"), line.get("credit"), line.get("entry_id")
+                    if not isinstance(entry_id,str) or not 1 <= len(entry_id) <= 100:
+                        return self.send_json(400, {"error": "شناسه سند در ردیف حسابداری نسخه پشتیبان معتبر نیست."})
                     if type(debit) is not int or type(credit) is not int or debit < 0 or credit < 0 or debit + credit <= 0:
                         return self.send_json(400, {"error": "مبالغ ردیف سند حسابداری در نسخه پشتیبان معتبر نیست."})
                     totals = journal_totals.setdefault(entry_id,[0,0])
@@ -1537,6 +1539,8 @@ class Handler(SimpleHTTPRequestHandler):
                     if not isinstance(entry,dict):
                         return self.send_json(400, {"error": "سند حسابداری در نسخه پشتیبان معتبر نیست."})
                     entry_id = entry.get("id")
+                    if not isinstance(entry_id,str) or not 1 <= len(entry_id) <= 100:
+                        return self.send_json(400, {"error": "شناسه سند حسابداری در نسخه پشتیبان معتبر نیست."})
                     totals = journal_totals.get(entry_id)
                     if not totals or journal_counts.get(entry_id,0) < 2 or totals[0] != totals[1]:
                         return self.send_json(400, {"error": "تراز یکی از اسناد حسابداری نسخه پشتیبان برقرار نیست."})
