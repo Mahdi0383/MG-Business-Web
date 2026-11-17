@@ -53,8 +53,10 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
     if public_bind and not valid_https_url:
         errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with a valid https:// URL.")
     if environment == "production":
-        if len(env.get("MG_LICENSE_SECRET", "")) < 32:
-            errors.append("Production requires MG_LICENSE_SECRET with at least 32 characters.")
+        license_secret = env.get("MG_LICENSE_SECRET", "").strip()
+        placeholder_secret = license_secret.lower().startswith(("replace_", "replace-", "change_me", "your_", "example"))
+        if len(license_secret) < 32 or placeholder_secret:
+            errors.append("Production requires a real MG_LICENSE_SECRET with at least 32 characters; template placeholders are not accepted.")
         if not valid_https_url:
             errors.append("Production requires MG_PUBLIC_URL with a valid https:// URL.")
         if public_bind:
