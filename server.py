@@ -1344,6 +1344,15 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as exc: return self.send_json(400, {"error": str(exc)})
         db = connect()
         try:
+            if path == "/api/logout":
+                user = self.authenticate(db)
+                if not user:
+                    return self.send_json(401, {"error": "نشست معتبر نیست یا منقضی شده است."})
+                token = self.headers.get("Authorization", "")[7:].strip()
+                db.execute("DELETE FROM sessions WHERE token_hash=?",
+                           (hashlib.sha256(token.encode()).hexdigest(),))
+                db.commit()
+                return self.send_json(200, {"ok": True})
             if path == "/api/setup":
                 tenant_name = str(data.get("businessName", "")).strip()
                 username = str(data.get("username", "")).strip()
@@ -1658,11 +1667,6 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(200, {"ok":True,"plan":license["plan"],"modules":sorted(entitlements),
                                             "expiresAt":license["expires_at"]})
-            if path == "/api/logout":
-                token = self.headers.get("Authorization", "")[7:].strip()
-                db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
-                db.commit()
-                return self.send_json(200, {"ok": True})
             if path == "/api/gamenet/devices":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
