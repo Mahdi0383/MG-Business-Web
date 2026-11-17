@@ -1932,14 +1932,32 @@ class Handler(SimpleHTTPRequestHandler):
                     line=qty*cost
                     if line>9007199254740991 or subtotal+line>9007199254740991: db.rollback(); return self.send_json(400,{"error":"مبلغ فاکتور بیش از حد مجاز است."})
                     subtotal+=line; prepared.append((product,qty,cost,line))
-                total_units=sum(row[1] for row in prepared)
-                if subtotal<=0 or discount>=subtotal or discount%total_units:
-                    db.rollback(); return self.send_json(400,{"error":"تخفیف باید کمتر از مبلغ فاکتور و قابل تقسیم بر تعداد کل واحدها باشد."})
-                discount_per_unit=discount//total_units
-                if any(row[2]<discount_per_unit for row in prepared):
-                    db.rollback(); return self.send_json(400,{"error":"تخفیف واحد نمی‌تواند از بهای خرید هیچ کالا بیشتر باشد."})
-                prepared=[(product,qty,cost-discount_per_unit,qty*(cost-discount_per_unit)) for product,qty,cost,line in prepared]
+                if subtotal<=0 or discount>=subtotal:
+                    db.rollback(); return self.send_json(400,{"error":"تخفیف باید کمتر از مبلغ فاکتور باشد."})
                 total=subtotal-discount
+                # Allocate the invoice discount proportionally by each line's gross value.
+                # Largest-remainder allocation preserves every toman without floating-point rounding.
+                allocations=[]; remainders=[]
+                for index,(product,qty,cost,line) in enumerate(prepared):
+                    allocated,remainder=divmod(line*discount,subtotal)
+                    allocations.append(allocated); remainders.append((remainder,index))
+                undistributed=discount-sum(allocations)
+                for remainder,index in sorted(remainders,key=lambda item:(item[0],-item[1]),reverse=True)[:undistributed]:
+                    allocations[index]+=1
+                adjusted=[]
+                for (product,qty,cost,line),line_discount in zip(prepared,allocations):
+                    per_unit_discount,discounted_units=divmod(line_discount,qty)
+                    regular_cost=cost-per_unit_discount
+                    if regular_cost<0 or (discounted_units and regular_cost==0):
+                        db.rollback(); return self.send_json(400,{"error":"تخفیف تخصیص‌یافته از بهای خرید اقلام بیشتر است."})
+                    regular_units=qty-discounted_units
+                    if regular_units:
+                        adjusted.append((product,regular_units,regular_cost,regular_units*regular_cost))
+                    if discounted_units:
+                        adjusted.append((product,discounted_units,regular_cost-1,discounted_units*(regular_cost-1)))
+                prepared=adjusted
+                if sum(row[3] for row in prepared)!=total:
+                    db.rollback(); return self.send_json(400,{"error":"تخصیص تخفیف فاکتور با جمع اقلام سازگار نیست."})
                 existing=db.execute("""SELECT * FROM purchase_invoices WHERE tenant_id=?
                     AND (id=? OR invoice_number=?)""",(user["tenant_id"],invoice_id,number.strip())).fetchone()
                 if existing:
