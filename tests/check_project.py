@@ -37,6 +37,8 @@ if "window.alert=showToast" not in js or "confirm(" in js:
     raise SystemExit("native dialogs must be replaced by branded feedback UI")
 if "data-game-segments" not in js or "/api/gamenet/sessions/" not in js:
     raise SystemExit("GameNet billing segment history UI is missing")
+if "game-payment-method" not in js or "paymentMethod" not in server:
+    raise SystemExit("GameNet settlement payment-method UI/API is missing")
 server = (root / "server.py").read_text(encoding="utf-8")
 if "def log_error(self, message, *args):" not in server:
     raise SystemExit("HTTP handler must safely format standard-library error log arguments")
