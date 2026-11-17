@@ -76,6 +76,16 @@ class DeploymentPreflightTests(unittest.TestCase):
             }, ROOT)
             self.assertTrue(any("valid https://" in error for error in errors), url)
 
+    def test_trusted_proxy_networks_are_validated(self):
+        valid = validate_config({
+            "MG_TRUSTED_PROXIES": "127.0.0.1,10.0.0.0/8,::1/128",
+        }, ROOT)
+        self.assertEqual(valid, [])
+        invalid = validate_config({
+            "MG_TRUSTED_PROXIES": "127.0.0.1,not-a-network",
+        }, ROOT)
+        self.assertTrue(any("MG_TRUSTED_PROXIES" in error for error in invalid))
+
     def test_web_root_database_is_rejected(self):
         errors = validate_config({"MG_DB_PATH": str(ROOT / "database.sqlite3")}, ROOT)
         self.assertTrue(any("MG_DB_PATH" in error for error in errors))
