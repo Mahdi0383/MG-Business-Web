@@ -2773,10 +2773,22 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             self.assertEqual(cashier_close["difference"],0)
 
+            status,active_shift=self.request("POST","/api/cash-register/shifts/open",{
+                "openingCash":2000,"note":"shift retained through restore"},owner)
+            self.assertEqual(status,201)
+            status,active_sale=self.request("POST","/api/transactions",{
+                "id":"cash-shift-active-backup-sale","title":"Cash after shift open","amount":300,
+                "kind":"income","category":"cash test","createdAt":now},owner)
+            self.assertEqual(status,201)
+            status,live_active=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(live_active["active"]["expectedCash"],2300)
+
             status,snapshot=self.request("GET","/api/backup",token=owner)
             self.assertEqual(status,200)
             self.assertEqual(snapshot["version"],4)
-            self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),2)
+            self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),3)
+            self.assertTrue(all("__rowid" in row for row in snapshot["tables"]["journal_entries"]))
             db=server.connect()
             try:
                 db.execute("DELETE FROM cash_register_shifts WHERE tenant_id=?",(setup["user"]["tenantId"],))
@@ -2787,7 +2799,9 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             status,history=self.request("GET","/api/cash-register/shifts",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(len(history["items"]),2)
+            self.assertEqual(len(history["items"]),3)
+            self.assertEqual(history["active"]["id"],active_shift["id"])
+            self.assertEqual(history["active"]["expectedCash"],2300)
             first=next(item for item in history["items"] if item["id"]==shift_id)
             self.assertEqual(first["difference"],-50)
 
@@ -2798,7 +2812,7 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             status,preserved=self.request("GET","/api/cash-register/shifts",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(len(preserved["items"]),2,
+            self.assertEqual(len(preserved["items"]),3,
                 "v2 restores must preserve current cash shifts absent from that backup format")
         finally:
             server.DB_PATH=original_db_path
