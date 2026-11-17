@@ -924,7 +924,7 @@ class Handler(SimpleHTTPRequestHandler):
                 now=int(time.time())
                 local=time.localtime(now)
                 day_start=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday,0,0,0,0,0,-1)))
-                day_end=day_start+24*60*60
+                day_end=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday+1,0,0,0,0,0,-1)))
                 rows=db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
                     SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue,
                     COUNT(DISTINCT o.id) AS orderCount
