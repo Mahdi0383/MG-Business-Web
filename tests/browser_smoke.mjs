@@ -81,7 +81,10 @@ try {
   await page.locator("#addCartItem").waitFor({ state: "visible" });
   await page.locator("#cafeProduct").selectOption(productBody.id);
   await page.locator("#addCartItem").click();
-  await page.locator("#submitOrder").waitFor({ state: "enabled" });
+  await page.waitForFunction(() => {
+    const button = document.querySelector("#submitOrder");
+    return Boolean(button && !button.disabled);
+  });
   const orderResponsePromise = page.waitForResponse(response =>
     response.url().endsWith("/api/orders") && response.request().method() === "POST"
   );
