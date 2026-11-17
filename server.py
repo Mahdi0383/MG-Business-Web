@@ -35,7 +35,7 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -339,6 +339,8 @@ CREATE TABLE IF NOT EXISTS orders(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  order_number TEXT NOT NULL, customer_id TEXT, created_by TEXT NOT NULL REFERENCES users(id),
  status TEXT NOT NULL CHECK(status IN ('paid','cancelled')),
+ fulfillment_status TEXT NOT NULL DEFAULT 'served'
+ CHECK(fulfillment_status IN ('queued','preparing','ready','served')),
  subtotal INTEGER NOT NULL CHECK(subtotal>=0), discount INTEGER NOT NULL CHECK(discount>=0),
  total INTEGER NOT NULL CHECK(total>0), payment_method TEXT NOT NULL
  CHECK(payment_method IN ('cash','card','online','credit')), created_at INTEGER NOT NULL,
@@ -585,6 +587,14 @@ def connect():
         if "journal_cursor" not in shift_columns:
             db.execute("ALTER TABLE cash_register_shifts ADD COLUMN journal_cursor INTEGER NOT NULL DEFAULT -1")
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(16,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=17").fetchone():
+        order_columns={row["name"] for row in db.execute("PRAGMA table_info(orders)").fetchall()}
+        if "fulfillment_status" not in order_columns:
+            db.execute("""ALTER TABLE orders ADD COLUMN fulfillment_status TEXT NOT NULL DEFAULT 'served'
+                CHECK(fulfillment_status IN ('queued','preparing','ready','served'))""")
+        db.execute("""CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_queue
+            ON orders(tenant_id,fulfillment_status,created_at DESC)""")
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(17,?)", (int(time.time()),))
     db.commit()
     return db
 
