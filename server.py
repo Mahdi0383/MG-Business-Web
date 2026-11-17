@@ -132,6 +132,16 @@ CREATE TABLE IF NOT EXISTS products(
  UNIQUE(tenant_id,sku)
 );
 CREATE INDEX IF NOT EXISTS idx_products_tenant_active ON products(tenant_id,active,name);
+CREATE TABLE IF NOT EXISTS product_addons(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ product_id TEXT NOT NULL REFERENCES products(id),
+ name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 80),
+ price INTEGER NOT NULL CHECK(price>=0),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ UNIQUE(tenant_id,product_id,name)
+);
+CREATE INDEX IF NOT EXISTS idx_product_addons_tenant_product ON product_addons(tenant_id,product_id,active);
 CREATE TABLE IF NOT EXISTS inventory_movements(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  product_id TEXT NOT NULL REFERENCES products(id), created_by TEXT NOT NULL REFERENCES users(id),
@@ -219,6 +229,7 @@ CREATE TABLE IF NOT EXISTS order_items(
  product_id TEXT NOT NULL, product_name TEXT NOT NULL,
  quantity INTEGER NOT NULL CHECK(quantity>0), unit_price INTEGER NOT NULL CHECK(unit_price>=0),
  unit_cost INTEGER NOT NULL CHECK(unit_cost>=0), line_total INTEGER NOT NULL CHECK(line_total>=0),
+ addons_json TEXT NOT NULL DEFAULT '[]',
  FOREIGN KEY(order_id) REFERENCES orders(id),
  FOREIGN KEY(product_id) REFERENCES products(id)
 );
@@ -261,6 +272,9 @@ def connect():
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
+    order_item_columns = {row["name"] for row in db.execute("PRAGMA table_info(order_items)").fetchall()}
+    if "addons_json" not in order_item_columns:
+        db.execute("ALTER TABLE order_items ADD COLUMN addons_json TEXT NOT NULL DEFAULT '[]'")
     columns = {row["name"] for row in db.execute("PRAGMA table_info(transactions)").fetchall()}
     if "status" not in columns:
         db.execute("ALTER TABLE transactions ADD COLUMN status TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('posted','voided'))")
@@ -293,6 +307,8 @@ def connect():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(6,?)", (int(time.time()),))
     if not db.execute("SELECT 1 FROM schema_migrations WHERE version=7").fetchone():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(7,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=8").fetchone():
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(8,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -635,6 +651,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "journal_entries": "SELECT * FROM journal_entries WHERE tenant_id=?",
                     "journal_lines": "SELECT * FROM journal_lines WHERE tenant_id=?",
                     "products": "SELECT * FROM products WHERE tenant_id=?",
+                    "product_addons": "SELECT * FROM product_addons WHERE tenant_id=?",
                     "customers": "SELECT * FROM customers WHERE tenant_id=?",
                     "customer_ledger": "SELECT * FROM customer_ledger WHERE tenant_id=?",
                     "inventory_movements": "SELECT * FROM inventory_movements WHERE tenant_id=?",
@@ -691,12 +708,60 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM transactions WHERE tenant_id=? AND status='posted' ORDER BY created_at DESC LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/product-addons":
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
+                product_id=data.get("productId"); name=data.get("name"); price=data.get("price")
+                if not isinstance(product_id,str) or not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
+                    return self.send_json(400,{"error":"کالا، نام افزودنی یا قیمت معتبر نیست."})
+                product=db.execute("SELECT id FROM products WHERE id=? AND tenant_id=? AND active=1",
+                                   (product_id,user["tenant_id"])).fetchone()
+                if not product:
+                    return self.send_json(404,{"error":"کالای فعال پیدا نشد."})
+                addon_id=str(data.get("id") or secrets.token_urlsafe(18)); now=int(time.time())
+                if not 1<=len(addon_id)<=100:
+                    return self.send_json(400,{"error":"شناسه افزودنی معتبر نیست."})
+                if db.execute("SELECT 1 FROM product_addons WHERE tenant_id=? AND product_id=? AND name=? AND active=1",
+                              (user["tenant_id"],product_id,name.strip())).fetchone():
+                    return self.send_json(409,{"error":"این افزودنی قبلاً برای کالا ثبت شده است."})
+                db.execute("INSERT INTO product_addons(id,tenant_id,product_id,name,price,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                           (addon_id,user["tenant_id"],product_id,name.strip(),price,now,now))
+                audit(db,user["tenant_id"],user["id"],"product.addon.created","product_addon",addon_id,{"productId":product_id,"price":price})
+                db.commit()
+                return self.send_json(201,{"id":addon_id,"ok":True})
+            if path.startswith("/api/product-addons/"):
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
+                addon_id=path.rsplit("/",1)[-1]; name=data.get("name"); price=data.get("price")
+                if not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
+                    return self.send_json(400,{"error":"نام یا قیمت افزودنی معتبر نیست."})
+                changed=db.execute("""UPDATE product_addons SET name=?,price=?,updated_at=?
+                    WHERE id=? AND tenant_id=? AND active=1""",
+                    (name.strip(),price,int(time.time()),addon_id,user["tenant_id"])).rowcount
+                if not changed:
+                    return self.send_json(404,{"error":"افزودنی فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"product.addon.updated","product_addon",addon_id,{"price":price})
+                db.commit()
+                return self.send_json(200,{"ok":True})
             if path == "/api/products":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
                     FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path == "/api/product-addons":
+                if not require_any_module(db,user["tenant_id"],"cafe","inventory"):
+                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
+                rows=db.execute("""SELECT a.id,a.product_id AS productId,p.name AS productName,
+                    a.name,a.price,a.active,a.created_at AS createdAt
+                    FROM product_addons a JOIN products p ON p.id=a.product_id
+                    WHERE a.tenant_id=? AND a.active=1 ORDER BY p.name,a.name LIMIT 5000""",
+                    (user["tenant_id"],)).fetchall()
+                return self.send_json(200,{"items":[dict(row) for row in rows]})
             if path == "/api/inventory":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
@@ -989,6 +1054,19 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"product.deactivated","product",product_id)
                 db.commit()
                 return self.send_json(200, {"ok": True})
+            if path.startswith("/api/product-addons/"):
+                if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را غیرفعال کند."})
+                addon_id=path.rsplit("/",1)[-1]
+                changed=db.execute("UPDATE product_addons SET active=0,updated_at=? WHERE id=? AND tenant_id=? AND active=1",
+                                   (int(time.time()),addon_id,user["tenant_id"])).rowcount
+                if not changed:
+                    return self.send_json(404,{"error":"افزودنی فعال پیدا نشد."})
+                audit(db,user["tenant_id"],user["id"],"product.addon.deactivated","product_addon",addon_id)
+                db.commit()
+                return self.send_json(200,{"ok":True})
             if not path.startswith("/api/transactions/"):
                 return self.send_json(404, {"error": "مسیر API پیدا نشد."})
             if not module_enabled(db,user["tenant_id"],"accounting"):
@@ -1178,7 +1256,7 @@ class Handler(SimpleHTTPRequestHandler):
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
-                allowed = ("users","accounts","products","customers","customer_ledger","game_devices","transactions","journal_entries",
+                allowed = ("users","accounts","products","product_addons","customers","customer_ledger","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","suppliers","purchase_invoices","purchase_invoice_items","supplier_payments",
                            "orders","order_items","game_sessions","gamenet_reservations","audit_log")
                 if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
@@ -1234,10 +1312,10 @@ class Handler(SimpleHTTPRequestHandler):
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("gamenet_reservations","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
                                     "inventory_movements","journal_lines","journal_entries","transactions","customer_ledger",
-                                    "products","customers","suppliers","game_devices","accounts","audit_log")
+                                    "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
-                    insert_order = ("accounts","products","customers","customer_ledger","suppliers","game_devices","transactions",
+                    insert_order = ("accounts","products","product_addons","customers","customer_ledger","suppliers","game_devices","transactions",
                                     "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
                                     "supplier_payments","orders","order_items","game_sessions","gamenet_reservations","audit_log")
                     for name in insert_order:
