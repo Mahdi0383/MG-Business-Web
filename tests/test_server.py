@@ -225,10 +225,27 @@ class ApiIntegrationTests(unittest.TestCase):
             "name": "Forbidden", "sellPrice": 100, "costPrice": 20
         }, cashier_token)
         self.assertEqual(status, 403)
+        # A non-owner cannot deactivate another account, and an owner cannot
+        # accidentally deactivate their own only administrative account.
+        status, denied_deactivation = self.request("DELETE", "/api/users/" + cashier_id, token=cashier_token)
+        self.assertEqual(status, 403)
+        status, self_deactivation = self.request("DELETE", "/api/users/" + setup["user"]["id"], token=token)
+        self.assertEqual(status, 400)
         status, result = self.request("DELETE", "/api/users/" + cashier_id, token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/me", token=cashier_token)
         self.assertEqual(status, 401)
+        status, repeated_deactivation = self.request("DELETE", "/api/users/" + cashier_id, token=token)
+        self.assertEqual(status, 404)
+        status, deactivated_login = self.request("POST", "/api/login", {
+            "username": "cashier", "password": "cashier-new-long-password"
+        })
+        self.assertEqual(status, 401)
+        status, user_audit = self.request("GET", "/api/audit-log", token=token)
+        self.assertEqual(status, 200)
+        deactivation_events = [event for event in user_audit["items"]
+                               if event["action"] == "user.deactivated" and event["entityId"] == cashier_id]
+        self.assertEqual(len(deactivation_events), 1)
 
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-test-1", "title": "Cafe sale", "amount": 150000,
