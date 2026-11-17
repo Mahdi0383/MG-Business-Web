@@ -816,6 +816,16 @@ class ApiIntegrationTests(unittest.TestCase):
             "id":"reservation-naive-time","deviceId":"pc-01","startsAt":naive_start,"endsAt":naive_end
         },token)
         self.assertEqual(status,400)
+        status, invalid_customer = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-invalid-customer","deviceId":"pc-free","customerId":["customer-1"],
+            "startsAt":start_at,"endsAt":end_at
+        },token)
+        self.assertEqual(status,400)
+        status, invalid_device = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-invalid-device","deviceId":"d"*101,
+            "startsAt":start_at,"endsAt":end_at
+        },token)
+        self.assertEqual(status,400)
         status, reservation = self.request("POST", "/api/gamenet/reservations", {
             "id":"reservation-01","deviceId":"pc-free","customerId":"customer-1",
             "startsAt":start_at,"endsAt":end_at,"playersCount":2,"notes":"Birthday booking"
