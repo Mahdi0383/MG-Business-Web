@@ -1278,6 +1278,40 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"items": [dict(row) for row in rows],
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
                     "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
+            if path == "/api/accounting/cash-flow":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                conditions=["e.tenant_id=?"]; values=[user["tenant_id"]]
+                if "fromDate" in dates:
+                    conditions.append("e.entry_date>=?")
+                    values.append(time.strftime("%Y-%m-%d",dates["fromDate"]))
+                if "toDate" in dates:
+                    conditions.append("e.entry_date<=?")
+                    values.append(time.strftime("%Y-%m-%d",dates["toDate"]))
+                rows=db.execute("""SELECT e.id,e.entry_date AS entryDate,e.memo,e.source_type AS sourceType,
+                    e.source_id AS sourceId,
+                    COALESCE(SUM(CASE WHEN cash.normal_balance='debit'
+                        THEN cash_line.debit-cash_line.credit
+                        ELSE cash_line.credit-cash_line.debit END),0) AS netCash
+                    FROM journal_entries e
+                    JOIN journal_lines cash_line ON cash_line.entry_id=e.id AND cash_line.tenant_id=e.tenant_id
+                    JOIN accounts cash ON cash.id=cash_line.account_id AND cash.tenant_id=cash_line.tenant_id
+                    WHERE """+" AND ".join(conditions)+"""
+                    AND cash.code IN ('1000','1010','1020')
+                    GROUP BY e.id
+                    HAVING netCash<>0
+                    ORDER BY e.entry_date DESC,e.created_at DESC LIMIT 2000""",values).fetchall()
+                items=[dict(row) for row in rows]
+                inflow=sum(max(0,row["netCash"]) for row in items)
+                outflow=sum(max(0,-row["netCash"]) for row in items)
+                return self.send_json(200,{"items":items,"inflow":inflow,"outflow":outflow,
+                    "netCashFlow":inflow-outflow,
+                    "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
+                    "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
