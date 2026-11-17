@@ -2752,10 +2752,13 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,409)
             status,reversal=self.request("DELETE","/api/transactions/"+created["id"],token=owner)
             self.assertEqual(status,409)
-            status,transactions=self.request("GET","/api/transactions",token=owner)
-            self.assertEqual(status,200)
-            original=next(item for item in transactions["items"] if item["id"]==created["id"])
-            self.assertEqual(original["status"],"posted")
+            db=server.connect()
+            try:
+                original_status=db.execute("SELECT status FROM transactions WHERE id=? AND tenant_id=?",
+                    (created["id"],setup["user"]["tenantId"])).fetchone()["status"]
+                self.assertEqual(original_status,"posted")
+            finally:
+                db.close()
 
             status,current=self.request("POST","/api/transactions",{
                 "id":"period-current-open","title":"ثبت روز باز","amount":5000,
