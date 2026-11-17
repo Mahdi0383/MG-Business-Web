@@ -48,7 +48,11 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
         proxy = proxy.strip()
         if proxy:
             try:
-                trusted_proxy_networks.append(ipaddress.ip_network(proxy, strict=False))
+                network = ipaddress.ip_network(proxy, strict=False)
+                if not (network.is_private or network.is_loopback or network.is_link_local):
+                    errors.append(f"MG_TRUSTED_PROXIES must contain only private, loopback, or link-local proxy networks: {proxy}")
+                else:
+                    trusted_proxy_networks.append(network)
             except ValueError:
                 errors.append(f"MG_TRUSTED_PROXIES contains an invalid IP address or CIDR: {proxy}")
     if environment == "production" and not trusted_proxy_networks:
