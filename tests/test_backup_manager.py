@@ -105,10 +105,20 @@ class BackupManagerTests(unittest.TestCase):
             self.assertFalse(list(backup_dir.glob("*.tmp")))
 
             restored = root / "restored.sqlite3"
+            db = sqlite3.connect(restored)
+            db.execute("CREATE TABLE existing_data(value TEXT)")
+            db.execute("INSERT INTO existing_data VALUES('keep until verified restore')")
+            db.commit()
+            db.close()
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, restored, encryption_key=generate_encryption_key())
-            self.assertFalse(restored.exists())
+            db = sqlite3.connect(restored)
+            self.assertEqual(db.execute("SELECT value FROM existing_data").fetchone()[0],
+                             "keep until verified restore")
+            db.close()
             restore_snapshot(snapshot, restored, encryption_key=key)
+            safety_backups = list((root / "backups").glob("*.sqlite3.enc"))
+            self.assertEqual(len(safety_backups), 1)
             db = sqlite3.connect(restored)
             self.assertEqual(db.execute("SELECT value FROM private_records").fetchone()[0],
                              "confidential backup payload")
