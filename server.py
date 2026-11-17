@@ -1955,14 +1955,22 @@ class Handler(SimpleHTTPRequestHandler):
         rendered = message % args if args else message
         print(rendered, flush=True)
 
-def backup_scheduler():
-    while True:
+def backup_scheduler(stop_event=None):
+    retry_delay = 60
+    while stop_event is None or not stop_event.is_set():
         try:
             snapshot = create_snapshot(DB_PATH, BACKUP_DIR, BACKUP_RETENTION)
             print("MG scheduled backup created: %s" % snapshot, flush=True)
+            retry_delay = 60
+            delay = BACKUP_INTERVAL_SECONDS
         except Exception as exc:
             print("MG scheduled backup failed: %s" % exc, flush=True)
-        time.sleep(BACKUP_INTERVAL_SECONDS)
+            delay = retry_delay
+            retry_delay = min(retry_delay * 2, 3600)
+        if stop_event is None:
+            time.sleep(delay)
+        elif stop_event.wait(delay):
+            break
 
 
 def main():
