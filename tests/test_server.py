@@ -1108,6 +1108,25 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             self.assertFalse(no_change["changed"])
             self.assertFalse(no_change["sessionsRevoked"])
+            # Inactive accounts must not be re-enabled or have their role altered
+            # through the role editor; the endpoint should leave the stored role intact.
+            db=server.connect()
+            try:
+                db.execute("UPDATE users SET active=0 WHERE id=? AND tenant_id=?",
+                           (cashier["id"],setup["user"]["tenantId"]))
+                db.commit()
+            finally:
+                db.close()
+            status,inactive=self.request("POST",f"/api/users/{cashier['id']}/role",{"role":"manager"},owner_token)
+            self.assertEqual(status,409)
+            db=server.connect()
+            try:
+                stored=db.execute("SELECT role,active FROM users WHERE id=?",
+                                  (cashier["id"],)).fetchone()
+                self.assertEqual(stored["role"],"viewer")
+                self.assertEqual(stored["active"],0)
+            finally:
+                db.close()
             status,audit=self.request("GET","/api/audit-log",token=owner_token)
             self.assertEqual(status,200)
             role_events=[item for item in audit["items"] if item["action"]=="user.role.changed" and item["entityId"]==cashier["id"]]
