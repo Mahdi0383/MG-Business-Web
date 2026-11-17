@@ -2011,8 +2011,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "مبلغ سفارش معتبر نیست."})
                 order_id, created = ("public-"+client_order_id) if client_order_id else secrets.token_urlsafe(18), int(now)
                 order_number = "MG-ON-%s-%s" % (time.strftime("%Y%m%d"),secrets.token_hex(3).upper())
-                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at,request_fingerprint)
-                    VALUES(?,?,?,?,?,'paid',?,0,?,'credit',?,?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created,request_fingerprint if client_order_id else None))
+                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,fulfillment_status,subtotal,discount,total,payment_method,created_at,request_fingerprint)
+                    VALUES(?,?,?,?,?,'paid','queued',?,0,?,'credit',?,?)""", (order_id,tenant_id,order_number,customer_id,actor["id"],subtotal,subtotal,created,request_fingerprint if client_order_id else None))
                 db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                     VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),tenant_id,customer_id,actor["id"],"order",order_id,subtotal,"سفارش آنلاین "+order_number,created))
                 for product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot in order_lines:
@@ -2876,8 +2876,8 @@ class Handler(SimpleHTTPRequestHandler):
                 line_discounts=allocate_proportional_discount([line[5] for line in order_lines],discount)
                 now = int(time.time())
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
-                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
-                    VALUES(?,?,?,?,?,'paid',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
+                db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,fulfillment_status,subtotal,discount,total,payment_method,created_at)
+                    VALUES(?,?,?,?,?,'paid','queued',?,?,?,?,?)""", (order_id,user["tenant_id"],order_number,customer_id,user["id"],subtotal,discount,total,payment,now))
                 # Credit orders accrue only after settlement; cash/card/online sales earn immediately.
                 earned_points=0 if payment=="credit" else award_customer_loyalty_points(
                     db,user["tenant_id"],customer_id,user["id"],order_id,total,now)
