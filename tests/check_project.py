@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
@@ -72,6 +72,10 @@ if "result.totalPurchases" not in app or "item.balanceAfter" not in app:
     raise SystemExit("Supplier statement export must include totals and running balances")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
+if 'if path == "/api/product-addons":' not in server or "addons_json" not in server:
+    raise SystemExit("Product add-on API and order-item snapshots are missing")
+if "productAddonForm" not in app or "data-cafe-addon" not in app or "addons:(x.addons||[]).map" not in app:
+    raise SystemExit("Product add-on management and POS selection UI are missing")
 if "stableRequestId" not in app:
     raise SystemExit("Idempotency keys must remain stable for retryable forms")
 if "offline-card" not in app or "همگام‌سازی آفلاین هنوز فعال نیست" not in app:
