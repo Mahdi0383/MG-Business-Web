@@ -80,6 +80,24 @@ class DeploymentPreflightTests(unittest.TestCase):
         errors = validate_config({"MG_DB_PATH": str(ROOT / "database.sqlite3")}, ROOT)
         self.assertTrue(any("MG_DB_PATH" in error for error in errors))
 
+    def test_backup_directory_cannot_contain_live_database(self):
+        errors = validate_config({
+            "MG_DATA_DIR": "/var/lib/mg-business",
+            "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
+            "MG_BACKUP_DIR": "/var/lib/mg-business",
+        }, ROOT)
+        self.assertTrue(any("must not contain" in error for error in errors))
+
+    def test_malformed_ipv6_public_url_is_reported_not_raised(self):
+        errors = validate_config({
+            "MG_HOST": "0.0.0.0",
+            "MG_PUBLIC_URL": "https://[invalid",
+            "MG_DATA_DIR": "/var/lib/mg-business",
+            "MG_DB_PATH": "/var/lib/mg-business/data.sqlite3",
+            "MG_BACKUP_DIR": "/var/backups/mg-business",
+        }, ROOT)
+        self.assertTrue(any("valid https://" in error for error in errors))
+
     def test_invalid_port_and_backup_policy_are_rejected(self):
         errors = validate_config({
             "MG_PORT": "70000",
