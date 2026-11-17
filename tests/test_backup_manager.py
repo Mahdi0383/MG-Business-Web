@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backup_manager import create_snapshot, restore_snapshot
+from backup_manager import create_snapshot, generate_encryption_key, restore_snapshot
 
 
 class BackupManagerTests(unittest.TestCase):
@@ -75,6 +75,62 @@ class BackupManagerTests(unittest.TestCase):
             self.assertEqual(values, ["before restore"])
             db.close()
             self.assertGreaterEqual(len(list(backup_dir.glob("mg-business-*.sqlite3"))), 2)
+
+    def test_encrypted_snapshot_round_trips_and_rejects_wrong_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            backup_dir = root / "backups"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(13,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id),
+                username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL,
+                active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
+            db.execute("INSERT INTO tenants VALUES('tenant-1','MG Test',1)")
+            db.execute("INSERT INTO users VALUES('user-1','tenant-1','owner','hash','owner',1,1)")
+            db.execute("CREATE TABLE private_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO private_records VALUES('confidential backup payload')")
+            db.commit()
+            db.close()
+
+            key = generate_encryption_key()
+            snapshot = create_snapshot(database, backup_dir, encryption_key=key)
+            self.assertTrue(snapshot.name.endswith(".sqlite3.enc"))
+            raw = snapshot.read_bytes()
+            self.assertNotIn(b"SQLite format 3", raw)
+            self.assertNotIn(b"confidential backup payload", raw)
+
+            restored = root / "restored.sqlite3"
+            with self.assertRaises(ValueError):
+                restore_snapshot(snapshot, restored, encryption_key=generate_encryption_key())
+            self.assertFalse(restored.exists())
+            restore_snapshot(snapshot, restored, encryption_key=key)
+            db = sqlite3.connect(restored)
+            self.assertEqual(db.execute("SELECT value FROM private_records").fetchone()[0],
+                             "confidential backup payload")
+            db.close()
+
+    def test_encrypted_snapshot_requires_key_and_authenticates_ciphertext(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE records(value TEXT)")
+            db.execute("INSERT INTO records VALUES('secret')")
+            db.commit()
+            db.close()
+            key = generate_encryption_key()
+            snapshot = create_snapshot(database, root / "backups", encryption_key=key)
+            with self.assertRaises(ValueError):
+                restore_snapshot(snapshot, root / "target.sqlite3")
+            damaged = bytearray(snapshot.read_bytes())
+            damaged[-20] ^= 0x01
+            snapshot.write_bytes(damaged)
+            with self.assertRaises(Exception):
+                restore_snapshot(snapshot, root / "target.sqlite3", encryption_key=key)
+            self.assertFalse((root / "target.sqlite3").exists())
 
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
