@@ -738,6 +738,28 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_login_rate_limit_covers_username_rotation_per_ip(self):
+        ip = "127.0.0.1"
+        with server.LOGIN_LOCK:
+            server.LOGIN_IP_FAILURES.pop(ip, None)
+        try:
+            for index in range(30):
+                status, _ = self.request("POST", "/api/login", {
+                    "username": "unknown-user-" + str(index),
+                    "password": "incorrect-password"
+                })
+                self.assertEqual(status, 401)
+            status, result = self.request("POST", "/api/login", {
+                "username": "another-unknown-user", "password": "incorrect-password"
+            })
+            self.assertEqual(status, 429)
+        finally:
+            with server.LOGIN_LOCK:
+                server.LOGIN_IP_FAILURES.pop(ip, None)
+                for key in list(server.LOGIN_FAILURES):
+                    if key[0] == ip:
+                        server.LOGIN_FAILURES.pop(key, None)
+
     def test_password_hash_is_salted_and_verified(self):
         encoded = server.password_hash("a-long-test-password")
         self.assertTrue(server.verify_password("a-long-test-password", encoded))
