@@ -2764,6 +2764,22 @@ class ApiIntegrationTests(unittest.TestCase):
             status,audit_result=self.request("GET","/api/audit-log",token=owner)
             self.assertEqual(status,200)
             self.assertTrue(any(item["action"]=="accounting.period.closed" for item in audit_result["items"]))
+
+            status,snapshot=self.request("GET","/api/backup",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(snapshot["tables"]["accounting_periods"]),1)
+            db=server.connect()
+            try:
+                db.execute("DELETE FROM accounting_periods WHERE tenant_id=?",(setup["user"]["tenantId"],))
+                db.commit()
+            finally:
+                db.close()
+            status,restored=self.request("POST","/api/backup/restore",snapshot,owner)
+            self.assertEqual(status,200)
+            status,periods_after_restore=self.request("GET","/api/accounting/periods",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(periods_after_restore["items"]),1)
+            self.assertEqual(periods_after_restore["items"][0]["startDate"],yesterday)
         finally:
             server.DB_PATH=original_db_path
 
