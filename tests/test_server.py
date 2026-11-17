@@ -997,6 +997,36 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status,200)
         self.assertTrue(retry_invoice["duplicate"])
+        # An invoice retry must not conceal a missing inventory journal.
+        db=server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
+            movement_id=db.execute("""SELECT id FROM inventory_movements WHERE tenant_id=?
+                AND movement_type='purchase' AND note='فاکتور خرید PI-1001' LIMIT 1""",(tenant_id,)).fetchone()["id"]
+            movement_journal=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                AND source_type='inventory_movement' AND source_id=?""",(tenant_id,movement_id)).fetchone()["id"]
+            saved_movement_lines=[dict(row) for row in db.execute(
+                "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,movement_journal))]
+            db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,movement_journal))
+            db.commit()
+        finally:
+            db.close()
+        status, damaged_invoice_retry=self.request("POST", "/api/purchase-invoices", {
+            "id":"purchase-invoice-1","supplierId":"supplier-1","invoiceNumber":"PI-1001",
+            "invoiceDate":"2026-11-16","discount":30001,
+            "items":[{"productId":"product-purchase-test","quantity":10,"unitCost":25000},{"productId":"product-purchase-test-2","quantity":5,"unitCost":40000}]
+        }, token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(saved_movement_lines[0])
+            placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in saved_movement_lines])
+            db.commit()
+        finally:
+            db.close()
         status, duplicate_invoice = self.request("POST", "/api/purchase-invoices", {
             "id":"purchase-invoice-duplicate","supplierId":"supplier-1","invoiceNumber":"PI-1001",
             "invoiceDate":"2026-11-16","discount":0,
