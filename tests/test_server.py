@@ -499,6 +499,53 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_order["duplicate"])
         self.assertEqual(duplicate_order["orderNumber"],result["orderNumber"])
+        # A matching order retry must not hide missing sales or COGS postings.
+        db=server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            saved_order_journals={}
+            for source_type,source_id in (("transaction","order-order-test-1"),("order_cogs","order-test-1")):
+                entry_id=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                    AND source_type=? AND source_id=?""",(tenant_id,source_type,source_id)).fetchone()["id"]
+                saved_order_journals[source_type]=[dict(row) for row in db.execute(
+                    "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,entry_id)
+                ).fetchall()]
+            db.execute("""DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=(
+                SELECT id FROM journal_entries WHERE tenant_id=? AND source_type='transaction' AND source_id=?)""",
+                (tenant_id,tenant_id,"order-order-test-1"))
+            db.commit()
+        finally:
+            db.close()
+        retry_payload={"id":"order-test-1","customerId":"customer-1","discount":5000,
+            "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]}
+        status, damaged_sales_retry=self.request("POST","/api/orders",retry_payload,token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            lines=saved_order_journals["transaction"]
+            columns=list(lines[0]); placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in lines])
+            db.execute("""DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=(
+                SELECT id FROM journal_entries WHERE tenant_id=? AND source_type='order_cogs' AND source_id=?)""",
+                (tenant_id,tenant_id,"order-test-1"))
+            db.commit()
+        finally:
+            db.close()
+        status, damaged_cogs_retry=self.request("POST","/api/orders",retry_payload,token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            lines=saved_order_journals["order_cogs"]
+            columns=list(lines[0]); placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in lines])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.commit()
+        finally:
+            db.close()
         status, duplicate_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
         self.assertEqual(duplicate_loyalty["balance"],2)
         self.assertEqual(len(duplicate_loyalty["items"]),1)
