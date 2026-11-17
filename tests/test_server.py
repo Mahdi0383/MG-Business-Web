@@ -1461,6 +1461,27 @@ class ApiIntegrationTests(unittest.TestCase):
             "databaseIntegrity":True,"foreignKeys":True,"requiredSchema":True,"migrations":True
         })
         self.assertEqual(payload["missingTables"],[])
+        self.assertEqual(payload["schemaVersion"],server.SCHEMA_VERSION)
+        self.assertEqual(payload["expectedSchemaVersion"],server.SCHEMA_VERSION)
+        # A database opened by a newer incompatible app version must not pass readiness.
+        db=server.connect()
+        try:
+            db.execute("INSERT OR REPLACE INTO schema_migrations(version,applied_at) VALUES(?,?)",
+                       (server.SCHEMA_VERSION+1,int(time.time())))
+            db.commit()
+        finally:
+            db.close()
+        status,future_schema=self.request("GET","/api/ready")
+        self.assertEqual(status,503)
+        self.assertFalse(future_schema["ready"])
+        self.assertFalse(future_schema["checks"]["migrations"])
+        self.assertEqual(future_schema["schemaVersion"],server.SCHEMA_VERSION+1)
+        db=server.connect()
+        try:
+            db.execute("DELETE FROM schema_migrations WHERE version=?",(server.SCHEMA_VERSION+1,))
+            db.commit()
+        finally:
+            db.close()
 
     def test_production_responses_include_hsts_and_cross_origin_guards(self):
         old_env = {key: os.environ.get(key) for key in ("MG_ENV", "MG_PUBLIC_URL")}
