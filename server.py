@@ -2206,6 +2206,31 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"user.password.changed","user",user["id"])
                 db.commit()
                 return self.create_session(db,user["id"])
+            if path.startswith("/api/users/") and path.endswith("/role"):
+                if user["role"] != "owner":
+                    return self.send_json(403,{"error":"فقط مالک می‌تواند نقش کاربران را تغییر دهد."})
+                target_id=path.split("/")[-2]
+                new_role=data.get("role")
+                if new_role not in ("manager","cashier","viewer"):
+                    return self.send_json(400,{"error":"نقش کاربر معتبر نیست."})
+                if target_id==user["id"]:
+                    return self.send_json(400,{"error":"تغییر نقش حساب مالک از این مسیر مجاز نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                target=db.execute("SELECT id,role,active FROM users WHERE id=? AND tenant_id=?",
+                                  (target_id,user["tenant_id"])).fetchone()
+                if not target:
+                    db.rollback(); return self.send_json(404,{"error":"کاربر پیدا نشد."})
+                if not target["active"]:
+                    db.rollback(); return self.send_json(409,{"error":"نقش کاربر غیرفعال قابل تغییر نیست."})
+                if target["role"]==new_role:
+                    db.rollback(); return self.send_json(200,{"ok":True,"changed":False,"sessionsRevoked":False})
+                db.execute("UPDATE users SET role=? WHERE id=? AND tenant_id=?",
+                           (new_role,target_id,user["tenant_id"]))
+                db.execute("DELETE FROM sessions WHERE user_id=?",(target_id,))
+                audit(db,user["tenant_id"],user["id"],"user.role.changed","user",target_id,
+                      {"from":target["role"],"to":new_role})
+                db.commit()
+                return self.send_json(200,{"ok":True,"changed":True,"sessionsRevoked":True})
             if path.startswith("/api/users/") and path.endswith("/password"):
                 if user["role"] != "owner":
                     return self.send_json(403,{"error":"فقط مالک می‌تواند رمز کاربران را بازنشانی کند."})
