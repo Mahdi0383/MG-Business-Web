@@ -954,7 +954,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "service": "mg-business", "database": "sqlite"})
             if path == "/api/ready":
                 required_tables={"tenants","users","sessions","orders","order_items","products",
-                    "inventory_movements","accounts","journal_entries","journal_lines","accounting_periods","schema_migrations"}
+                    "inventory_movements","accounts","journal_entries","journal_lines","accounting_periods","cash_register_shifts","schema_migrations"}
                 present={row["name"] for row in db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
                 missing=sorted(required_tables-present)
@@ -1050,6 +1050,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "licenses": "SELECT * FROM licenses WHERE tenant_id=?",
                     "tenant_modules": "SELECT * FROM tenant_modules WHERE tenant_id=?",
                     "accounting_periods": "SELECT * FROM accounting_periods WHERE tenant_id=?",
+                    "cash_register_shifts": "SELECT * FROM cash_register_shifts WHERE tenant_id=?",
                     "audit_log": "SELECT * FROM audit_log WHERE tenant_id=?"
                 }
                 total_rows = sum(db.execute(
@@ -1058,7 +1059,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if total_rows > BACKUP_MAX_ROWS:
                     db.rollback()
                     return self.send_json(413, {"error":"حجم اطلاعات فضای کاری از سقف خروجی پشتیبان بیشتر است؛ از پشتیبان‌گیری محلی پایگاه داده استفاده کنید."})
-                snapshot = {"schema":"mg-business-server-backup","version":2,
+                snapshot = {"schema":"mg-business-server-backup","version":3,
                             "exportedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
                             "tenant":dict(db.execute("SELECT id,name,created_at FROM tenants WHERE id=?",(tenant_id,)).fetchone()),
                             "tables":{}}
@@ -2032,7 +2033,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
                 backup_version=data.get("version")
-                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2):
+                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3):
                     return self.send_json(400, {"error": "نسخه یا ساختار فایل پشتیبان معتبر نیست."})
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
@@ -2042,6 +2043,8 @@ class Handler(SimpleHTTPRequestHandler):
                            "orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","audit_log")
                 if backup_version >= 2:
                     allowed=allowed[:-1]+("accounting_periods","audit_log")
+                if backup_version >= 3:
+                    allowed=allowed[:-1]+("cash_register_shifts","audit_log")
                 # A restore replaces the complete workspace dataset. Missing tables
                 # must never be interpreted as empty lists, or a partial/corrupt
                 # snapshot could silently erase otherwise valid business data.
@@ -2124,6 +2127,8 @@ class Handler(SimpleHTTPRequestHandler):
                                     "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
                     if backup_version >= 2:
                         delete_order=delete_order[:-2]+("accounting_periods","accounts","audit_log")
+                    if backup_version >= 3:
+                        delete_order=delete_order[:-2]+("cash_register_shifts","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
                     insert_order = ("accounts","products","product_addons","customers","loyalty_programs","customer_loyalty_ledger","customer_ledger","suppliers","game_devices","transactions",
@@ -2131,6 +2136,8 @@ class Handler(SimpleHTTPRequestHandler):
                                     "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","audit_log")
                     if backup_version >= 2:
                         insert_order=insert_order[:-1]+("accounting_periods","audit_log")
+                    if backup_version >= 3:
+                        insert_order=insert_order[:-1]+("cash_register_shifts","audit_log")
                     for name in insert_order:
                         records = tables.get(name,[])
                         if name == "journal_entries":
