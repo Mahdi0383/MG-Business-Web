@@ -29,6 +29,15 @@ class DeploymentPreflightTests(unittest.TestCase):
         errors = validate_config({"MG_HOST": "0.0.0.0"}, ROOT)
         self.assertTrue(any("non-loopback" in error for error in errors))
 
+    def test_hostname_binding_is_rejected_to_avoid_ambiguous_dns_exposure(self):
+        for host in ("business.internal", "mg.example.com", ""):
+            with self.subTest(host=host):
+                errors = validate_config({"MG_HOST": host}, ROOT)
+                self.assertTrue(any("MG_HOST" in error for error in errors))
+
+    def test_localhost_name_remains_a_valid_loopback_binding(self):
+        self.assertEqual(validate_config({"MG_HOST": "localhost"}, ROOT), [])
+
     def test_public_bind_with_https_and_safe_paths_passes(self):
         env = {
             "MG_HOST": "0.0.0.0",
