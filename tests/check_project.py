@@ -200,4 +200,14 @@ if "تاریخ شروع نمی‌تواند بعد از تاریخ پایان ب
     raise SystemExit("Report date filters must reject reversed date ranges before requesting data")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
+if 'CREATE TABLE IF NOT EXISTS accounting_periods' not in server or 'SCHEMA_VERSION = 14' not in server:
+    raise SystemExit("Accounting period lock schema migration is missing")
+if 'assert_accounting_period_open' not in server or 'Accounting period is closed' not in server:
+    raise SystemExit("Journal posting and reversal must reject dates inside closed accounting periods")
+if 'if path == "/api/accounting/periods/close":' not in server or 'accounting.period.closed' not in server:
+    raise SystemExit("Owner-only audited accounting period close API is missing")
+if 'if path == "/api/accounting/periods":' not in server or 'accounting_periods' not in server[server.find('if path == "/api/backup":'):]:
+    raise SystemExit("Accounting period listing and backup integration are missing")
+if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
+    raise SystemExit("Accounting period close form is missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
