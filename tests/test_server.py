@@ -241,6 +241,28 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             db.close()
 
+        status, reversal = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
+        self.assertEqual(status, 200)
+        self.assertTrue(reversal["voided"])
+        status, repeated_reversal = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
+        self.assertEqual(status, 404)
+        db = server.connect()
+        try:
+            totals = db.execute("""SELECT SUM(l.debit),SUM(l.credit) FROM journal_lines l
+                JOIN journal_entries e ON e.id=l.entry_id
+                WHERE e.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
+                  AND e.source_type IN ('transaction','transaction_reversal')
+                  AND e.source_id='tx-test-1'""").fetchone()
+            self.assertEqual((totals[0], totals[1]), (0, 0))
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='tx-test-1'"
+            ).fetchone()[0], 1)
+        finally:
+            db.close()
+        status, visible_transactions = self.request("GET", "/api/transactions", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(visible_transactions["items"], [])
+
         status, result = self.request("POST", "/api/transactions", {
             "id": "tx-bad", "title": "Invalid amount", "amount": True,
             "kind": "income", "createdAt": "2026-11-16T12:00:00Z"
