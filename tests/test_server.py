@@ -2656,6 +2656,10 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,201)
             status,used_account=self.request("DELETE","/api/accounting/accounts/"+custom["1000"]["id"],token=owner)
             self.assertEqual(status,409)
+            # System accounts must remain available even before their first journal posting.
+            status,protected_unused=self.request("DELETE","/api/accounting/accounts/"+custom["5100"]["id"],token=owner)
+            self.assertEqual(status,409)
+            self.assertIn("سیستمی",protected_unused["error"])
             status,after_deactivate=self.request("GET","/api/accounting/accounts",token=owner)
             self.assertEqual(status,200)
             self.assertFalse(any(item["code"]=="1300" for item in after_deactivate["items"]))
