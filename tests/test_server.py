@@ -1437,6 +1437,45 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_transaction_void_rejects_missing_journal_without_changing_status(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "transaction-missing-journal.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Missing Journal Test", "username": "missing-journal-owner",
+                "password": "missing-journal-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+            token = setup["token"]
+            status, _ = self.request("POST", "/api/transactions", {
+                "id": "missing-journal-tx", "title": "Test income", "amount": 5000,
+                "kind": "income", "category": "Test", "createdAt": "2026-11-17T09:00:00Z"
+            }, token)
+            self.assertEqual(status, 201)
+            db = server.connect()
+            try:
+                db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                db.execute("DROP TRIGGER IF EXISTS journal_lines_immutable_delete")
+                db.execute("""DELETE FROM journal_lines WHERE entry_id IN (
+                    SELECT id FROM journal_entries WHERE tenant_id=? AND source_type='transaction' AND source_id=?
+                )""", (setup["user"]["tenantId"], "missing-journal-tx"))
+                db.commit()
+            finally:
+                db.close()
+            status, result = self.request("DELETE", "/api/transactions/missing-journal-tx", token=token)
+            self.assertEqual(status, 409)
+            db = server.connect()
+            try:
+                row = db.execute("SELECT status FROM transactions WHERE id=? AND tenant_id=?",
+                    ("missing-journal-tx", setup["user"]["tenantId"])).fetchone()
+                self.assertEqual(row["status"], "posted")
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id=?",
+                    ("missing-journal-tx",)).fetchone()[0], 0)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_user_can_change_own_password_and_revoke_old_sessions(self):
         original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp.name) / "password-change-test.sqlite3"
