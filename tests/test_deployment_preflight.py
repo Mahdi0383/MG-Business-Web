@@ -16,6 +16,15 @@ class DeploymentPreflightTests(unittest.TestCase):
         self.assertTrue(any("MG_LICENSE_SECRET" in error for error in errors))
         self.assertTrue(any("https://" in error for error in errors))
 
+    def test_production_rejects_template_license_secret(self):
+        errors = validate_config({
+            "MG_ENV": "production",
+            "MG_LICENSE_SECRET": "REPLACE_WITH_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARACTERS",
+            "MG_PUBLIC_URL": "https://business.example.com",
+            "MG_HOST": "127.0.0.1",
+        }, ROOT)
+        self.assertTrue(any("real MG_LICENSE_SECRET" in error for error in errors))
+
     def test_public_bind_requires_https_url(self):
         errors = validate_config({"MG_HOST": "0.0.0.0"}, ROOT)
         self.assertTrue(any("non-loopback" in error for error in errors))
@@ -75,6 +84,16 @@ class DeploymentPreflightTests(unittest.TestCase):
                 "MG_BACKUP_DIR": "/var/backups/mg-business",
             }, ROOT)
             self.assertTrue(any("valid https://" in error for error in errors), url)
+
+    def test_trusted_proxy_networks_are_validated(self):
+        valid = validate_config({
+            "MG_TRUSTED_PROXIES": "127.0.0.1,10.0.0.0/8,::1/128",
+        }, ROOT)
+        self.assertEqual(valid, [])
+        invalid = validate_config({
+            "MG_TRUSTED_PROXIES": "127.0.0.1,not-a-network",
+        }, ROOT)
+        self.assertTrue(any("MG_TRUSTED_PROXIES" in error for error in invalid))
 
     def test_web_root_database_is_rejected(self):
         errors = validate_config({"MG_DB_PATH": str(ROOT / "database.sqlite3")}, ROOT)

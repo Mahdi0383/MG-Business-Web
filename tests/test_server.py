@@ -707,6 +707,26 @@ class ApiIntegrationTests(unittest.TestCase):
             server.BACKUP_MAX_ROWS = original_limit
             server.DB_PATH = original_db_path
 
+    def test_client_ip_trusts_real_ip_only_from_configured_proxy(self):
+        handler = object.__new__(server.Handler)
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.headers = {"X-Real-IP": "198.51.100.23"}
+        old = os.environ.get("MG_TRUSTED_PROXIES")
+        try:
+            os.environ.pop("MG_TRUSTED_PROXIES", None)
+            self.assertEqual(handler.client_ip(), "127.0.0.1")
+            os.environ["MG_TRUSTED_PROXIES"] = "127.0.0.1/32"
+            self.assertEqual(handler.client_ip(), "198.51.100.23")
+            handler.headers = {"X-Real-IP": "not-an-ip"}
+            self.assertEqual(handler.client_ip(), "127.0.0.1")
+            os.environ["MG_TRUSTED_PROXIES"] = "192.0.2.0/24"
+            self.assertEqual(handler.client_ip(), "127.0.0.1")
+        finally:
+            if old is None:
+                os.environ.pop("MG_TRUSTED_PROXIES", None)
+            else:
+                os.environ["MG_TRUSTED_PROXIES"] = old
+
     def test_production_responses_include_hsts_and_cross_origin_guards(self):
         old_env = {key: os.environ.get(key) for key in ("MG_ENV", "MG_PUBLIC_URL")}
         try:
