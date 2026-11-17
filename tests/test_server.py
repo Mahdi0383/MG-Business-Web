@@ -632,6 +632,11 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
         self.assertEqual(status, 200)
         self.assertGreaterEqual(len(result["items"]), 2)
+        # Reversal rows may share a timestamp with their source. Deliberately
+        # reverse snapshot order to prove restore honors the self-referencing FK.
+        journal_rows = snapshot["tables"]["journal_entries"]
+        self.assertTrue(any(row.get("reversal_of") for row in journal_rows))
+        snapshot["tables"]["journal_entries"] = list(reversed(journal_rows))
         status, result = self.request("POST", "/api/backup/restore", snapshot, token)
         self.assertEqual(status, 200)
         self.assertGreater(result["restoredRows"], 0)
