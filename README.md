@@ -30,7 +30,7 @@ MG_HOST=0.0.0.0 python server.py
 python backup_manager.py --generate-key
 ```
 
-مقدار خروجی را به‌عنوان `MG_BACKUP_ENCRYPTION_KEY` در فایل محیطی امن سرویس قرار دهید؛ آن را در Git، فایل پشتیبان یا همان دیسک مقصد پشتیبان نگهداری نکنید. گم‌شدن کلید به معنی غیرقابل‌بازیابی شدن نسخه‌های رمزنگاری‌شده است. محیط production بدون کلید معتبر از پیش‌بررسی عبور نمی‌کند.
+مقدار خروجی را به‌عنوان `MG_BACKUP_ENCRYPTION_KEY` در فایل محیطی امن سرویس (`/etc/mg-business/mg-business.env`) قرار دهید و دسترسی آن را محدود کنید (`sudo chown root:root /etc/mg-business/mg-business.env && sudo chmod 600 /etc/mg-business/mg-business.env`)؛ آن را در Git، فایل پشتیبان یا همان دیسک مقصد پشتیبان نگهداری نکنید. گم‌شدن کلید به معنی غیرقابل‌بازیابی شدن نسخه‌های رمزنگاری‌شده است. محیط production بدون کلید معتبر از پیش‌بررسی عبور نمی‌کند.
 
 برای بازیابی snapshot، ابتدا سرور MG را متوقف کنید، همان کلید `MG_BACKUP_ENCRYPTION_KEY` را در محیط shell تنظیم کنید و سپس اجرا کنید:
 
