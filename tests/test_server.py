@@ -1008,6 +1008,8 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,404)
         status, snapshot = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
+        self.assertIn("licenses",snapshot["tables"])
+        self.assertIn("tenant_modules",snapshot["tables"])
         altered = json.loads(json.dumps(snapshot))
         altered["tenant"]["id"] = "different-workspace"
         status, result = self.request("POST", "/api/backup/restore", altered, token)
