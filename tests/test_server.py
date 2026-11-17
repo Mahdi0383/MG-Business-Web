@@ -691,31 +691,21 @@ class ApiIntegrationTests(unittest.TestCase):
 
     def test_backup_export_rejects_oversized_workspace_before_fetching_rows(self):
         original_limit = server.BACKUP_MAX_ROWS
-        token = "backup-export-limit-test-token"
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        db = server.connect()
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "backup-export-limit.sqlite3"
         try:
-            owner = db.execute("SELECT id FROM users WHERE role='owner' ORDER BY created_at LIMIT 1").fetchone()
-            self.assertIsNotNone(owner)
-            now = int(time.time())
-            db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
-                       (token_hash,owner["id"],now+600,now))
-            db.commit()
-        finally:
-            db.close()
-        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Backup Limit Test", "username": "backup-limit-owner",
+                "password": "backup-limit-password-2026"
+            })
+            self.assertEqual(status, 200)
             server.BACKUP_MAX_ROWS = 1
-            status, result = self.request("GET", "/api/backup", token=token)
+            status, result = self.request("GET", "/api/backup", token=setup["token"])
             self.assertEqual(status, 413)
             self.assertIn("پشتیبان", result["error"])
         finally:
             server.BACKUP_MAX_ROWS = original_limit
-            db = server.connect()
-            try:
-                db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
-                db.commit()
-            finally:
-                db.close()
+            server.DB_PATH = original_db_path
 
     def test_public_static_server_hides_source_and_development_files(self):
         with urllib.request.urlopen(self.base + "/", timeout=5) as response:
