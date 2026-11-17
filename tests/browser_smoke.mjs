@@ -124,6 +124,20 @@ try {
   const orderBody = await orderResponse.json();
   assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
+  const shiftExpectedCash = 1000 + orderBody.total;
+  await page.locator('#cashShiftCloseForm input[name="countedCash"]').fill(String(shiftExpectedCash));
+  const shiftClosePromise = page.waitForResponse(response =>
+    response.url().includes("/api/cash-register/shifts/") && response.url().endsWith("/close") &&
+    response.request().method() === "POST"
+  );
+  await page.locator("#cashShiftCloseForm button[type=submit]").click();
+  await page.locator('#confirmOverlay [data-confirm="yes"]').click();
+  const shiftCloseResponse = await shiftClosePromise;
+  const shiftCloseBody = await shiftCloseResponse.json();
+  assert.equal(shiftCloseResponse.status(), 200, "cash register close response: " + JSON.stringify(shiftCloseBody));
+  assert.equal(shiftCloseBody.expectedCash, shiftExpectedCash, "cash shift expected balance must include the cash order only");
+  assert.equal(shiftCloseBody.difference, 0, "cash shift should reconcile without a difference");
 
   // Exercise the complete GameNet lifecycle through the real browser UI.
   await page.locator('#navigation [data-page="gamenet"]').click();
