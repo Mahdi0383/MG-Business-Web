@@ -21,9 +21,12 @@ dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", 
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
-for asset in ("styles.css", "app.js", "core.js", "server.py", "license_tool.py", "backup_manager.py", "manifest.webmanifest", "service-worker.js", "icon.svg", "order.html", "public-order.js", "tests/test_server.py", "tests/test_backup_manager.py"):
+for asset in ("styles.css", "app.js", "core.js", "server.py", "license_tool.py", "backup_manager.py", "manifest.webmanifest", "service-worker.js", "icon.svg", "order.html", "public-order.js", "tests/test_server.py", "tests/test_backup_manager.py", "tests/browser_smoke.mjs"):
     if not (root / asset).is_file():
         raise SystemExit(f"missing required asset: {asset}")
+workflow = (root / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+if "browser-e2e:" not in workflow or "node tests/browser_smoke.mjs" not in workflow:
+    raise SystemExit("Playwright browser end-to-end workflow is missing")
 if "./core.js" not in html:
     raise SystemExit("core.js must load before app.js")
 if "importData" not in parser.ids or "importFile" not in parser.ids:
