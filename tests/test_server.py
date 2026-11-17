@@ -2628,6 +2628,73 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_account_ledger_paginates_newest_first_with_global_totals_and_running_balances(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"account-ledger-pages.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Ledger Pages","username":"ledger-pages-owner",
+                "password":"ledger-pages-owner-password-2026"})
+            self.assertEqual(status,200)
+            token=setup["token"]
+            status,tx=self.request("POST","/api/transactions",{
+                "id":"ledger-page-base","title":"Base income","amount":1000,
+                "kind":"income","category":"test","createdAt":"2026-11-17T10:00:00Z"},token)
+            self.assertEqual(status,201)
+            db=server.connect()
+            try:
+                tenant_id=setup["user"]["tenantId"]
+                accounts={row["code"]:row["id"] for row in db.execute(
+                    "SELECT id,code FROM accounts WHERE tenant_id=?",(tenant_id,)).fetchall()}
+                for entry_id,amount,created_at in (
+                    ("ledger-page-middle",200,9999999998),
+                    ("ledger-page-latest",300,9999999999),
+                ):
+                    db.execute("""INSERT INTO journal_entries
+                        (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+                        VALUES(?,?,? ,?,'test',?,?,?)""",
+                        (entry_id,tenant_id,"2026-11-17",entry_id,entry_id,setup["user"]["id"],created_at))
+                    db.executemany("""INSERT INTO journal_lines
+                        (id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)""",[
+                        (entry_id+"-cash",tenant_id,entry_id,accounts["1000"],amount,0),
+                        (entry_id+"-revenue",tenant_id,entry_id,accounts["4000"],0,amount),
+                    ])
+                db.commit()
+            finally:
+                db.close()
+
+            base="/api/accounting/account-ledger?accountId="+accounts["1000"]+"&fromDate=2026-11-17&toDate=2026-11-17"
+            status,first=self.request("GET",base+"&limit=1&offset=0",token=token)
+            self.assertEqual(status,200)
+            self.assertEqual(first["totalItems"],3)
+            self.assertEqual(first["periodDebit"],1500)
+            self.assertEqual(first["periodCredit"],0)
+            self.assertEqual(first["closingBalance"],1500)
+            self.assertEqual(first["items"][0]["entryId"],"ledger-page-latest")
+            self.assertEqual(first["items"][0]["runningBalance"],1500)
+            self.assertTrue(first["hasMore"])
+            self.assertEqual(first["nextOffset"],1)
+
+            status,second=self.request("GET",base+"&limit=1&offset=1",token=token)
+            self.assertEqual(status,200)
+            self.assertEqual(second["items"][0]["entryId"],"ledger-page-middle")
+            self.assertEqual(second["items"][0]["runningBalance"],1200)
+            self.assertEqual(second["periodDebit"],first["periodDebit"])
+            self.assertTrue(second["hasMore"])
+
+            status,last=self.request("GET",base+"&limit=1&offset=2",token=token)
+            self.assertEqual(status,200)
+            self.assertEqual(last["items"][0]["entryId"],tx["id"] if "id" in tx else "ledger-page-base")
+            self.assertEqual(last["items"][0]["runningBalance"],1000)
+            self.assertFalse(last["hasMore"])
+            self.assertEqual(last["nextOffset"],3)
+
+            for query in ("&limit=0","&limit=501","&offset=-1","&offset=1000001","&limit=abc"):
+                status,_=self.request("GET",base+query,token=token)
+                self.assertEqual(status,400)
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_custom_chart_of_accounts_is_owner_manager_only_and_tenant_scoped(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"custom-chart.sqlite3"
