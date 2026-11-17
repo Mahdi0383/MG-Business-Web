@@ -390,8 +390,24 @@ class ApiIntegrationTests(unittest.TestCase):
         try:
             restored = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE product_id='product-1'").fetchone()[0]
             self.assertEqual(restored, 13)
+            # A returned order must reverse both revenue and cost of goods sold.
+            returned_order = db.execute("SELECT tenant_id,order_number FROM orders WHERE id='order-test-1'").fetchone()
+            tenant_id, returned_order_number = returned_order["tenant_id"], returned_order["order_number"]
+            cogs_net = db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0)
+                FROM journal_lines l JOIN accounts a ON a.id=l.account_id
+                JOIN journal_entries e ON e.id=l.entry_id
+                WHERE a.tenant_id=? AND a.code='5100' AND (
+                    (e.source_type='order_cogs' AND e.source_id='order-test-1') OR
+                    (e.source_type='inventory_movement' AND e.source_id IN
+                        (SELECT id FROM inventory_movements WHERE tenant_id=? AND note=?))
+                )""", (tenant_id,tenant_id,"برگشت سفارش "+returned_order_number)).fetchone()[0]
+            self.assertEqual(cogs_net, 0)
         finally:
             db.close()
+        status, trial_after_return = self.request("GET", "/api/accounting/trial-balance", token=token)
+        self.assertEqual(trial_after_return["totalDebit"], trial_after_return["totalCredit"])
+        status, balance_after_return = self.request("GET", "/api/accounting/balance-sheet", token=token)
+        self.assertTrue(balance_after_return["balanced"])
 
         status, result = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
         self.assertEqual(status, 200)
