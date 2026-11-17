@@ -1798,7 +1798,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
                 product_id=data.get("productId"); name=data.get("name"); price=data.get("price")
-                if not isinstance(product_id,str) or not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
+                if not isinstance(product_id,str) or not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0 or price>9007199254740991:
                     return self.send_json(400,{"error":"کالا، نام افزودنی یا قیمت معتبر نیست."})
                 product=db.execute("SELECT id FROM products WHERE id=? AND tenant_id=? AND active=1",
                                    (product_id,user["tenant_id"])).fetchone()
@@ -1821,7 +1821,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403,{"error":"فقط مدیر می‌تواند افزودنی کالا را مدیریت کند."})
                 addon_id=path.rsplit("/",1)[-1]; name=data.get("name"); price=data.get("price")
-                if not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0:
+                if not isinstance(name,str) or not 1<=len(name.strip())<=80 or type(price) is not int or price<0 or price>9007199254740991:
                     return self.send_json(400,{"error":"نام یا قیمت افزودنی معتبر نیست."})
                 changed=db.execute("""UPDATE product_addons SET name=?,price=?,updated_at=?
                     WHERE id=? AND tenant_id=? AND active=1""",
