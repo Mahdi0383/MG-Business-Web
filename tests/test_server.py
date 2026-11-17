@@ -2623,7 +2623,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 tenant_id=setup["user"]["tenantId"]
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM accounts WHERE tenant_id=? AND code IN ('1300','5300')",
                     (tenant_id,)).fetchone()[0],2)
-                self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND event_type='account.created'",
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND action='account.created'",
                     (tenant_id,)).fetchone()[0],2)
             finally:
                 db.close()
