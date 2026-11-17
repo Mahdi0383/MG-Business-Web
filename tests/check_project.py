@@ -119,6 +119,24 @@ if "(['owner','manager'].includes(apiUser?.role)?apiRequest('/api/users'):Promis
 
 if "userPasswordForm" not in app or "/password" not in app:
     raise SystemExit("User password reset UI is missing")
+if any(fragment in app for fragment in (
+    "value=\"'+d.hourlyRate+'\"",
+    "value=\"'+d.playersCount+'\"",
+    "value=\"'+program.spendAmount+'\"",
+    "value=\"'+program.pointsAwarded+'\"",
+    "value=\"'+x.price+'\"",
+    "max=\"'+(x.total-x.paidAmount)+'\"",
+)):
+    raise SystemExit("Dynamic values in generated form attributes must be HTML-escaped")
+if any(fragment not in app for fragment in (
+    "value=\"'+escapeHtml(d.hourlyRate)+'\"",
+    "value=\"'+escapeHtml(d.playersCount)+'\"",
+    "value=\"'+escapeHtml(program.spendAmount)+'\"",
+    "value=\"'+escapeHtml(program.pointsAwarded)+'\"",
+    "value=\"'+escapeHtml(x.price)+'\"",
+    "max=\"'+escapeHtml(x.total-x.paidAmount)+'\"",
+)):
+    raise SystemExit("Generated form attributes are missing contextual HTML escaping")
 if "customerLedgerPanel" not in app or "data-customer-ledger" not in app:
     raise SystemExit("Customer account statement UI is missing")
 if "customerLoyaltyPanel" not in app or "data-customer-loyalty" not in app or "/api/loyalty/program" not in app:
