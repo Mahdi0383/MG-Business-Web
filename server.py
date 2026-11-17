@@ -907,7 +907,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT d.id,d.name,d.device_type AS deviceType,d.hourly_rate AS hourlyRate,d.is_free AS isFree,
                     d.active,gs.id AS sessionId,gs.customer_id AS customerId,c.full_name AS customerName,
-                    gs.started_at AS startedAt,gs.players_count AS playersCount
+                    gs.started_at AS startedAt,gs.players_count AS playersCount,
+                    gs.is_free AS sessionIsFree,gs.rate_per_hour AS sessionRatePerHour
                     FROM game_devices d LEFT JOIN game_sessions gs
                     ON gs.device_id=d.id AND gs.tenant_id=d.tenant_id AND gs.status='running'
                     LEFT JOIN customers c ON c.id=gs.customer_id AND c.tenant_id=gs.tenant_id
@@ -1454,6 +1455,17 @@ class Handler(SimpleHTTPRequestHandler):
                             placeholders = ",".join("?" for _ in columns)
                             sql = "INSERT INTO "+name+"("+",".join(columns)+") VALUES("+placeholders+")"
                             db.execute(sql,tuple(record[column] for column in columns))
+                    # Older JSON backups predate segmented GameNet billing. Reconstruct
+                    # one historical segment per session so restored running sessions
+                    # remain adjustable and ended sessions retain their original rates.
+                    db.execute("""INSERT INTO game_session_segments
+                        (id,tenant_id,session_id,device_id,started_at,ended_at,players_count,rate_per_hour,is_free)
+                        SELECT 'restore-'||s.id,s.tenant_id,s.id,s.device_id,s.started_at,s.ended_at,
+                               s.players_count,s.rate_per_hour,s.is_free
+                        FROM game_sessions s
+                        WHERE s.tenant_id=? AND NOT EXISTS(
+                            SELECT 1 FROM game_session_segments g WHERE g.session_id=s.id
+                        )""",(tenant_id,))
                     db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
                         BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
                     db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
