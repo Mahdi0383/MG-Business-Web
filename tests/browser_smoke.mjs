@@ -204,7 +204,7 @@ try {
     return url.pathname === path && url.searchParams.get("fromDate") === accountingToday &&
       url.searchParams.get("toDate") === accountingToday;
   }));
-  await page.locator('#accountingDateFilter button[type="submit"]').click();
+  await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
   const reportResults = await Promise.all(reportResponses);
   for (let index = 0; index < reportPaths.length; index++) {
     assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
