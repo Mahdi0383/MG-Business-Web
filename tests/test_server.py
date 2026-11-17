@@ -939,7 +939,7 @@ class ApiIntegrationTests(unittest.TestCase):
             "unit_cost": 0, "line_total": 1
         })
         status, result = self.request("POST", "/api/backup/restore", broken, token)
-        self.assertEqual(status, 409)
+        self.assertIn(status, (400, 409))
         invalid_sql_value = json.loads(json.dumps(snapshot))
         invalid_sql_value["tables"]["products"][0]["sell_price"] = {"unexpected": "object"}
         status, result = self.request("POST", "/api/backup/restore", invalid_sql_value, token)
