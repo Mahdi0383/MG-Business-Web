@@ -2568,5 +2568,69 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_custom_chart_of_accounts_is_owner_manager_only_and_tenant_scoped(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"custom-chart.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Custom Chart","username":"chart-owner",
+                "password":"chart-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            tokens={}
+            for role in ("manager","cashier"):
+                status,_=self.request("POST","/api/users",{
+                    "username":"chart-"+role,"password":"chart-"+role+"-password-2026","role":role},owner)
+                self.assertEqual(status,201)
+                status,login=self.request("POST","/api/login",{
+                    "username":"chart-"+role,"password":"chart-"+role+"-password-2026"})
+                self.assertEqual(status,200)
+                tokens[role]=login["token"]
+
+            status,accounts=self.request("GET","/api/accounting/accounts",token=owner)
+            self.assertEqual(status,200)
+            self.assertTrue(any(item["code"]=="1000" for item in accounts["items"]))
+
+            payload={"code":"1300","name":"سپرده کوتاه‌مدت","accountType":"asset"}
+            status,created=self.request("POST","/api/accounting/accounts",payload,owner)
+            self.assertEqual(status,201)
+            self.assertTrue(created["id"])
+            status,duplicate=self.request("POST","/api/accounting/accounts",payload,tokens["manager"])
+            self.assertEqual(status,409)
+            status,manager_created=self.request("POST","/api/accounting/accounts",{
+                "code":"5300","name":"هزینه بازاریابی","accountType":"expense"},tokens["manager"])
+            self.assertEqual(status,201)
+            status,denied=self.request("POST","/api/accounting/accounts",{
+                "code":"1400","name":"حساب غیرمجاز","accountType":"asset"},tokens["cashier"])
+            self.assertEqual(status,403)
+            for invalid in (
+                {"code":"12A4","name":"Invalid code","accountType":"asset"},
+                {"code":"1400","name":"Invalid type","accountType":"other"},
+                {"code":"1500","name":"Invalid balance","accountType":"asset","normalBalance":"credit"},
+                {"code":"1600","name":"Invalid name","accountType":"asset"},
+            ):
+                if "normalBalance" in invalid:
+                    invalid["accountType"]="unknown"
+                status,_=self.request("POST","/api/accounting/accounts",invalid,owner)
+                self.assertEqual(status,400)
+            status,refreshed=self.request("GET","/api/accounting/accounts",token=owner)
+            self.assertEqual(status,200)
+            custom={item["code"]:item for item in refreshed["items"]}
+            self.assertEqual(custom["1300"]["normalBalance"],"debit")
+            self.assertEqual(custom["5300"]["normalBalance"],"debit")
+            self.assertEqual(custom["1300"]["name"],"سپرده کوتاه‌مدت")
+            self.assertNotIn("1400",custom)
+            db=server.connect()
+            try:
+                tenant_id=setup["user"]["tenantId"]
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM accounts WHERE tenant_id=? AND code IN ('1300','5300')",
+                    (tenant_id,)).fetchone()[0],2)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND event_type='account.created'",
+                    (tenant_id,)).fetchone()[0],2)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH=original_db_path
+
 if __name__ == "__main__":
     unittest.main()
