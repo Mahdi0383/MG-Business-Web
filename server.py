@@ -419,6 +419,15 @@ def parse_report_dates(raw_query, allow_from=True):
     return parsed
 
 
+def report_epoch_bounds(dates):
+    from datetime import date, timedelta
+    start = date(*dates["fromDate"][:3]) if "fromDate" in dates else None
+    end = date(*dates["toDate"][:3]) + timedelta(days=1) if "toDate" in dates else None
+    lower = time.mktime((start.year,start.month,start.day,0,0,0,0,0,-1)) if start else None
+    upper = time.mktime((end.year,end.month,end.day,0,0,0,0,0,-1)) if end else None
+    return lower, upper
+
+
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1161,11 +1170,21 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/orders":
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                lower,upper=report_epoch_bounds(dates)
+                conditions=["o.tenant_id=?"]; values=[user["tenant_id"]]
+                if lower is not None: conditions.append("o.created_at>=?"); values.append(lower)
+                if upper is not None: conditions.append("o.created_at<?"); values.append(upper)
                 rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
                     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
-                    WHERE o.tenant_id=? ORDER BY o.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                    WHERE """+" AND ".join(conditions)+""" ORDER BY o.created_at DESC LIMIT 1000""", values).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows],
+                    "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
+                    "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
             if path == "/api/gamenet/devices":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
@@ -1242,13 +1261,23 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/reports/sales-by-product":
                 if not module_enabled(db,user["tenant_id"],"reports"):
                     return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
+                try:
+                    dates = parse_report_dates(urlparse(self.path).query)
+                except ValueError as exc:
+                    return self.send_json(400, {"error":str(exc)})
+                lower,upper=report_epoch_bounds(dates)
+                conditions=["i.tenant_id=?","o.status='paid'"]; values=[user["tenant_id"]]
+                if lower is not None: conditions.append("o.created_at>=?"); values.append(lower)
+                if upper is not None: conditions.append("o.created_at<?"); values.append(upper)
                 rows = db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
                     SUM(i.quantity) AS quantity,SUM(i.line_total-i.discount_amount) AS revenue
                     FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
-                    WHERE i.tenant_id=? AND o.status='paid'
+                    WHERE """+" AND ".join(conditions)+"""
                     GROUP BY i.product_id,i.product_name ORDER BY revenue DESC LIMIT 100""",
-                    (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                    values).fetchall()
+                return self.send_json(200, {"items": [dict(row) for row in rows],
+                    "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
+                    "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
