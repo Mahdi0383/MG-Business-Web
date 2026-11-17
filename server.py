@@ -35,7 +35,7 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -234,6 +234,23 @@ CREATE TABLE IF NOT EXISTS accounting_periods(
 );
 CREATE INDEX IF NOT EXISTS idx_accounting_periods_tenant_dates
  ON accounting_periods(tenant_id,start_date,end_date);
+CREATE TABLE IF NOT EXISTS cash_register_shifts(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ opened_by TEXT NOT NULL REFERENCES users(id), opened_at INTEGER NOT NULL,
+ opening_cash INTEGER NOT NULL CHECK(opening_cash>=0),
+ status TEXT NOT NULL CHECK(status IN ('open','closed')),
+ closed_by TEXT REFERENCES users(id), closed_at INTEGER,
+ expected_cash INTEGER, counted_cash INTEGER, difference INTEGER,
+ open_note TEXT NOT NULL DEFAULT '', close_note TEXT NOT NULL DEFAULT '',
+ CHECK((status='open' AND closed_by IS NULL AND closed_at IS NULL AND expected_cash IS NULL
+        AND counted_cash IS NULL AND difference IS NULL) OR
+       (status='closed' AND closed_by IS NOT NULL AND closed_at IS NOT NULL
+        AND expected_cash IS NOT NULL AND counted_cash IS NOT NULL AND difference IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_register_one_open_per_tenant
+ ON cash_register_shifts(tenant_id) WHERE status='open';
+CREATE INDEX IF NOT EXISTS idx_cash_register_shifts_tenant_date
+ ON cash_register_shifts(tenant_id,opened_at DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id);
 CREATE TRIGGER IF NOT EXISTS journal_entries_no_update BEFORE UPDATE ON journal_entries
 BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END;
@@ -561,6 +578,8 @@ def connect():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(13,?)", (int(time.time()),))
     if not db.execute("SELECT 1 FROM schema_migrations WHERE version=14").fetchone():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(14,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=15").fetchone():
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(15,?)", (int(time.time()),))
     db.commit()
     return db
 
