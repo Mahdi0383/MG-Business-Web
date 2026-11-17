@@ -228,6 +228,10 @@ if 'SELECT rowid AS __rowid,* FROM journal_entries' not in server or 'record["ro
     raise SystemExit("Version 4 backups must preserve journal rowids for active shift reconciliation")
 if 'backup_version<4' not in server or 'record["journal_cursor"]=-1' not in server:
     raise SystemExit("Version 3 cash shifts must retain their timestamp-based restore compatibility")
+if "fulfillment_status" not in server or 'path.endswith("/fulfillment")' not in server:
+    raise SystemExit("Cafe kitchen fulfillment state machine is missing")
+if "renderKitchenQueue" not in app or "data-order-fulfillment" not in app:
+    raise SystemExit("Cafe kitchen queue UI and staged order actions are missing")
 if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
     raise SystemExit("Cash register opening and reconciliation UI is missing")
 if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'SCHEMA_VERSION = 17' not in server:
