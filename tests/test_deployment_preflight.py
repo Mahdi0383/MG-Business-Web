@@ -110,6 +110,10 @@ class DeploymentPreflightTests(unittest.TestCase):
             "MG_TRUSTED_PROXIES": "127.0.0.1,not-a-network",
         }, ROOT)
         self.assertTrue(any("MG_TRUSTED_PROXIES" in error for error in invalid))
+        public_proxy = validate_config({
+            "MG_TRUSTED_PROXIES": "0.0.0.0/0",
+        }, ROOT)
+        self.assertTrue(any("only private, loopback, or link-local" in error for error in public_proxy))
 
     def test_web_root_database_is_rejected(self):
         errors = validate_config({"MG_DB_PATH": str(ROOT / "database.sqlite3")}, ROOT)
