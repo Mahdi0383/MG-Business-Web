@@ -1087,7 +1087,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not module_enabled(db,user["tenant_id"],"reports"):
                     return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
-                    SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue
+                    SUM(i.quantity) AS quantity,SUM(i.line_total-i.discount_amount) AS revenue
                     FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
                     WHERE i.tenant_id=? AND o.status='paid'
                     GROUP BY i.product_id,i.product_name ORDER BY revenue DESC LIMIT 100""",
