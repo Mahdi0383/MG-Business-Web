@@ -81,7 +81,7 @@ if 'if path == "/api/product-addons":' not in server or "addons_json" not in ser
     raise SystemExit("Product add-ons and detailed order receipt API are missing")
 if "data-order-details" not in app or "data-order-print" not in app:
     raise SystemExit("Cafe order detail and print receipt UI are missing")
-if "58mm auto" not in (root / "styles.css").read_text(encoding="utf-8"):
+if "size:58mm 200mm" not in (root / "styles.css").read_text(encoding="utf-8"):
     raise SystemExit("Thermal receipt print layout must support 58mm printers")
 if "productAddonForm" not in app or "data-cafe-addon" not in app or "addons:(x.addons||[]).map" not in app:
     raise SystemExit("Product add-on management and POS selection UI are missing")
