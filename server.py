@@ -2372,7 +2372,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "نوع گردش انبار معتبر نیست."})
                 if movement_type == "purchase" and delta < 0 or movement_type in ("sale","waste") and delta > 0:
                     return self.send_json(400, {"error": "جهت تعداد با نوع گردش انبار سازگار نیست."})
-                if type(unit_cost) is not int or unit_cost < 0:
+                if type(unit_cost) is not int or not 0 <= unit_cost <= 9007199254740991:
                     return self.send_json(400, {"error": "بهای واحد معتبر نیست."})
                 if not isinstance(note,str) or len(note) > 300:
                     return self.send_json(400, {"error": "یادداشت بیش از حد طولانی است."})
