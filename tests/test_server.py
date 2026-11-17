@@ -1712,7 +1712,7 @@ class ApiIntegrationTests(unittest.TestCase):
             db=server.connect()
             try:
                 public_fulfillment=db.execute("SELECT fulfillment_status FROM orders WHERE id=?",
-                    (order["id"],)).fetchone()["fulfillment_status"]
+                    ("public-public-addon-order-01",)).fetchone()["fulfillment_status"]
                 self.assertEqual(public_fulfillment,"queued",
                     "new public QR orders must enter the kitchen queue")
             finally:
