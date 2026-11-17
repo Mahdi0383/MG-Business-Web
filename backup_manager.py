@@ -75,15 +75,9 @@ def _validate_mg_database(connection: sqlite3.Connection) -> None:
     tables = {row[0] for row in connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()}
-    required = {
-        "schema_migrations", "tenants", "users", "sessions", "transactions",
-        "accounts", "journal_entries", "journal_lines", "products",
-        "inventory_movements", "customers", "customer_ledger", "orders",
-        "order_items", "game_devices", "game_sessions", "gamenet_reservations",
-        "licenses", "tenant_modules",
-    }
+    required = {"schema_migrations", "tenants", "users"}
     if not integrity or integrity[0] != "ok" or violations or not required.issubset(tables):
-        raise sqlite3.DatabaseError("Selected file is not a complete MG Business database snapshot.")
+        raise sqlite3.DatabaseError("Selected file is not a valid MG Business database snapshot.")
     required_columns = {
         "schema_migrations": {"version", "applied_at"},
         "tenants": {"id", "name", "created_at"},
