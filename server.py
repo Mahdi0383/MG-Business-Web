@@ -1015,11 +1015,17 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] not in ("owner","manager"):
                     return self.send_json(403, {"error": "فقط مدیر می‌تواند سفارش را برگشت بزند."})
                 db.execute("BEGIN IMMEDIATE")
-                order = db.execute("SELECT * FROM orders WHERE id=? AND tenant_id=? AND status='paid'",
+                order = db.execute("SELECT * FROM orders WHERE id=? AND tenant_id=?",
                                    (order_id,user["tenant_id"])).fetchone()
                 if not order:
                     db.rollback()
-                    return self.send_json(404, {"error": "سفارش پرداخت‌شده پیدا نشد."})
+                    return self.send_json(404, {"error": "سفارش پیدا نشد."})
+                if order["status"]=="cancelled":
+                    db.commit()
+                    return self.send_json(200, {"ok":True,"cancelled":True,"duplicate":True})
+                if order["status"]!="paid":
+                    db.rollback()
+                    return self.send_json(409, {"error":"فقط سفارش پرداخت‌شده قابل برگشت است."})
                 now = int(time.time())
                 lines = db.execute("SELECT product_id,quantity,unit_cost FROM order_items WHERE tenant_id=? AND order_id=?",
                                    (user["tenant_id"],order_id)).fetchall()
@@ -1040,7 +1046,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("UPDATE orders SET status='cancelled' WHERE id=? AND tenant_id=?", (order_id,user["tenant_id"]))
                 audit(db,user["tenant_id"],user["id"],"order.cancelled","order",order_id)
                 db.commit()
-                return self.send_json(200, {"ok": True, "cancelled": True})
+                return self.send_json(200, {"ok": True, "cancelled": True, "duplicate": False})
             if path.startswith("/api/users/"):
                 target_id = path.rsplit("/", 1)[-1]
                 if user["role"] != "owner":
