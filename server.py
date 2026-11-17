@@ -550,7 +550,15 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
     original = db.execute("SELECT * FROM journal_entries WHERE tenant_id=? AND source_type='transaction' AND source_id=?",
                           (tenant_id,tx_id)).fetchone()
     if not original:
-        return
+        raise sqlite3.IntegrityError("Posted transaction is missing its original journal entry.")
+    lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
+                       (tenant_id,original["id"])).fetchall()
+    if len(lines) < 2:
+        raise sqlite3.IntegrityError("Original transaction journal is incomplete.")
+    debit_total = sum(line["debit"] for line in lines)
+    credit_total = sum(line["credit"] for line in lines)
+    if debit_total <= 0 or debit_total != credit_total:
+        raise sqlite3.IntegrityError("Original transaction journal is not balanced.")
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,reversal_of,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"برگشت تراکنش "+tx_id,
