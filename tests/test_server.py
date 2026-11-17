@@ -2699,6 +2699,82 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_cafe_kitchen_fulfillment_requires_ordered_transitions(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"cafe-kitchen-queue.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Kitchen Queue","username":"kitchen-owner",
+                "password":"kitchen-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            status,product=self.request("POST","/api/products",{
+                "id":"kitchen-product","name":"سفارش آشپزخانه","sellPrice":5000,"costPrice":2000},owner)
+            self.assertEqual(status,201)
+            status,stock=self.request("POST","/api/inventory/movements",{
+                "id":"kitchen-stock","productId":product["id"],"movementType":"purchase",
+                "quantityDelta":3,"unitCost":2000,"note":"kitchen test stock"},owner)
+            self.assertEqual(status,201)
+
+            status,order=self.request("POST","/api/orders",{
+                "id":"kitchen-order-1","items":[{"productId":product["id"],"quantity":1}],
+                "paymentMethod":"cash"},owner)
+            self.assertEqual(status,201)
+            status,orders=self.request("GET","/api/orders",token=owner)
+            self.assertEqual(status,200)
+            queued=next(item for item in orders["items"] if item["id"]==order["id"])
+            self.assertEqual(queued["fulfillmentStatus"],"queued")
+
+            status,skipped=self.request("POST","/api/orders/"+order["id"]+"/fulfillment",
+                {"status":"ready"},owner)
+            self.assertEqual(status,409)
+            status,preparing=self.request("POST","/api/orders/"+order["id"]+"/fulfillment",
+                {"status":"preparing"},owner)
+            self.assertEqual(status,200)
+            self.assertFalse(preparing["duplicate"])
+            status,retry=self.request("POST","/api/orders/"+order["id"]+"/fulfillment",
+                {"status":"preparing"},owner)
+            self.assertEqual(status,200)
+            self.assertTrue(retry["duplicate"])
+
+            status,cashier_user=self.request("POST","/api/users",{
+                "username":"kitchen-cashier","password":"kitchen-cashier-password","role":"cashier"},owner)
+            self.assertEqual(status,201)
+            status,cashier_login=self.request("POST","/api/login",{
+                "username":"kitchen-cashier","password":"kitchen-cashier-password"})
+            self.assertEqual(status,200)
+            cashier=cashier_login["token"]
+            for next_status in ("ready","served"):
+                status,result=self.request("POST","/api/orders/"+order["id"]+"/fulfillment",
+                    {"status":next_status},cashier)
+                self.assertEqual(status,200)
+                self.assertEqual(result["status"],next_status)
+
+            status,details=self.request("GET","/api/orders/"+order["id"],token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(details["order"]["fulfillmentStatus"],"served")
+            status,backward=self.request("POST","/api/orders/"+order["id"]+"/fulfillment",
+                {"status":"ready"},owner)
+            self.assertEqual(status,409)
+
+            status,cancel_order=self.request("POST","/api/orders",{
+                "id":"kitchen-order-cancelled","items":[{"productId":product["id"],"quantity":1}],
+                "paymentMethod":"cash"},owner)
+            self.assertEqual(status,201)
+            status,cancelled=self.request("DELETE","/api/orders/"+cancel_order["id"],token=owner)
+            self.assertEqual(status,200)
+            status,cancelled_queue=self.request("POST","/api/orders/"+cancel_order["id"]+"/fulfillment",
+                {"status":"preparing"},owner)
+            self.assertEqual(status,409)
+
+            status,audit_result=self.request("GET","/api/audit-log",token=owner)
+            self.assertEqual(status,200)
+            transitions=[item for item in audit_result["items"]
+                if item["action"]=="cafe.order.fulfillment.updated" and item["entity_id"]==order["id"]]
+            self.assertEqual(len(transitions),3)
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_cash_register_shift_reconciles_cash_and_survives_versioned_backup(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"cash-register-shifts.sqlite3"
