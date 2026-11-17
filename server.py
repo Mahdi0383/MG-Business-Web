@@ -511,9 +511,8 @@ class Handler(SimpleHTTPRequestHandler):
             (token_hash, now)).fetchone()
         if not row:
             return None
-        # Enforce a hard seven-day lifetime and a 30-minute idle timeout.
-        # Expiry is extended only after a valid authenticated request.
-        if now - row["session_created_at"] >= SESSION_SECONDS or now - row["expires_at"] + SESSION_SECONDS >= 30 * 60:
+        # Expiry in the database is the idle deadline; created_at is the hard lifetime.
+        if now - row["session_created_at"] >= SESSION_SECONDS:
             db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
             db.commit()
             return None
@@ -1841,10 +1840,10 @@ class Handler(SimpleHTTPRequestHandler):
             (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 9)""",
             (user_id,user_id))
         db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
-                   (hashlib.sha256(token.encode()).hexdigest(), user_id, now + SESSION_SECONDS, now))
+                   (hashlib.sha256(token.encode()).hexdigest(), user_id, now + 30 * 60, now))
         db.commit()
         row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        return self.send_json(200, {"token": token, "expiresAt": now + SESSION_SECONDS, "user": public_user(row)})
+        return self.send_json(200, {"token": token, "expiresAt": now + 30 * 60, "user": public_user(row)})
 
     def log_error(self, message, *args):
         rendered = message % args if args else message
