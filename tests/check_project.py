@@ -78,6 +78,9 @@ if "offline-card" not in app or "همگام‌سازی آفلاین هنوز ف�
     raise SystemExit("Offline writes must be blocked clearly when the API is unavailable")
 if "audit.items" not in app or "/api/audit-log" not in app:
     raise SystemExit("Audit history UI is missing")
+if "(['owner','manager'].includes(apiUser?.role)?apiRequest('/api/users'):Promise.resolve({items:[]}))" not in app:
+    raise SystemExit("Non-admin users must be able to access their own account settings.")
+
 if "userPasswordForm" not in app or "/password" not in app:
     raise SystemExit("User password reset UI is missing")
 if "customerLedgerPanel" not in app or "data-customer-ledger" not in app:

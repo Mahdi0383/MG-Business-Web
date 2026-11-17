@@ -760,6 +760,39 @@ class ApiIntegrationTests(unittest.TestCase):
                     if key[0] == ip:
                         server.LOGIN_FAILURES.pop(key, None)
 
+    def test_user_can_change_own_password_and_revoke_old_sessions(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "password-change-test.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Password Test Shop", "username": "password-owner",
+                "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            old_token = setup["token"]
+            status, denied = self.request("POST", "/api/account/password", {
+                "currentPassword": "wrong-current-password",
+                "newPassword": "new-secure-password-2026"
+            }, old_token)
+            self.assertEqual(status, 403)
+            status, changed = self.request("POST", "/api/account/password", {
+                "currentPassword": "correct-horse-battery",
+                "newPassword": "new-secure-password-2026"
+            }, old_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(changed.get("token"))
+            status, _ = self.request("GET", "/api/me", token=old_token)
+            self.assertEqual(status, 401)
+            status, me = self.request("GET", "/api/me", token=changed["token"])
+            self.assertEqual(status, 200)
+            self.assertEqual(me["user"]["username"], "password-owner")
+            status, login = self.request("POST", "/api/login", {
+                "username": "password-owner", "password": "new-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_password_hash_is_salted_and_verified(self):
         encoded = server.password_hash("a-long-test-password")
         self.assertTrue(server.verify_password("a-long-test-password", encoded))
