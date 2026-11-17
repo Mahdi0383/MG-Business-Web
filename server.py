@@ -35,7 +35,7 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -225,6 +225,15 @@ CREATE TABLE IF NOT EXISTS journal_lines(
  FOREIGN KEY(account_id,tenant_id) REFERENCES accounts(id,tenant_id)
 );
 CREATE INDEX IF NOT EXISTS idx_journal_entries_tenant_date ON journal_entries(tenant_id,entry_date DESC);
+CREATE TABLE IF NOT EXISTS accounting_periods(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ start_date TEXT NOT NULL, end_date TEXT NOT NULL,
+ closed_by TEXT NOT NULL REFERENCES users(id), closed_at INTEGER NOT NULL,
+ CHECK(start_date<=end_date), UNIQUE(tenant_id,start_date,end_date),
+ UNIQUE(id,tenant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_accounting_periods_tenant_dates
+ ON accounting_periods(tenant_id,start_date,end_date);
 CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id);
 CREATE TRIGGER IF NOT EXISTS journal_entries_no_update BEFORE UPDATE ON journal_entries
 BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END;
@@ -550,6 +559,8 @@ def connect():
                 db.execute("UPDATE orders SET request_fingerprint=? WHERE id=? AND tenant_id=?",
                            (fingerprint,legacy_order["id"],legacy_order["tenant_id"]))
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(13,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=14").fetchone():
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(14,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -596,6 +607,22 @@ def seed_accounts(db, tenant_id):
     for code, name, account_type, normal in defaults:
         db.execute("INSERT OR IGNORE INTO accounts(id,tenant_id,code,name,account_type,normal_balance) VALUES(?,?,?,?,?,?)",
                    (secrets.token_urlsafe(16),tenant_id,code,name,account_type,normal))
+
+def assert_accounting_period_open(db, tenant_id, entry_date):
+    if not isinstance(entry_date,str) or len(entry_date)!=10:
+        raise sqlite3.IntegrityError("Accounting entry date is invalid.")
+    try:
+        parsed=time.strptime(entry_date,"%Y-%m-%d")
+    except ValueError as exc:
+        raise sqlite3.IntegrityError("Accounting entry date is invalid.") from exc
+    if time.strftime("%Y-%m-%d",parsed)!=entry_date:
+        raise sqlite3.IntegrityError("Accounting entry date is invalid.")
+    closed=db.execute("""SELECT id FROM accounting_periods
+        WHERE tenant_id=? AND start_date<=? AND end_date>=? LIMIT 1""",
+        (tenant_id,entry_date,entry_date)).fetchone()
+    if closed:
+        raise sqlite3.IntegrityError("Accounting period is closed; backdated posting or reversal is not allowed.")
+
 
 def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000'):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
