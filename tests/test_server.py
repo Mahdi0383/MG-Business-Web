@@ -1066,10 +1066,22 @@ class ApiIntegrationTests(unittest.TestCase):
             status, order = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,201)
             self.assertEqual(order["total"],250)
+            # Simulate an installation upgraded from schema 12: migration 13
+            # must backfill a fingerprint before later customer profile edits.
+            db=server.connect()
+            try:
+                db.execute("UPDATE orders SET request_fingerprint=NULL WHERE id='public-public-addon-order-01'")
+                db.execute("DELETE FROM schema_migrations WHERE version=13")
+                db.commit()
+            finally:
+                db.close()
+            server.connect().close()
             # Customer profiles are mutable; a retry must remain idempotent even
             # if the customer record changes after the original order was accepted.
             db=server.connect()
             try:
+                fingerprint=db.execute("SELECT request_fingerprint FROM orders WHERE id='public-public-addon-order-01'").fetchone()[0]
+                self.assertTrue(fingerprint)
                 db.execute("UPDATE customers SET full_name=?,phone=? WHERE phone=?",
                            ("Updated Profile","+49123456780","+49123456789"))
                 db.commit()
