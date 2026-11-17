@@ -163,7 +163,7 @@ if "day>=accountingFromDate" not in app or "day<=accountingToDate" not in app:
     raise SystemExit("The transaction ledger list must follow the accounting report date range")
 if 'data-accounting-export' not in app or "mg-accounting-" not in app:
     raise SystemExit("Dated accounting report CSV export is missing")
-if "text/csv;charset=utf-8" not in app or String not in app:
+if "text/csv;charset=utf-8" not in app or "const quote=value=>" not in app or "[=+@-]" not in app:
     raise SystemExit("Accounting report CSV export must use UTF-8 CSV output")
 if "accountingReportQuery()" not in app or "reportsDateQuery()" not in app:
     raise SystemExit("Report date filters must be passed to the financial API endpoints")
