@@ -43,13 +43,16 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
     except ValueError:
         valid_https_url = False
 
+    trusted_proxy_networks = []
     for proxy in env.get("MG_TRUSTED_PROXIES", "").split(","):
         proxy = proxy.strip()
         if proxy:
             try:
-                ipaddress.ip_network(proxy, strict=False)
+                trusted_proxy_networks.append(ipaddress.ip_network(proxy, strict=False))
             except ValueError:
                 errors.append(f"MG_TRUSTED_PROXIES contains an invalid IP address or CIDR: {proxy}")
+    if environment == "production" and not trusted_proxy_networks:
+        errors.append("Production requires MG_TRUSTED_PROXIES to identify the actual TLS reverse proxy; otherwise client IP rate limits cannot be enforced correctly.")
     if public_bind and not valid_https_url:
         errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with a valid https:// URL.")
     if environment == "production":
