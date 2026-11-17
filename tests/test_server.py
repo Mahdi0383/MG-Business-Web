@@ -738,6 +738,23 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_public_order_throttle_state_is_bounded_and_enforced(self):
+        with server.LOGIN_LOCK:
+            original = server.PUBLIC_ORDER_FAILURES.copy()
+            server.PUBLIC_ORDER_FAILURES.clear()
+            try:
+                for index in range(2100):
+                    ip = "203.0."+str(index // 256)+"."+str(index % 256)
+                    self.assertTrue(server.remember_public_order_attempt(ip, 1000))
+                self.assertLessEqual(len(server.PUBLIC_ORDER_FAILURES), 2048)
+                for attempt in range(5):
+                    self.assertTrue(server.remember_public_order_attempt("198.51.100.7", 2000 + attempt))
+                self.assertFalse(server.remember_public_order_attempt("198.51.100.7", 2005))
+                self.assertTrue(server.remember_public_order_attempt("198.51.100.7", 3000))
+            finally:
+                server.PUBLIC_ORDER_FAILURES.clear()
+                server.PUBLIC_ORDER_FAILURES.update(original)
+
     def test_login_throttle_state_is_bounded(self):
         with server.LOGIN_LOCK:
             original_user = server.LOGIN_FAILURES.copy()
