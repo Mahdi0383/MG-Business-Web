@@ -292,6 +292,11 @@ class ApiIntegrationTests(unittest.TestCase):
             "quantityDelta": 1, "unitCost": 9007199254740992
         }, token)
         self.assertEqual(status, 400)
+        status, oversized_value = self.request("POST", "/api/inventory/movements", {
+            "id": "move-overflow-value", "productId": "product-1", "movementType": "purchase",
+            "quantityDelta": 2, "unitCost": 9007199254740991
+        }, token)
+        self.assertEqual(status, 400)
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["quantity"], 15)
