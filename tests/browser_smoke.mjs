@@ -133,6 +133,13 @@ try {
   const orderBody = await orderResponse.json();
   assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
+  const shiftState = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/cash-register/shifts", { headers: { Authorization: "Bearer " + token } });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(shiftState.status, 200, "cash register status response: " + JSON.stringify(shiftState.body));
+  assert.ok(shiftState.body.active, "cash shift should remain active after a cash order: " + JSON.stringify(shiftState.body));
   await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
   const shiftExpectedCash = 1000 + orderBody.total;
   await page.locator('#cashShiftCloseForm input[name="countedCash"]').fill(String(shiftExpectedCash));
