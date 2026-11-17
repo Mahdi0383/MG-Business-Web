@@ -208,10 +208,22 @@ if 'if path == "/api/accounting/periods/close":' not in server or 'accounting.pe
     raise SystemExit("Owner-only audited accounting period close API is missing")
 if 'if path == "/api/accounting/periods":' not in server or 'accounting_periods' not in server[server.find('if path == "/api/backup":'):]:
     raise SystemExit("Accounting period listing and backup integration are missing")
-if '"version":2' not in server or 'backup_version not in (1,2,3)' not in server:
+if '"version":3' not in server or 'backup_version not in (1,2,3)' not in server:
     raise SystemExit("Workspace backup v2 export and backward-compatible v1 restore are missing")
 if 'if backup_version >= 2:' not in server or 'accounting_periods' not in server:
     raise SystemExit("Legacy backup restore must preserve accounting period locks")
 if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
     raise SystemExit("Accounting period close form is missing")
+if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 15' not in server:
+    raise SystemExit("Cash register shift schema migration is missing")
+if 'cash_register_expected_cash' not in server or 'a.code=\'1000\'' not in server:
+    raise SystemExit("Cash register reconciliation must use posted cash-account journal movements")
+if 'if path == "/api/cash-register/shifts/open":' not in server or 'cash_register.shift.opened' not in server:
+    raise SystemExit("Cash register shift opening API and audit event are missing")
+if 'if path.startswith("/api/cash-register/shifts/") and path.endswith("/close"):' not in server or 'cash_register.shift.closed' not in server:
+    raise SystemExit("Cash register shift close and reconciliation API are missing")
+if 'cash_register_shifts' not in server[server.find('snapshot = {"schema":"mg-business-server-backup"'):]:
+    raise SystemExit("Cash register shifts must be included in workspace backups")
+if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
+    raise SystemExit("Cash register opening and reconciliation UI is missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
