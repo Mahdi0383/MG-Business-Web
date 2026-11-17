@@ -42,6 +42,18 @@ def remember_login_failure(key, ip, now):
     while len(LOGIN_IP_FAILURES) > 2048:
         LOGIN_IP_FAILURES.pop(next(iter(LOGIN_IP_FAILURES)))
 
+def remember_public_order_attempt(ip, now):
+    attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip, []) if now - stamp < 900]
+    if len(attempts) >= 5:
+        PUBLIC_ORDER_FAILURES[ip] = attempts
+        return False
+    attempts.append(now)
+    PUBLIC_ORDER_FAILURES[ip] = attempts
+    # Public IPs are attacker-controlled; cap cardinality to bound process memory.
+    while len(PUBLIC_ORDER_FAILURES) > 2048:
+        PUBLIC_ORDER_FAILURES.pop(next(iter(PUBLIC_ORDER_FAILURES)))
+    return True
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tenants(
@@ -1024,11 +1036,8 @@ class Handler(SimpleHTTPRequestHandler):
                 ip = self.client_address[0]
                 now = time.time()
                 with LOGIN_LOCK:
-                    attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip,[]) if now-stamp < 900]
-                    if len(attempts) >= 5:
+                    if not remember_public_order_attempt(ip, now):
                         return self.send_json(429, {"error": "تعداد سفارش‌های آنلاین بیش از حد است؛ بعداً دوباره تلاش کنید."})
-                    attempts.append(now)
-                    PUBLIC_ORDER_FAILURES[ip] = attempts
                 name, phone = data.get("customerName"), data.get("phone")
                 items = data.get("items")
                 if not isinstance(name,str) or not 1 <= len(name.strip()) <= 160:
