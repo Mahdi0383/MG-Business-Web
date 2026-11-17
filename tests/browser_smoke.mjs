@@ -95,6 +95,25 @@ try {
   await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
 
   await page.locator('#navigation [data-page="accounting"]').click();
+  const accountingToday = await page.evaluate(() => {
+    const now = new Date();
+    return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+  });
+  const accountingReportRequests = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"].includes(url.pathname)) {
+      accountingReportRequests.push(url);
+    }
+  });
+  await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
+  await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
+  await page.locator('#accountingDateFilter button[type="submit"]').click();
+  await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
+  for (const path of ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"]) {
+    assert.ok(accountingReportRequests.some(url => url.pathname === path && url.searchParams.get("fromDate") === accountingToday && url.searchParams.get("toDate") === accountingToday),
+      "accounting date range must reach " + path);
+  }
   await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
   const accountingDownloadPromise = page.waitForEvent("download");
   await page.locator('[data-accounting-export]').click();
