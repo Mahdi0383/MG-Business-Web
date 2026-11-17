@@ -119,6 +119,7 @@ try {
   const shiftOpenResponse = await shiftOpenPromise;
   const shiftOpenBody = await shiftOpenResponse.json();
   assert.equal(shiftOpenResponse.status(), 201, "cash register open response: " + JSON.stringify(shiftOpenBody));
+  await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
   await page.locator("#cafeProduct").selectOption(productBody.id);
   await page.locator("#addCartItem").click();
   await page.waitForFunction(() => {
