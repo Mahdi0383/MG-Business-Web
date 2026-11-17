@@ -26,7 +26,8 @@ HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
 SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
-MAX_BODY = 50 * 1024 * 1024
+MAX_BODY = 2 * 1024 * 1024
+MAX_BACKUP_BODY = 50 * 1024 * 1024
 MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
@@ -664,7 +665,8 @@ class Handler(SimpleHTTPRequestHandler):
     def read_json(self):
         try: length = int(self.headers.get("Content-Length", "0"))
         except ValueError: raise ValueError("طول درخواست نامعتبر است.")
-        if length <= 0 or length > MAX_BODY: raise ValueError("حجم درخواست نامعتبر است.")
+        body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
+        if length <= 0 or length > body_limit: raise ValueError("حجم درخواست نامعتبر است.")
         try:
             value = json.loads(self.rfile.read(length))
         except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
