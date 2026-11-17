@@ -51,7 +51,7 @@ git pull --ff-only
 - `GET/POST /api/orders`، `GET /api/orders/{id}` برای جزئیات رسید و `DELETE /api/orders/{id}` برای برگشت سفارش
 - `GET/POST /api/product-addons`، `POST /api/product-addons/{id}` و `DELETE /api/product-addons/{id}` برای مدیریت افزودنی کالا
 - `GET /api/public/menu` و `POST /api/public/orders` برای منوی عمومی و سفارش QR همراه با افزودنی‌ها
-- `GET /api/reports/sales-by-product`
+- `GET /api/reports/sales-by-product` و `GET /api/reports/best-selling-today` برای رتبه‌بندی ۱۰ کالای پرفروش روز بر اساس تاریخ محلی سرور، تعداد فروش، مبلغ و تعداد سفارش
 - `GET /api/backup` و `POST /api/backup/restore` برای پشتیبان کامل و بازیابی اتمیک همان فضای کاری
 - `GET/POST /api/transactions` و `DELETE /api/transactions/{id}` (برگشت با سند معکوس)
 - `GET/POST /api/products`، `GET/POST /api/customers`، `GET /api/customers/{id}/ledger` و `POST /api/customers/{id}/payments`
