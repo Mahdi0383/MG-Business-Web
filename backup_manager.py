@@ -57,6 +57,7 @@ def _encrypt_file(source: Path, destination: Path, key: bytes) -> None:
 
 
 def _decrypt_file(source: Path, destination: Path, key: bytes) -> None:
+    from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     size = source.stat().st_size
@@ -81,7 +82,10 @@ def _decrypt_file(source: Path, destination: Path, key: bytes) -> None:
                 remaining -= len(chunk)
                 output_file.write(decryptor.update(chunk))
             # GCM authentication is verified here before the plaintext is trusted.
-            output_file.write(decryptor.finalize())
+            try:
+                output_file.write(decryptor.finalize())
+            except InvalidTag as exc:
+                raise ValueError("Encrypted backup authentication failed: the key is incorrect or the file was modified.") from exc
             output_file.flush()
             os.fsync(output_file.fileno())
 
