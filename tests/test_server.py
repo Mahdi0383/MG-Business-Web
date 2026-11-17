@@ -177,6 +177,14 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         cashier_id = result["id"]
+        # Duplicate usernames must be a clean conflict, not an internal error.
+        status, duplicate_user = self.request("POST", "/api/users", {
+            "username": "  cashier  ", "password": "another-cashier-password-2026", "role": "viewer"
+        }, token)
+        self.assertEqual(status,409)
+        status, users = self.request("GET", "/api/users", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(sum(1 for item in users["items"] if item["username"]=="cashier"),1)
         status, result = self.request("POST", "/api/login", {
             "username": "cashier", "password": "cashier-long-password"
         })
