@@ -2724,6 +2724,42 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.send_json(200, {"ok":True,"program":{"enabled":enabled,
                     "spendAmount":spend_amount,"pointsAwarded":points_awarded,"updatedAt":now}})
+            if path.startswith("/api/orders/") and path.endswith("/fulfillment"):
+                if not module_enabled(db,user["tenant_id"],"cafe"):
+                    return self.send_json(403,{"error":"ماژول کافه در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403,{"error":"دسترسی تغییر وضعیت آماده‌سازی سفارش ندارید."})
+                if set(data)!={"status"}:
+                    return self.send_json(400,{"error":"وضعیت جدید آماده‌سازی سفارش را ارسال کنید."})
+                next_status=data.get("status")
+                transitions={"queued":"preparing","preparing":"ready","ready":"served"}
+                if next_status not in transitions.values():
+                    return self.send_json(400,{"error":"وضعیت آماده‌سازی سفارش معتبر نیست."})
+                order_id=path.split("/")[-2]
+                if not 1<=len(order_id)<=100:
+                    return self.send_json(400,{"error":"شناسه سفارش معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                order=db.execute("""SELECT id,status,fulfillment_status FROM orders
+                    WHERE id=? AND tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
+                if not order:
+                    db.rollback()
+                    return self.send_json(404,{"error":"سفارش پیدا نشد."})
+                if order["status"]!="paid":
+                    db.rollback()
+                    return self.send_json(409,{"error":"سفارش لغوشده وارد صف آماده‌سازی نمی‌شود."})
+                if order["fulfillment_status"]==next_status:
+                    db.commit()
+                    return self.send_json(200,{"ok":True,"id":order_id,"status":next_status,"duplicate":True})
+                if transitions.get(order["fulfillment_status"])!=next_status:
+                    db.rollback()
+                    return self.send_json(409,{"error":"تغییر وضعیت آماده‌سازی باید مرحله‌به‌مرحله انجام شود."})
+                db.execute("""UPDATE orders SET fulfillment_status=?
+                    WHERE id=? AND tenant_id=? AND status='paid'""",
+                    (next_status,order_id,user["tenant_id"]))
+                audit(db,user["tenant_id"],user["id"],"cafe.order.fulfillment.updated","order",order_id,
+                    {"from":order["fulfillment_status"],"to":next_status})
+                db.commit()
+                return self.send_json(200,{"ok":True,"id":order_id,"status":next_status,"duplicate":False})
             if path == "/api/orders":
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403, {"error": "ماژول کافه در لایسنس فعال نیست."})
