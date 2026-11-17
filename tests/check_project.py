@@ -73,6 +73,10 @@ if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
 if "supplierLedgerPanel" not in app or "supplierStatementForm" not in app or "data-supplier-ledger-close" not in app:
     raise SystemExit("Supplier account statement UI is missing")
+if "dateStyle:'short',hour:" in app or "dateStyle:'short',minute:" in app:
+    raise SystemExit("Transaction timestamps must not combine Intl dateStyle with individual time components")
+if "dateStyle:'short',timeStyle:'short'" not in app:
+    raise SystemExit("Transaction date and time formatting is missing")
 if "delete transactionForm.dataset.requestId" not in app or "delete e.currentTarget.dataset.requestId" in app:
     raise SystemExit("Async transaction submission must retain its form reference after awaiting the API")
 if "function persist(){if(apiMode)return true;" not in app:
