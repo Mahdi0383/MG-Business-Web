@@ -61,6 +61,8 @@ if "supplierLedgerPanel" not in app or "supplierStatementForm" not in app or "da
     raise SystemExit("Supplier account statement UI is missing")
 if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
     raise SystemExit("Supplier account statement CSV export is missing")
+if "const safe=" not in app or "[=+@-]" not in app:
+    raise SystemExit("Supplier CSV export must neutralize spreadsheet formula injection")
 if "result.totalPurchases" not in app or "item.balanceAfter" not in app:
     raise SystemExit("Supplier statement export must include totals and running balances")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
