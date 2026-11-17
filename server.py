@@ -1054,7 +1054,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "users": "SELECT id,tenant_id,username,role,active,created_at FROM users WHERE tenant_id=?",
                     "transactions": "SELECT * FROM transactions WHERE tenant_id=?",
                     "accounts": "SELECT * FROM accounts WHERE tenant_id=?",
-                    "journal_entries": "SELECT * FROM journal_entries WHERE tenant_id=?",
+                    "journal_entries": "SELECT rowid AS __rowid,* FROM journal_entries WHERE tenant_id=? ORDER BY rowid",
                     "journal_lines": "SELECT * FROM journal_lines WHERE tenant_id=?",
                     "products": "SELECT * FROM products WHERE tenant_id=?",
                     "product_addons": "SELECT * FROM product_addons WHERE tenant_id=?",
@@ -1085,7 +1085,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if total_rows > BACKUP_MAX_ROWS:
                     db.rollback()
                     return self.send_json(413, {"error":"حجم اطلاعات فضای کاری از سقف خروجی پشتیبان بیشتر است؛ از پشتیبان‌گیری محلی پایگاه داده استفاده کنید."})
-                snapshot = {"schema":"mg-business-server-backup","version":3,
+                snapshot = {"schema":"mg-business-server-backup","version":4,
                             "exportedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
                             "tenant":dict(db.execute("SELECT id,name,created_at FROM tenants WHERE id=?",(tenant_id,)).fetchone()),
                             "tables":{}}
@@ -2151,7 +2151,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
                 backup_version=data.get("version")
-                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3):
+                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3,4):
                     return self.send_json(400, {"error": "نسخه یا ساختار فایل پشتیبان معتبر نیست."})
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
@@ -2263,6 +2263,14 @@ class Handler(SimpleHTTPRequestHandler):
                             # Restore originals first even when both entries share the same second.
                             records = sorted(records,key=lambda row: (bool(row.get("reversal_of")), row.get("created_at",0)))
                         for record in records:
+                            if name=="journal_entries" and backup_version>=4 and "__rowid" in record:
+                                record=dict(record)
+                                record["rowid"]=record.pop("__rowid")
+                            elif name=="cash_register_shifts" and backup_version<4:
+                                # Older JSON snapshots did not preserve journal rowids.
+                                # Fall back to the legacy timestamp boundary for active shifts.
+                                record=dict(record)
+                                record["journal_cursor"]=-1
                             columns = list(record.keys())
                             if not columns:
                                 continue
