@@ -133,7 +133,7 @@ try {
   const orderResponse = await orderResponsePromise;
   const orderBody = await orderResponse.json();
   assert.equal(orderResponse.status(), 201, "order API response: " + JSON.stringify(orderBody));
-  await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#modulePage").getByText(orderBody.orderNumber, { exact: true }).first().waitFor({ state: "visible" });
   let kitchenAction = page.locator('[data-order-fulfillment="' + orderBody.id + '"]');
   await kitchenAction.waitFor({ state: "visible" });
   for (const nextStatus of ["preparing", "ready", "served"]) {
