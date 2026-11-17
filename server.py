@@ -1595,8 +1595,13 @@ class Handler(SimpleHTTPRequestHandler):
                 allowed = ("users","accounts","products","product_addons","customers","customer_ledger","loyalty_programs","customer_loyalty_ledger","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","suppliers","purchase_invoices","purchase_invoice_items","supplier_payments",
                            "orders","order_items","game_sessions","game_session_segments","gamenet_reservations","audit_log")
-                if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
-                    return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
+                # A restore replaces the complete workspace dataset. Missing tables
+                # must never be interpreted as empty lists, or a partial/corrupt
+                # snapshot could silently erase otherwise valid business data.
+                if set(tables) != set(allowed) or any(
+                    not isinstance(tables.get(name),list) for name in allowed
+                ):
+                    return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان ناقص یا نامعتبر است."})
                 total_rows = sum(len(tables.get(name,[])) for name in allowed)
                 if total_rows > 500000:
                     return self.send_json(413, {"error": "تعداد رکوردهای نسخه پشتیبان بیش از حد مجاز است."})
