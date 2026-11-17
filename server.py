@@ -33,6 +33,15 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 
+def remember_login_failure(key, ip, now):
+    LOGIN_FAILURES.setdefault(key, []).append(now)
+    LOGIN_IP_FAILURES.setdefault(ip, []).append(now)
+    # Bound attacker-controlled username/IP cardinality in this process.
+    while len(LOGIN_FAILURES) > 4096:
+        LOGIN_FAILURES.pop(next(iter(LOGIN_FAILURES)))
+    while len(LOGIN_IP_FAILURES) > 2048:
+        LOGIN_IP_FAILURES.pop(next(iter(LOGIN_IP_FAILURES)))
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tenants(
@@ -1005,8 +1014,7 @@ class Handler(SimpleHTTPRequestHandler):
                 user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
                 if not user or not isinstance(password, str) or not verify_password(password, user["password_hash"]):
                     with LOGIN_LOCK:
-                        LOGIN_FAILURES.setdefault(key, []).append(now)
-                        LOGIN_IP_FAILURES.setdefault(ip, []).append(now)
+                        remember_login_failure(key, ip, now)
                     return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
                 with LOGIN_LOCK:
                     LOGIN_FAILURES.pop(key, None)

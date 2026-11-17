@@ -738,6 +738,24 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_login_throttle_state_is_bounded(self):
+        with server.LOGIN_LOCK:
+            original_user = server.LOGIN_FAILURES.copy()
+            original_ip = server.LOGIN_IP_FAILURES.copy()
+            server.LOGIN_FAILURES.clear()
+            server.LOGIN_IP_FAILURES.clear()
+            try:
+                for index in range(4200):
+                    ip = "198.51."+str(index // 256)+"."+str(index % 256)
+                    server.remember_login_failure((ip,"user-"+str(index)), ip, index)
+                self.assertLessEqual(len(server.LOGIN_FAILURES), 4096)
+                self.assertLessEqual(len(server.LOGIN_IP_FAILURES), 2048)
+            finally:
+                server.LOGIN_FAILURES.clear()
+                server.LOGIN_FAILURES.update(original_user)
+                server.LOGIN_IP_FAILURES.clear()
+                server.LOGIN_IP_FAILURES.update(original_ip)
+
     def test_login_rate_limit_covers_username_rotation_per_ip(self):
         ip = "127.0.0.1"
         with server.LOGIN_LOCK:
