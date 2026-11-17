@@ -1807,7 +1807,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if active_reservation and (active_reservation["customer_id"] is None or active_reservation["customer_id"]!=customer_id):
                     db.rollback(); return self.send_json(409,{"error":"این دستگاه در حال حاضر رزرو شده و برای این نشست قابل استفاده نیست."})
                 if active_reservation:
-                    db.execute("UPDATE gamenet_reservations SET status='completed' WHERE id=?",(active_reservation["id"],))
+                    completed=db.execute("""UPDATE gamenet_reservations SET status='completed'
+                        WHERE id=? AND tenant_id=? AND status='booked'""",
+                        (active_reservation["id"],user["tenant_id"]))
+                    if completed.rowcount != 1:
+                        db.rollback()
+                        return self.send_json(409,{"error":"وضعیت رزرو تغییر کرده است؛ دوباره تلاش کنید."})
                 db.execute("""INSERT INTO game_sessions(id,tenant_id,device_id,customer_id,started_by,started_at,status,
                     players_count,rate_per_hour,is_free,created_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?)""",
                     (session_id,user["tenant_id"],device_id,customer_id,user["id"],now,players,device["hourly_rate"],device["is_free"],now))
@@ -1933,8 +1938,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if amount > 9007199254740991:
                     db.rollback()
                     return self.send_json(400, {"error":"مبلغ صورتحساب نشست بیش از حد مجاز است."})
-                db.execute("UPDATE game_sessions SET status='ended',ended_at=?,amount_due=?,payment_method=? WHERE id=? AND tenant_id=?",
-                           (now,amount,payment_method,session_id,user["tenant_id"]))
+                ended=db.execute("""UPDATE game_sessions SET status='ended',ended_at=?,amount_due=?,payment_method=?
+                    WHERE id=? AND tenant_id=? AND status='running'""",
+                    (now,amount,payment_method,session_id,user["tenant_id"]))
+                if ended.rowcount != 1:
+                    db.rollback()
+                    return self.send_json(409,{"error":"وضعیت نشست تغییر کرده است؛ دوباره تلاش کنید."})
                 if amount > 0:
                     tx_id = "game-"+session_id
                     title = "هزینه بازی "+session_id
