@@ -324,7 +324,7 @@ try {
   const periodCloseResponse = await periodClosePromise;
   const periodCloseBody = await periodCloseResponse.json();
   assert.equal(periodCloseResponse.status(), 201, "period close response: " + JSON.stringify(periodCloseBody));
-  await page.locator("#modulePage").getByText(closedDate, { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#modulePage").getByText(closedDate, { exact: true }).last().waitFor({ state: "visible" });
   const backdatedPosting = await page.evaluate(async ({ date }) => {
     const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/transactions", {
