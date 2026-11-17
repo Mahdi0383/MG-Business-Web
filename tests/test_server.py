@@ -769,6 +769,10 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("POST", "/api/backup/restore", snapshot, token)
         self.assertEqual(status, 200)
         self.assertGreater(result["restoredRows"], 0)
+        status, restored_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(restored_loyalty["balance"],0)
+        self.assertEqual(len(restored_loyalty["items"]),2)
         db = server.connect()
         try:
             journal_id = db.execute("SELECT id FROM journal_entries LIMIT 1").fetchone()[0]
