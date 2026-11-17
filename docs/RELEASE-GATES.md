@@ -15,7 +15,7 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [x] Game-session closure replays the committed invoice after a lost response and rejects changed settlement payloads.
 - [x] Inventory movement validates the active stock-tracked product and stock ledger inside the serializable write transaction.
 - [x] Manual inventory stock-movement API requires `Idempotency-Key`, persists a request fingerprint under a tenant/branch unique constraint, replays exact retries and rejects changed-payload reuse.
-- [x] Inventory workspace exposes per-product receipt/issue/return/adjustment entry and reuses the same cryptographically random idempotency key on retry; manual movement UI remains online-only.
+- [x] Inventory workspace exposes per-product receipt/issue/return/adjustment entry; on network failure it atomically queues the local movement and reuses its idempotency key for retry.
 - [x] Public ordering rejects ambiguous multi-tenant routing.
 - [x] Sync journal validates payload integrity, actor scope, idempotency envelopes and monotonic cursors.
 - [x] PWA shell does not cache authentication, API or synchronization traffic.
@@ -23,7 +23,7 @@ A release is blocked until every mandatory gate below has objective evidence att
 - [x] Initial inventory offline movement slice includes cached products/baselines, durable local commands, atomic local projection/outbox writes, server replay with idempotency and stale-balance fencing, inbound stock projection and origin-echo suppression.
 - [x] Browser device enrollment, signed sync request verification, credential rotation/revocation and authority lease/fencing foundations pass current frontend, backend SQLite and API/PostgreSQL CI.
 - [ ] Production database concurrency/race testing, multi-node nonce replay validation and operational security review remain mandatory.
-- [ ] Offline transactional business command handlers for sales, accounting, purchasing, café and GameNet remain incomplete; inventory's manual movement UI is not yet offline-enabled.
+- [ ] Offline transactional business command handlers for sales, accounting, purchasing, café and GameNet remain incomplete; inventory and customer are the only implemented local-first business slices.
 - [ ] MG Master / Control Center failover, failback, entitlement lifecycle and creator-only administration remain incomplete.
 - [ ] Customer portal, complete online ordering/reservations, full accounting/purchasing and feature-parity UI remain incomplete.
 
