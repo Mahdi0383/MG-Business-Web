@@ -2603,6 +2603,9 @@ class ApiIntegrationTests(unittest.TestCase):
             status,denied=self.request("POST","/api/accounting/accounts",{
                 "code":"1400","name":"حساب غیرمجاز","accountType":"asset"},tokens["cashier"])
             self.assertEqual(status,403)
+            status,persian_code=self.request("POST","/api/accounting/accounts",{
+                "code":"۱۴۰۰","name":"بدهی کوتاه‌مدت","accountType":"liability"},owner)
+            self.assertEqual(status,201)
             for invalid in (
                 {"code":"12A4","name":"Invalid code","accountType":"asset"},
                 {"code":"1400","name":"Invalid type","accountType":"other"},
@@ -2617,14 +2620,15 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(custom["1300"]["normalBalance"],"debit")
             self.assertEqual(custom["5300"]["normalBalance"],"debit")
             self.assertEqual(custom["1300"]["name"],"سپرده کوتاه‌مدت")
-            self.assertNotIn("1400",custom)
+            self.assertEqual(custom["1400"]["normalBalance"],"credit")
+            self.assertEqual(custom["1400"]["name"],"بدهی کوتاه‌مدت")
             db=server.connect()
             try:
                 tenant_id=setup["user"]["tenantId"]
-                self.assertEqual(db.execute("SELECT COUNT(*) FROM accounts WHERE tenant_id=? AND code IN ('1300','5300')",
-                    (tenant_id,)).fetchone()[0],2)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM accounts WHERE tenant_id=? AND code IN ('1300','1400','5300')",
+                    (tenant_id,)).fetchone()[0],3)
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND action='account.created'",
-                    (tenant_id,)).fetchone()[0],2)
+                    (tenant_id,)).fetchone()[0],3)
             finally:
                 db.close()
         finally:
