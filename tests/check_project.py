@@ -159,6 +159,12 @@ if 'id="accountingDateFilter"' not in app or 'id="reportsDateFilter"' not in app
     raise SystemExit("Accounting and management report date filters are missing")
 if "apiRequest('/api/orders'+query)" not in app or "apiRequest('/api/reports/sales-by-product'+query)" not in app:
     raise SystemExit("Management report date filters must reach order and product sales endpoints")
+if 'if path == "/api/accounting/cash-flow":' not in server or "netCashFlow" not in server:
+    raise SystemExit("Date-scoped accounting cash flow report API is missing")
+if "apiRequest('/api/accounting/cash-flow'+accountingReportQuery())" not in app:
+    raise SystemExit("Accounting cash flow summary must follow the selected date range")
+if "cashFlow.inflow" not in app or "cashFlow.outflow" not in app or "cashFlow.netCashFlow" not in app:
+    raise SystemExit("Accounting cash flow totals are missing from the UI and CSV export")
 if "apiRequest('/api/accounting/journal'+accountingReportQuery())" not in app:
     raise SystemExit("The general ledger journal must follow the accounting report date range")
 if "day>=accountingFromDate" not in app or "day<=accountingToDate" not in app:
