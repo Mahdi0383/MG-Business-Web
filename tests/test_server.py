@@ -74,6 +74,22 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertEqual(headers.get("Cross-Origin-Opener-Policy"), "same-origin")
                 self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "same-origin")
 
+    def test_operational_and_developer_files_are_not_public(self):
+        paths = (
+            "/deployment_preflight.py",
+            "/deploy/systemd/mg-business.env.example",
+            "/deploy/nginx/mg-business.conf.example",
+            "/tests/test_server.py",
+            "/README.md",
+            "/backup_manager.py",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                req = urllib.request.Request(self.base + path, method="GET")
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(req, timeout=5)
+                self.assertEqual(error.exception.code, 404)
+
     def test_request_body_limit_is_small_except_for_backup_restore(self):
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
         try:
