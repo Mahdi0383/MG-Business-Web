@@ -67,6 +67,8 @@ if "apiMode=true;localStorage.removeItem(key);" not in app:
 public_order = (root / "public-order.js").read_text(encoding="utf-8")
 if "data-public-addon" not in public_order or "addons:x.addons.map" not in public_order:
     raise SystemExit("Public QR ordering must support optional product add-ons")
+if "publicOrderFingerprint" not in public_order or "mg-public-order-pending" not in public_order:
+    raise SystemExit("Public QR order retry keys must survive reload without storing customer details")
 if "startsDate.toISOString()" not in app or "start_dt.utcoffset() is None" not in server:
     raise SystemExit("Game reservations must use explicit timezone-aware timestamps")
 if '"duplicate":True' not in server or 'if order["status"]=="cancelled"' not in server:
