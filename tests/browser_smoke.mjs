@@ -32,8 +32,28 @@ try {
   const accountDeactivationResponse = await accountDeactivationPromise;
   assert.equal(accountDeactivationResponse.status(), 200, "unused account deactivation must succeed");
   await page.locator("#accountCreateForm").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#modulePage .module-table").last().locator(".module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
-    "deactivated account must disappear from the active chart");
+  const activeAccountsAfterDeactivation = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/accounting/accounts", {
+      headers: { Authorization: "Bearer " + token }
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(activeAccountsAfterDeactivation.status, 200, "active account chart API must remain available");
+  assert.equal(activeAccountsAfterDeactivation.body.items.some(account => account.code === "1700"), false,
+    "deactivated account must be excluded from the active chart API");
+  const accountChart = page.locator("#modulePage h3.section-caption")
+    .filter({ hasText: "کدینگ حساب‌ها" })
+    .locator("xpath=following-sibling::div[contains(concat(' ', normalize-space(@class), ' '), ' module-table ')][1]");
+  await accountChart.waitFor({ state: "visible" });
+  await page.waitForFunction(() => {
+    const heading = [...document.querySelectorAll("#modulePage h3.section-caption")]
+      .find(element => element.textContent.includes("کدینگ حساب‌ها"));
+    const chart = heading?.nextElementSibling;
+    return Boolean(chart && !chart.innerText.includes("1700"));
+  });
+  assert.equal(await accountChart.locator(".module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
+    "deactivated account must disappear from the active chart UI");
 
   await page.locator('#navigation [data-page="overview"]').click();
   await page.locator("#addTransaction").click();
