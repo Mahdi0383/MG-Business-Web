@@ -863,6 +863,11 @@ class ApiIntegrationTests(unittest.TestCase):
         unbalanced["tables"]["journal_lines"][0]["debit"] += 1
         status, result = self.request("POST", "/api/backup/restore", unbalanced, token)
         self.assertEqual(status, 400)
+        malformed_journal_reference = json.loads(json.dumps(snapshot))
+        malformed_journal_reference["tables"]["journal_lines"][0]["entry_id"] = ["invalid", "unhashable"]
+        status, result = self.request("POST", "/api/backup/restore", malformed_journal_reference, token)
+        self.assertEqual(status, 400)
+        self.assertIn("شناسه سند", result["error"])
         broken = json.loads(json.dumps(snapshot))
         broken["tables"]["order_items"].append({
             "id": "broken-backup-item", "tenant_id": broken["tenant"]["id"],
