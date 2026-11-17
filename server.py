@@ -2246,7 +2246,7 @@ class Handler(SimpleHTTPRequestHandler):
                                (target_id,user["tenant_id"],normalized_username,password_hash(password),role,now))
                 except sqlite3.IntegrityError:
                     db.rollback()
-                    return self.send_json(409, {"error":"این نام کاربری قبلاً در این کسب‌وکار ثبت شده است."})
+                    return self.send_json(409, {"error":"این نام کاربری قبلاً در سامانه ثبت شده است."})
                 audit(db,user["tenant_id"],user["id"],"user.created","user",target_id,{"role":role})
                 db.commit()
                 return self.send_json(201, {"id": target_id, "ok": True})
