@@ -391,14 +391,16 @@ class ApiIntegrationTests(unittest.TestCase):
             restored = db.execute("SELECT COALESCE(SUM(quantity_delta),0) FROM inventory_movements WHERE product_id='product-1'").fetchone()[0]
             self.assertEqual(restored, 13)
             # A returned order must reverse both revenue and cost of goods sold.
+            tenant_id = db.execute("SELECT tenant_id FROM orders WHERE id='order-test-1'").fetchone()[0]
             cogs_net = db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0)
                 FROM journal_lines l JOIN accounts a ON a.id=l.account_id
                 JOIN journal_entries e ON e.id=l.entry_id
                 WHERE a.tenant_id=? AND a.code='5100' AND (
                     (e.source_type='order_cogs' AND e.source_id='order-test-1') OR
                     (e.source_type='inventory_movement' AND e.source_id IN
-                        (SELECT id FROM inventory_movements WHERE note LIKE 'برگشت سفارش%'))
-                )""", (result.get("tenantId",""),)).fetchone()[0]
+                        (SELECT id FROM inventory_movements WHERE tenant_id=? AND note='برگشت سفارش MG-0001'))
+                )""", (tenant_id,tenant_id)).fetchone()[0]
+            self.assertEqual(cogs_net, 0)
         finally:
             db.close()
         status, trial_after_return = self.request("GET", "/api/accounting/trial-balance", token=token)
