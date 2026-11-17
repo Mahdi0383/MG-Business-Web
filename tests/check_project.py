@@ -77,7 +77,11 @@ if "result.totalPurchases" not in app or "item.balanceAfter" not in app:
     raise SystemExit("Supplier statement export must include totals and running balances")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
-if 'if path == "/api/product-addons":' not in server or "addons_json" not in server:
+if 'if path == "/api/product-addons":' not in server or "addons_json" not in server or 'path.startswith("/api/orders/")' not in server:
+    raise SystemExit("Product add-ons and detailed order receipt API are missing")
+if "data-order-details" not in app or "data-order-print" not in app:
+    raise SystemExit("Cafe order detail and print receipt UI are missing")
+if "addons_json" not in server:
     raise SystemExit("Product add-on API and order-item snapshots are missing")
 if "productAddonForm" not in app or "data-cafe-addon" not in app or "addons:(x.addons||[]).map" not in app:
     raise SystemExit("Product add-on management and POS selection UI are missing")
