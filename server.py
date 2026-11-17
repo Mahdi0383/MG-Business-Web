@@ -2719,10 +2719,13 @@ class Handler(SimpleHTTPRequestHandler):
                         JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                         WHERE e.tenant_id=? AND e.source_type='customer_payment' AND e.source_id=?""",
                         (user["tenant_id"],payment_id)).fetchall()
+                    journal_entries=db.execute("""SELECT COUNT(*) AS count FROM journal_entries
+                        WHERE tenant_id=? AND source_type='customer_payment' AND source_id=?""",
+                        (user["tenant_id"],payment_id)).fetchone()["count"]
                     expected_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
-                    payment_matches=(len(journal_rows)==2 and
-                        any(row["code"]==expected_account and row["debit"]==amount and row["credit"]==0 for row in journal_rows) and
-                        any(row["code"]=="1100" and row["debit"]==0 and row["credit"]==amount for row in journal_rows))
+                    expected_rows=sorted([(expected_account,amount,0),("1100",0,amount)])
+                    actual_rows=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                    payment_matches=(journal_entries==1 and len(journal_rows)==2 and actual_rows==expected_rows)
                     if (existing["customer_id"]==customer_id and existing["credit"]==amount and payment_matches):
                         balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
                                            (user["tenant_id"],customer_id)).fetchone()[0]
