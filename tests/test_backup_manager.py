@@ -81,7 +81,7 @@ class BackupManagerTests(unittest.TestCase):
             db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(1,1)")
             db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
             db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
-                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                role TEXT, active INTEGER, created_at INTEGER)""")
             db.execute("CREATE TABLE random_table(id INTEGER PRIMARY KEY)")
             db.commit()
             db.close()
