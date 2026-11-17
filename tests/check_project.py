@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel", "gameSegmentHistoryPanel"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
@@ -35,6 +35,8 @@ if "confirmOverlay" not in parser.ids or "toastRegion" not in parser.ids:
     raise SystemExit("branded feedback dialogs are missing")
 if "window.alert=showToast" not in js or "confirm(" in js:
     raise SystemExit("native dialogs must be replaced by branded feedback UI")
+if "data-game-segments" not in js or "/api/gamenet/sessions/" not in js:
+    raise SystemExit("GameNet billing segment history UI is missing")
 server = (root / "server.py").read_text(encoding="utf-8")
 if "def log_error(self, message, *args):" not in server:
     raise SystemExit("HTTP handler must safely format standard-library error log arguments")
