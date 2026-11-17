@@ -85,6 +85,7 @@ class DeploymentPreflightTests(unittest.TestCase):
         env = {
             "MG_ENV": "production",
             "MG_LICENSE_SECRET": "production-secret-with-more-than-32-characters",
+            "MG_BACKUP_ENCRYPTION_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "MG_HOST": "127.0.0.1",
             "MG_PORT": "8080",
             "MG_PUBLIC_URL": "https://business.example.com",
