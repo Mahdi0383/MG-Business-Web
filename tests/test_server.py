@@ -2308,8 +2308,31 @@ class ApiIntegrationTests(unittest.TestCase):
                     "name": "Unauthorized Device", "deviceType": "pc",
                     "hourlyRate": 10000, "isFree": False
                 }),
+                ("POST", "/api/gamenet/sessions", {
+                    "deviceId": "missing-device", "playersCount": 1
+                }),
+                ("POST", "/api/gamenet/reservations", {
+                    "deviceId": "missing-device", "startsAt": "2026-11-18T10:00:00+03:30",
+                    "endsAt": "2026-11-18T11:00:00+03:30"
+                }),
+                ("POST", "/api/gamenet/sessions/missing-session/adjust", {"playersCount": 2}),
+                ("POST", "/api/gamenet/sessions/missing-session/end", {"paymentMethod": "cash"}),
+                ("POST", "/api/gamenet/reservations/missing-reservation/cancel", {}),
+                ("POST", "/api/licenses/activate", {"code": "invalid-license"}),
+                ("POST", "/api/product-addons", {"productId": "missing-product", "name": "Unauthorized", "price": 1}),
+                ("POST", "/api/product-addons/missing-addon", {"name": "Unauthorized", "price": 1}),
+                ("POST", "/api/products", {"id": "unauthorized-product", "name": "Unauthorized", "sellPrice": 1}),
+                ("POST", "/api/suppliers", {"name": "Unauthorized supplier"}),
+                ("POST", "/api/purchase-invoices", {"id": "unauthorized-invoice", "supplierId": "missing", "items": []}),
+                ("POST", "/api/purchase-invoices/missing-invoice/payments", {"amount": 1, "paymentMethod": "cash"}),
+                ("POST", "/api/inventory/movements", {"productId": "missing-product", "quantityDelta": 1}),
+                ("POST", "/api/customers", {"name": "Unauthorized customer"}),
                 ("POST", "/api/customers/missing-viewer-customer/payments", {
                     "amount": 10000, "paymentMethod": "cash"
+                }),
+                ("POST", "/api/transactions", {
+                    "id": "unauthorized-transaction", "title": "Unauthorized",
+                    "amount": 1, "kind": "income", "category": "test"
                 })
             ]
             for method, path, payload in attempts:
