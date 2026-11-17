@@ -34,7 +34,15 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
             errors.append("MG_HOST must not be empty.")
 
     try:
-        public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
+        for proxy in env.get("MG_TRUSTED_PROXIES", "").split(","):
+        proxy = proxy.strip()
+        if proxy:
+            try:
+                ipaddress.ip_network(proxy, strict=False)
+            except ValueError:
+                errors.append(f"MG_TRUSTED_PROXIES contains an invalid IP address or CIDR: {proxy}")
+
+    public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
         valid_https_url = (public_url.scheme == "https" and bool(public_url.hostname)
                            and not public_url.username and not public_url.password
                            and not public_url.fragment)
