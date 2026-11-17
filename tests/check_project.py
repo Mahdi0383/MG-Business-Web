@@ -64,6 +64,11 @@ if "function persist(){if(apiMode)return true;" not in app:
 if "apiMode=true;localStorage.removeItem(key);" not in app:
     raise SystemExit("Legacy browser financial cache must be cleared after server authentication.")
 
+public_order = (root / "public-order.js").read_text(encoding="utf-8")
+if "data-public-addon" not in public_order or "addons:x.addons.map" not in public_order:
+    raise SystemExit("Public QR ordering must support optional product add-ons")
+if "def public_order_duplicate" not in server or '"addons":addons_by_product.get' not in server:
+    raise SystemExit("Public order add-on snapshots and retry validation are missing")
 if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
     raise SystemExit("Supplier account statement CSV export is missing")
 if "const safe=" not in app or "[=+@-]" not in app:
