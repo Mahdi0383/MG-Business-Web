@@ -690,6 +690,94 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
+    def test_cafe_product_addons_are_priced_snapshotted_and_idempotent(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "product-addons-test.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Addon Cafe", "username": "addon-owner",
+                "password": "addon-owner-password-2026"
+            })
+            self.assertEqual(status, 200)
+            token = setup["token"]
+            license_code = make_license(["cafe","inventory","accounting"], "addon-license")
+            status, activated = self.request("POST", "/api/licenses/activate", {"code":license_code}, token)
+            self.assertEqual(status, 200)
+            status, product = self.request("POST", "/api/products", {
+                "id":"addon-product","name":"Coffee","sellPrice":100,"costPrice":30
+            }, token)
+            self.assertEqual(status, 201)
+            db = server.connect()
+            try:
+                tenant_id = db.execute("SELECT tenant_id FROM users WHERE username='addon-owner'").fetchone()[0]
+                db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,
+                    quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    ("addon-stock",tenant_id,"addon-product",setup["user"]["id"],"purchase",5,30,"opening stock",int(time.time())))
+                db.commit()
+            finally:
+                db.close()
+            status, created = self.request("POST", "/api/product-addons", {
+                "id":"addon-01","productId":"addon-product","name":"Extra shot","price":20
+            }, token)
+            self.assertEqual(status, 201)
+            status, updated = self.request("POST", "/api/product-addons/addon-01", {
+                "name":"Extra shot","price":25
+            }, token)
+            self.assertEqual(status, 200)
+            status, addons = self.request("GET", "/api/product-addons", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(addons["items"][0]["price"], 25)
+
+            order_payload = {
+                "id":"addon-order-01",
+                "items":[{"productId":"addon-product","quantity":2,"addons":["addon-01"]}],
+                "discount":0,"paymentMethod":"cash"
+            }
+            status, order = self.request("POST", "/api/orders", order_payload, token)
+            self.assertEqual(status, 201)
+            self.assertEqual(order["subtotal"], 250)
+            self.assertEqual(order["total"], 250)
+            status, duplicate = self.request("POST", "/api/orders", order_payload, token)
+            self.assertEqual(status, 200)
+            self.assertTrue(duplicate["duplicate"])
+            status, conflict = self.request("POST", "/api/orders", {
+                **order_payload,
+                "items":[{"productId":"addon-product","quantity":2}]
+            }, token)
+            self.assertEqual(status, 409)
+
+            db = server.connect()
+            try:
+                item = db.execute("SELECT unit_price,line_total,addons_json FROM order_items WHERE order_id='addon-order-01'").fetchone()
+                self.assertEqual((item["unit_price"],item["line_total"]),(125,250))
+                saved = json.loads(item["addons_json"])
+                self.assertEqual(saved,[{"id":"addon-01","name":"Extra shot","price":25}])
+                stock = db.execute("SELECT SUM(quantity_delta) FROM inventory_movements WHERE product_id='addon-product'").fetchone()[0]
+                self.assertEqual(stock,3)
+            finally:
+                db.close()
+
+            status, snapshot = self.request("GET", "/api/backup", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(snapshot["tables"]["product_addons"][0]["id"],"addon-01")
+            self.assertEqual(snapshot["tables"]["order_items"][0]["addons_json"],item["addons_json"])
+            status, removed = self.request("DELETE", "/api/product-addons/addon-01", token=token)
+            self.assertEqual(status, 200)
+            status, unavailable = self.request("POST", "/api/orders", {
+                "id":"addon-order-02",
+                "items":[{"productId":"addon-product","quantity":1,"addons":["addon-01"]}],
+                "discount":0,"paymentMethod":"cash"
+            }, token)
+            self.assertEqual(status, 409)
+            db = server.connect()
+            try:
+                saved = db.execute("SELECT addons_json FROM order_items WHERE order_id='addon-order-01'").fetchone()
+                self.assertEqual(json.loads(saved["addons_json"])[0]["name"],"Extra shot")
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_backup_scheduler_retries_transient_failures_with_backoff(self):
         delays = []
 
