@@ -689,6 +689,16 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/me")
         self.assertEqual(status, 401)
 
+    def test_backup_export_rejects_oversized_workspace_before_fetching_rows(self):
+        original_limit = server.BACKUP_MAX_ROWS
+        try:
+            server.BACKUP_MAX_ROWS = 1
+            status, result = self.request("GET", "/api/backup", token=self.owner_token)
+            self.assertEqual(status, 413)
+            self.assertIn("پشتیبان", result["error"])
+        finally:
+            server.BACKUP_MAX_ROWS = original_limit
+
     def test_public_static_server_hides_source_and_development_files(self):
         with urllib.request.urlopen(self.base + "/", timeout=5) as response:
             self.assertEqual(response.status, 200)
