@@ -32,7 +32,7 @@ try {
   const accountDeactivationResponse = await accountDeactivationPromise;
   assert.equal(accountDeactivationResponse.status(), 200, "unused account deactivation must succeed");
   await page.locator("#accountCreateForm").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
+  assert.equal(await page.locator("#modulePage .module-table").last().locator(".module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
     "deactivated account must disappear from the active chart");
 
   await page.locator('#navigation [data-page="overview"]').click();
