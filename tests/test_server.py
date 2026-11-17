@@ -702,6 +702,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/orders", token=token)
         self.assertEqual(next(x for x in result["items"] if x["id"] == "order-test-1")["status"], "cancelled")
+        status, cancelled_order_retry = self.request("POST","/api/orders",{
+            "id":"order-test-1","customerId":"customer-1","discount":5000,
+            "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]
+        },token)
+        self.assertEqual(status,409)
         status, reversed_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
         self.assertEqual(status,200)
         self.assertEqual(reversed_loyalty["balance"],0)
