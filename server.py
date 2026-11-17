@@ -237,6 +237,18 @@ CREATE TABLE IF NOT EXISTS game_sessions(
  created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_game_sessions_tenant_start ON game_sessions(tenant_id,started_at DESC);
+CREATE TABLE IF NOT EXISTS game_session_segments(
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ session_id TEXT NOT NULL REFERENCES game_sessions(id) ON DELETE CASCADE,
+ device_id TEXT NOT NULL REFERENCES game_devices(id),
+ started_at INTEGER NOT NULL, ended_at INTEGER,
+ players_count INTEGER NOT NULL CHECK(players_count BETWEEN 1 AND 16),
+ rate_per_hour INTEGER NOT NULL CHECK(rate_per_hour>=0),
+ is_free INTEGER NOT NULL CHECK(is_free IN (0,1)),
+ CHECK(ended_at IS NULL OR ended_at>=started_at)
+);
+CREATE INDEX IF NOT EXISTS idx_game_session_segments_session
+ ON game_session_segments(tenant_id,session_id,started_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_game_one_running_per_device ON game_sessions(tenant_id,device_id) WHERE status='running';
 CREATE TABLE IF NOT EXISTS gamenet_reservations(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
@@ -334,6 +346,16 @@ def connect():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(7,?)", (int(time.time()),))
     if not db.execute("SELECT 1 FROM schema_migrations WHERE version=8").fetchone():
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(8,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=9").fetchone():
+        legacy_sessions = db.execute("SELECT * FROM game_sessions").fetchall()
+        for session in legacy_sessions:
+            db.execute("""INSERT OR IGNORE INTO game_session_segments
+                (id,tenant_id,session_id,device_id,started_at,ended_at,players_count,rate_per_hour,is_free)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                ("legacy-"+session["id"],session["tenant_id"],session["id"],session["device_id"],
+                 session["started_at"],session["ended_at"],session["players_count"],
+                 session["rate_per_hour"],session["is_free"]))
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(9,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -713,6 +735,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "order_items": "SELECT * FROM order_items WHERE tenant_id=?",
                     "game_devices": "SELECT * FROM game_devices WHERE tenant_id=?",
                     "game_sessions": "SELECT * FROM game_sessions WHERE tenant_id=?",
+                    "game_session_segments": "SELECT * FROM game_session_segments WHERE tenant_id=?",
                     "gamenet_reservations": "SELECT * FROM gamenet_reservations WHERE tenant_id=?",
                     "audit_log": "SELECT * FROM audit_log WHERE tenant_id=?"
                 }
@@ -884,12 +907,28 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT d.id,d.name,d.device_type AS deviceType,d.hourly_rate AS hourlyRate,d.is_free AS isFree,
                     d.active,gs.id AS sessionId,gs.customer_id AS customerId,c.full_name AS customerName,
-                    gs.started_at AS startedAt,gs.players_count AS playersCount
+                    gs.started_at AS startedAt,gs.players_count AS playersCount,
+                    gs.is_free AS sessionIsFree,gs.rate_per_hour AS sessionRatePerHour
                     FROM game_devices d LEFT JOIN game_sessions gs
                     ON gs.device_id=d.id AND gs.tenant_id=d.tenant_id AND gs.status='running'
                     LEFT JOIN customers c ON c.id=gs.customer_id AND c.tenant_id=gs.tenant_id
                     WHERE d.tenant_id=? ORDER BY d.name""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
+            if path.startswith("/api/gamenet/sessions/") and path.endswith("/segments"):
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error":"ماژول گیم‌نت در لایسنس فعال نیست."})
+                session_id=path.split("/")[-2]
+                session=db.execute("SELECT id FROM game_sessions WHERE id=? AND tenant_id=?",
+                    (session_id,user["tenant_id"])).fetchone()
+                if not session:
+                    return self.send_json(404, {"error":"نشست پیدا نشد."})
+                rows=db.execute("""SELECT g.id,g.device_id AS deviceId,d.name AS deviceName,
+                    g.started_at AS startedAt,g.ended_at AS endedAt,g.players_count AS playersCount,
+                    g.rate_per_hour AS ratePerHour,g.is_free AS isFree
+                    FROM game_session_segments g JOIN game_devices d ON d.id=g.device_id
+                    WHERE g.tenant_id=? AND g.session_id=? ORDER BY g.started_at,g.id""",
+                    (user["tenant_id"],session_id)).fetchall()
+                return self.send_json(200, {"items":[dict(row) for row in rows]})
             if path == "/api/gamenet/sessions":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
@@ -1343,7 +1382,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "این نسخه پشتیبان متعلق به فضای کاری فعلی نیست."})
                 allowed = ("users","accounts","products","product_addons","customers","customer_ledger","game_devices","transactions","journal_entries",
                            "journal_lines","inventory_movements","suppliers","purchase_invoices","purchase_invoice_items","supplier_payments",
-                           "orders","order_items","game_sessions","gamenet_reservations","audit_log")
+                           "orders","order_items","game_sessions","game_session_segments","gamenet_reservations","audit_log")
                 if any(name not in allowed or not isinstance(tables.get(name,[]),list) for name in tables):
                     return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان معتبر نیست."})
                 total_rows = sum(len(tables.get(name,[])) for name in allowed)
@@ -1395,14 +1434,14 @@ class Handler(SimpleHTTPRequestHandler):
                             if not set(record).issubset(column_map[name]):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
-                    delete_order = ("gamenet_reservations","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
+                    delete_order = ("gamenet_reservations","game_session_segments","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
                                     "inventory_movements","journal_lines","journal_entries","transactions","customer_ledger",
                                     "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
                     insert_order = ("accounts","products","product_addons","customers","customer_ledger","suppliers","game_devices","transactions",
                                     "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
-                                    "supplier_payments","orders","order_items","game_sessions","gamenet_reservations","audit_log")
+                                    "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","audit_log")
                     for name in insert_order:
                         records = tables.get(name,[])
                         if name == "journal_entries":
@@ -1416,6 +1455,17 @@ class Handler(SimpleHTTPRequestHandler):
                             placeholders = ",".join("?" for _ in columns)
                             sql = "INSERT INTO "+name+"("+",".join(columns)+") VALUES("+placeholders+")"
                             db.execute(sql,tuple(record[column] for column in columns))
+                    # Older JSON backups predate segmented GameNet billing. Reconstruct
+                    # one historical segment per session so restored running sessions
+                    # remain adjustable and ended sessions retain their original rates.
+                    db.execute("""INSERT INTO game_session_segments
+                        (id,tenant_id,session_id,device_id,started_at,ended_at,players_count,rate_per_hour,is_free)
+                        SELECT 'restore-'||s.id,s.tenant_id,s.id,s.device_id,s.started_at,s.ended_at,
+                               s.players_count,s.rate_per_hour,s.is_free
+                        FROM game_sessions s
+                        WHERE s.tenant_id=? AND NOT EXISTS(
+                            SELECT 1 FROM game_session_segments g WHERE g.session_id=s.id
+                        )""",(tenant_id,))
                     db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
                         BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
                     db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
@@ -1610,10 +1660,76 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("""INSERT INTO game_sessions(id,tenant_id,device_id,customer_id,started_by,started_at,status,
                     players_count,rate_per_hour,is_free,created_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?)""",
                     (session_id,user["tenant_id"],device_id,customer_id,user["id"],now,players,device["hourly_rate"],device["is_free"],now))
+                db.execute("""INSERT INTO game_session_segments
+                    (id,tenant_id,session_id,device_id,started_at,players_count,rate_per_hour,is_free)
+                    VALUES(?,?,?,?,?,?,?,?)""",
+                    (secrets.token_urlsafe(18),user["tenant_id"],session_id,device_id,now,players,
+                     device["hourly_rate"],device["is_free"]))
                 audit(db,user["tenant_id"],user["id"],"gamenet.session.started","game_session",session_id,
                       {"deviceId":device_id,"playersCount":players})
                 db.commit()
                 return self.send_json(201, {"id":session_id,"startedAt":now,"ok":True})
+            if path.startswith("/api/gamenet/sessions/") and path.endswith("/adjust"):
+                if not module_enabled(db,user["tenant_id"],"gamenet"):
+                    return self.send_json(403, {"error":"ماژول گیم‌نت در لایسنس فعال نیست."})
+                session_id=path.split("/")[-2]
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error":"دسترسی تغییر نشست بازی ندارید."})
+                requested_device=data.get("deviceId")
+                requested_players=data.get("playersCount")
+                requested_free=data.get("isFree")
+                if requested_device is not None and (not isinstance(requested_device,str) or not 1<=len(requested_device)<=100):
+                    return self.send_json(400, {"error":"شناسه دستگاه معتبر نیست."})
+                if requested_players is not None and (type(requested_players) is not int or not 1<=requested_players<=16):
+                    return self.send_json(400, {"error":"تعداد بازیکنان باید بین ۱ تا ۱۶ باشد."})
+                if requested_free is not None and type(requested_free) is not bool:
+                    return self.send_json(400, {"error":"حالت رایگان/پولی معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                session=db.execute("SELECT * FROM game_sessions WHERE id=? AND tenant_id=?",
+                    (session_id,user["tenant_id"])).fetchone()
+                if not session:
+                    db.rollback(); return self.send_json(404, {"error":"نشست پیدا نشد."})
+                if session["status"]!="running":
+                    db.rollback(); return self.send_json(409, {"error":"فقط نشست در حال اجرا قابل تغییر است."})
+                target_id=requested_device or session["device_id"]
+                target=db.execute("SELECT * FROM game_devices WHERE id=? AND tenant_id=? AND active=1",
+                    (target_id,user["tenant_id"])).fetchone()
+                if not target:
+                    db.rollback(); return self.send_json(404, {"error":"دستگاه مقصد فعال پیدا نشد."})
+                occupied=db.execute("""SELECT id FROM game_sessions
+                    WHERE tenant_id=? AND device_id=? AND status='running' AND id<>?""",
+                    (user["tenant_id"],target_id,session_id)).fetchone()
+                if occupied:
+                    db.rollback(); return self.send_json(409, {"error":"دستگاه مقصد در حال حاضر میزبان نشست دیگری است."})
+                players=requested_players if requested_players is not None else session["players_count"]
+                changed_device=target_id!=session["device_id"]
+                rate=target["hourly_rate"] if changed_device else session["rate_per_hour"]
+                free=target["is_free"] if changed_device else session["is_free"]
+                if requested_free is not None: free=int(requested_free)
+                now=int(time.time())
+                if target_id==session["device_id"] and players==session["players_count"] and rate==session["rate_per_hour"] and int(free)==session["is_free"]:
+                    db.commit()
+                    return self.send_json(200, {"ok":True,"unchanged":True,"deviceId":target_id,
+                        "playersCount":players,"ratePerHour":rate,"isFree":bool(free)})
+                active_segment=db.execute("""SELECT id FROM game_session_segments
+                    WHERE tenant_id=? AND session_id=? AND ended_at IS NULL
+                    ORDER BY started_at DESC LIMIT 1""",(user["tenant_id"],session_id)).fetchone()
+                if not active_segment:
+                    db.rollback(); return self.send_json(409, {"error":"بخش فعال صورتحساب نشست پیدا نشد."})
+                db.execute("UPDATE game_session_segments SET ended_at=? WHERE id=? AND ended_at IS NULL",
+                    (max(now,session["started_at"]),active_segment["id"]))
+                db.execute("""INSERT INTO game_session_segments
+                    (id,tenant_id,session_id,device_id,started_at,players_count,rate_per_hour,is_free)
+                    VALUES(?,?,?,?,?,?,?,?)""",
+                    (secrets.token_urlsafe(18),user["tenant_id"],session_id,target_id,now,players,rate,int(free)))
+                db.execute("""UPDATE game_sessions SET device_id=?,players_count=?,rate_per_hour=?,is_free=?
+                    WHERE id=? AND tenant_id=? AND status='running'""",
+                    (target_id,players,rate,int(free),session_id,user["tenant_id"]))
+                audit(db,user["tenant_id"],user["id"],"gamenet.session.adjusted","game_session",session_id,
+                    {"deviceId":target_id,"playersCount":players,"ratePerHour":rate,"isFree":bool(free)})
+                db.commit()
+                return self.send_json(200, {"ok":True,"deviceId":target_id,"deviceName":target["name"],
+                    "playersCount":players,"ratePerHour":rate,"isFree":bool(free),"changedAt":now})
             if path.startswith("/api/gamenet/sessions/") and path.endswith("/end"):
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
@@ -1636,8 +1752,21 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(409,{"error":"این نشست قابل پایان‌دادن نیست."})
                 now = int(time.time())
                 elapsed = max(0,now-session["started_at"])
-                billed_minutes = (elapsed+59)//60
-                amount = 0 if session["is_free"] else (session["rate_per_hour"]*billed_minutes+59)//60
+                db.execute("""UPDATE game_session_segments SET ended_at=?
+                    WHERE tenant_id=? AND session_id=? AND ended_at IS NULL""",
+                    (max(now,session["started_at"]),user["tenant_id"],session_id))
+                segments=db.execute("""SELECT started_at,ended_at,rate_per_hour,is_free
+                    FROM game_session_segments WHERE tenant_id=? AND session_id=? ORDER BY started_at,id""",
+                    (user["tenant_id"],session_id)).fetchall()
+                amount=0
+                for segment in segments:
+                    segment_seconds=max(0,int(segment["ended_at"] or now)-int(segment["started_at"]))
+                    segment_minutes=(segment_seconds+59)//60
+                    if not segment["is_free"]:
+                        amount += (int(segment["rate_per_hour"])*segment_minutes+59)//60
+                if amount > 9007199254740991:
+                    db.rollback()
+                    return self.send_json(400, {"error":"مبلغ صورتحساب نشست بیش از حد مجاز است."})
                 db.execute("UPDATE game_sessions SET status='ended',ended_at=?,amount_due=? WHERE id=? AND tenant_id=?",
                            (now,amount,session_id,user["tenant_id"]))
                 if amount > 0:
