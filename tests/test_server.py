@@ -158,6 +158,7 @@ class ApiIntegrationTests(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         token = result["token"]
+        owner_id = result["user"]["id"]
         self.assertEqual(result["user"]["role"], "owner")
 
         status, result = self.request("POST", "/api/setup", {
@@ -229,7 +230,7 @@ class ApiIntegrationTests(unittest.TestCase):
         # accidentally deactivate their own only administrative account.
         status, denied_deactivation = self.request("DELETE", "/api/users/" + cashier_id, token=cashier_token)
         self.assertEqual(status, 403)
-        status, self_deactivation = self.request("DELETE", "/api/users/" + setup["user"]["id"], token=token)
+        status, self_deactivation = self.request("DELETE", "/api/users/" + owner_id, token=token)
         self.assertEqual(status, 400)
         status, result = self.request("DELETE", "/api/users/" + cashier_id, token=token)
         self.assertEqual(status, 200)
