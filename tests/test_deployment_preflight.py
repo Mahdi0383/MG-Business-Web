@@ -16,6 +16,15 @@ class DeploymentPreflightTests(unittest.TestCase):
         self.assertTrue(any("MG_LICENSE_SECRET" in error for error in errors))
         self.assertTrue(any("https://" in error for error in errors))
 
+    def test_production_rejects_template_license_secret(self):
+        errors = validate_config({
+            "MG_ENV": "production",
+            "MG_LICENSE_SECRET": "REPLACE_WITH_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARACTERS",
+            "MG_PUBLIC_URL": "https://business.example.com",
+            "MG_HOST": "127.0.0.1",
+        }, ROOT)
+        self.assertTrue(any("real MG_LICENSE_SECRET" in error for error in errors))
+
     def test_public_bind_requires_https_url(self):
         errors = validate_config({"MG_HOST": "0.0.0.0"}, ROOT)
         self.assertTrue(any("non-loopback" in error for error in errors))
