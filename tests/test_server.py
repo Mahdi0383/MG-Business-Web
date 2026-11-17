@@ -1709,6 +1709,14 @@ class ApiIntegrationTests(unittest.TestCase):
             status, order = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,201)
             self.assertEqual(order["total"],250)
+            db=server.connect()
+            try:
+                public_fulfillment=db.execute("SELECT fulfillment_status FROM orders WHERE id=?",
+                    (order["id"],)).fetchone()["fulfillment_status"]
+                self.assertEqual(public_fulfillment,"queued",
+                    "new public QR orders must enter the kitchen queue")
+            finally:
+                db.close()
             # Simulate an installation upgraded from schema 12: migration 13
             # must backfill a fingerprint before later customer profile edits.
             db=server.connect()
