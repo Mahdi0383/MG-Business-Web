@@ -1652,6 +1652,23 @@ class Handler(SimpleHTTPRequestHandler):
                     not isinstance(tables.get(name),list) for name in allowed
                 ):
                     return self.send_json(400, {"error": "ساختار جداول نسخه پشتیبان ناقص یا نامعتبر است."})
+                # Restoring while a GameNet session is active can silently erase
+                # live work or charge downtime from a stale snapshot. Require all
+                # sessions to be closed on both sides of the restore boundary.
+                snapshot_sessions = tables.get("game_sessions", [])
+                if any(
+                    not isinstance(row,dict) or row.get("status") not in ("running","ended")
+                    for row in snapshot_sessions
+                ):
+                    return self.send_json(400, {"error": "وضعیت یکی از نشست‌های گیم‌نت در نسخه پشتیبان معتبر نیست."})
+                if any(row.get("status") == "running" for row in snapshot_sessions):
+                    return self.send_json(409, {"error": "ابتدا تمام نشست‌های فعال گیم‌نت را در نسخه پشتیبان پایان دهید؛ سپس بازیابی را انجام دهید."})
+                active_session = db.execute(
+                    "SELECT 1 FROM game_sessions WHERE tenant_id=? AND status='running' LIMIT 1",
+                    (user["tenant_id"],)
+                ).fetchone()
+                if active_session:
+                    return self.send_json(409, {"error": "برای جلوگیری از حذف نشست فعال، ابتدا تمام بازی‌های در حال اجرا را پایان دهید؛ سپس بازیابی را انجام دهید."})
                 total_rows = sum(len(tables.get(name,[])) for name in allowed)
                 if total_rows > 500000:
                     return self.send_json(413, {"error": "تعداد رکوردهای نسخه پشتیبان بیش از حد مجاز است."})
