@@ -2426,6 +2426,24 @@ class Handler(SimpleHTTPRequestHandler):
                 if existing:
                     if (existing["product_id"]==product_id and existing["movement_type"]==movement_type and
                         existing["quantity_delta"]==delta and existing["unit_cost"]==unit_cost and existing["note"]==note):
+                        expected_value=abs(delta)*unit_cost
+                        journal=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
+                            AND source_type='inventory_movement' AND source_id=?""",
+                            (user["tenant_id"],movement_id)).fetchone()
+                        if expected_value > 0:
+                            if not journal:
+                                db.rollback()
+                                return self.send_json(409,{"error":"سند حسابداری گردش انبار ناقص است؛ ثبت مجدد پذیرفته نشد."})
+                            journal_lines=db.execute("""SELECT debit,credit FROM journal_lines
+                                WHERE tenant_id=? AND entry_id=?""",(user["tenant_id"],journal["id"])).fetchall()
+                            debit_total=sum(line["debit"] for line in journal_lines)
+                            credit_total=sum(line["credit"] for line in journal_lines)
+                            if len(journal_lines)<2 or debit_total!=expected_value or credit_total!=expected_value:
+                                db.rollback()
+                                return self.send_json(409,{"error":"سند حسابداری گردش انبار ناقص یا نامتوازن است."})
+                        elif journal:
+                            db.rollback()
+                            return self.send_json(409,{"error":"برای گردش بدون ارزش، سند حسابداری غیرمنتظره ثبت شده است."})
                         db.commit()
                         return self.send_json(200,{"id":movement_id,"ok":True,"duplicate":True})
                     db.rollback()
