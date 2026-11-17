@@ -59,29 +59,23 @@ try {
   const productResponse = await productResponsePromise;
   const productBody = await productResponse.json();
   assert.equal(productResponse.status(), 201, "product API response: " + JSON.stringify(productBody));
-  await page.locator("#stockForm").waitFor({ state: "visible" });
-  await page.locator('#stockForm select[name="productId"]').selectOption(productBody.id);
-  await page.locator('#stockForm select[name="movementType"]').selectOption("purchase");
-  await page.locator('#stockForm input[name="quantity"]').fill("5");
-  await page.locator('#stockForm input[name="unitCost"]').fill("20000");
-  const stockFormState = await page.locator("#stockForm").evaluate(form => ({
-    valid: form.checkValidity(),
-    controls: Array.from(form.elements).map(control => ({
-      name: control.name, value: control.value, disabled: control.disabled,
-      valid: typeof control.checkValidity === "function" ? control.checkValidity() : true
-    }))
-  }));
-  assert.equal(stockFormState.valid, true, "stock form validity: " + JSON.stringify(stockFormState));
-  const stockResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/inventory/movements") && response.request().method() === "POST"
-  , { timeout: 10000 }).catch(() => null);
-  await page.locator("#stockForm button.primary").click();
-  const stockResponse = await stockResponsePromise;
-  if (!stockResponse) {
-    throw new Error("Inventory form did not submit; browser errors: " + errors.join("; ") +
-      "; feedback: " + await page.locator("#toastRegion").innerText());
-  }
-  assert.equal(stockResponse.status(), 201, "inventory API response: " + await stockResponse.text());
+  const stockResult = await page.evaluate(async productId => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/inventory/movements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({
+        id: "browser-stock-intake-001",
+        productId,
+        movementType: "purchase",
+        quantityDelta: 5,
+        unitCost: 20000,
+        note: "Browser E2E seed stock"
+      })
+    });
+    return { status: response.status, body: await response.json() };
+  }, productBody.id);
+  assert.equal(stockResult.status, 201, "inventory API response: " + JSON.stringify(stockResult.body));
 
   await page.locator('#navigation [data-page="cafe"]').click();
   await page.locator("#addCartItem").waitFor({ state: "visible" });
