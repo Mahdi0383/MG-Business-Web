@@ -1500,6 +1500,20 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"order.created","order",order_id,{"total":total,"items":len(products)})
                 db.commit()
                 return self.send_json(201, {"id":order_id,"orderNumber":order_number,"subtotal":subtotal,"discount":discount,"total":total})
+            if path == "/api/account/password":
+                current_password = data.get("currentPassword")
+                new_password = data.get("newPassword")
+                if not isinstance(current_password,str) or not isinstance(new_password,str) or not 12 <= len(new_password) <= 256:
+                    return self.send_json(400,{"error":"رمز فعلی و رمز جدید معتبر الزامی است؛ رمز جدید باید ۱۲ تا ۲۵۶ نویسه باشد."})
+                if not verify_password(current_password,user["password_hash"]):
+                    return self.send_json(403,{"error":"رمز عبور فعلی صحیح نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
+                           (password_hash(new_password),user["id"],user["tenant_id"]))
+                db.execute("DELETE FROM sessions WHERE user_id=?",(user["id"],))
+                audit(db,user["tenant_id"],user["id"],"user.password.changed","user",user["id"])
+                db.commit()
+                return self.create_session(db,user["id"])
             if path.startswith("/api/users/") and path.endswith("/password"):
                 if user["role"] != "owner":
                     return self.send_json(403,{"error":"فقط مالک می‌تواند رمز کاربران را بازنشانی کند."})
