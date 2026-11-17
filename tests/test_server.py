@@ -282,6 +282,17 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["items"][0]["fullName"], "Test Customer")
 
+        status, invalid_loyalty = self.request("POST","/api/loyalty/program",{
+            "enabled":True,"spendAmount":9999,"pointsAwarded":2
+        },token)
+        self.assertEqual(status,400)
+        status, program = self.request("POST","/api/loyalty/program",{
+            "enabled":True,"spendAmount":100000,"pointsAwarded":2
+        },token)
+        self.assertEqual(status,200)
+        self.assertTrue(program["program"]["enabled"])
+        status, program_read = self.request("GET","/api/loyalty/program",token=token)
+        self.assertEqual(program_read["program"]["spendAmount"],100000)
         status, result = self.request("POST", "/api/orders", {
             "id": "order-test-1", "customerId": "customer-1", "discount": 5000,
             "paymentMethod": "card",
@@ -289,6 +300,15 @@ class ApiIntegrationTests(unittest.TestCase):
         }, token)
         self.assertEqual(status, 201)
         self.assertEqual(result["total"], 165000)
+        status, loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(loyalty["balance"],2)
+        self.assertEqual(len(loyalty["items"]),1)
+        status, backup_with_loyalty = self.request("GET","/api/backup",token=token)
+        self.assertEqual(status,200)
+        self.assertIn("loyalty_programs",backup_with_loyalty["tables"])
+        self.assertIn("customer_loyalty_ledger",backup_with_loyalty["tables"])
+        self.assertEqual(backup_with_loyalty["tables"]["customer_loyalty_ledger"][0]["points_delta"],2)
         status, daily_best = self.request("GET","/api/reports/best-selling-today",token=token)
         self.assertEqual(status,200)
         self.assertEqual(len(daily_best["items"]),1)
@@ -303,6 +323,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_order["duplicate"])
         self.assertEqual(duplicate_order["orderNumber"],result["orderNumber"])
+        status, duplicate_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
+        self.assertEqual(duplicate_loyalty["balance"],2)
+        self.assertEqual(len(duplicate_loyalty["items"]),1)
         status, conflicting_order = self.request("POST", "/api/orders", {
             "id":"order-test-1","customerId":"customer-1","discount":0,
             "paymentMethod":"card","items":[{"productId":"product-1","quantity":2}]
@@ -394,6 +417,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/orders", token=token)
         self.assertEqual(next(x for x in result["items"] if x["id"] == "order-test-1")["status"], "cancelled")
+        status, reversed_loyalty = self.request("GET","/api/customers/customer-1/loyalty",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(reversed_loyalty["balance"],0)
+        self.assertEqual(len(reversed_loyalty["items"]),2)
+        self.assertEqual(sum(x["pointsDelta"] for x in reversed_loyalty["items"]),0)
         status, repeated_return = self.request("DELETE", "/api/orders/order-test-1", token=token)
         self.assertEqual(status,200)
         self.assertTrue(repeated_return["duplicate"])
