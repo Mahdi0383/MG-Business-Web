@@ -1346,7 +1346,10 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit()
                 return self.create_session(db, user_id)
             if path == "/api/login":
-                username, password = str(data.get("username", "")).strip(), data.get("password", "")
+                raw_username = data.get("username", "")
+                if not isinstance(raw_username, str) or not 3 <= len(raw_username.strip()) <= 64:
+                    return self.send_json(400, {"error": "نام کاربری معتبر نیست."})
+                username, password = raw_username.strip(), data.get("password", "")
                 ip = self.client_ip()
                 key = (ip, username.casefold())
                 now = time.time()
