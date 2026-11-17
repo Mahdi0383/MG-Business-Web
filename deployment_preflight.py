@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import ipaddress
+import importlib.util
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -66,10 +68,12 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
     backup_key = env.get("MG_BACKUP_ENCRYPTION_KEY", "").strip()
     if backup_key:
         try:
-            decoded_backup_key = base64.urlsafe_b64decode(backup_key.encode("ascii"))
-            if len(decoded_backup_key) != 32:
+            decoded_backup_key = base64.b64decode(backup_key.encode("ascii"), altchars=b"-_", validate=True)
+            if len(decoded_backup_key) != 32 or base64.urlsafe_b64encode(decoded_backup_key).decode("ascii") != backup_key:
                 raise ValueError
-        except (ValueError, UnicodeError):
+            if importlib.util.find_spec("cryptography") is None:
+                errors.append("Install the cryptography package from requirements.txt before enabling encrypted backups.")
+        except (ValueError, UnicodeError, binascii.Error):
             errors.append("MG_BACKUP_ENCRYPTION_KEY must be a URL-safe base64-encoded 32-byte key.")
     elif environment == "production":
         errors.append("Production requires MG_BACKUP_ENCRYPTION_KEY so automatic database backups are encrypted.")
