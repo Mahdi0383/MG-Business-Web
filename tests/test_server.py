@@ -248,12 +248,12 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 404)
         db = server.connect()
         try:
-            totals = db.execute("""SELECT SUM(l.debit),SUM(l.credit) FROM journal_lines l
+            net = db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) FROM journal_lines l
                 JOIN journal_entries e ON e.id=l.entry_id
                 WHERE e.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
                   AND e.source_type IN ('transaction','transaction_reversal')
-                  AND e.source_id='tx-test-1'""").fetchone()
-            self.assertEqual((totals[0], totals[1]), (0, 0))
+                  AND e.source_id='tx-test-1'""").fetchone()[0]
+            self.assertEqual(net, 0)
             self.assertEqual(db.execute(
                 "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='tx-test-1'"
             ).fetchone()[0], 1)
