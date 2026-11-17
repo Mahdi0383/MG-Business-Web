@@ -208,6 +208,10 @@ if 'if path == "/api/accounting/periods/close":' not in server or 'accounting.pe
     raise SystemExit("Owner-only audited accounting period close API is missing")
 if 'if path == "/api/accounting/periods":' not in server or 'accounting_periods' not in server[server.find('if path == "/api/backup":'):]:
     raise SystemExit("Accounting period listing and backup integration are missing")
+if '"version":2' not in server or 'backup_version not in (1,2)' not in server:
+    raise SystemExit("Workspace backup v2 export and backward-compatible v1 restore are missing")
+if 'if backup_version >= 2:' not in server or 'accounting_periods' not in server:
+    raise SystemExit("Legacy backup restore must preserve accounting period locks")
 if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
     raise SystemExit("Accounting period close form is missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
