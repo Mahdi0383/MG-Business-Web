@@ -1433,6 +1433,19 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertFalse(server.verify_password("wrong-password", encoded))
         self.assertNotEqual(encoded, server.password_hash("a-long-test-password"))
 
+    def test_password_verification_rejects_unsafe_hash_parameters_before_pbkdf2(self):
+        malformed = [
+            "pbkdf2_sha256$1$" + ("11" * 16) + "$" + ("00" * 32),
+            "pbkdf2_sha256$999999999999999999999$" + ("11" * 16) + "$" + ("00" * 32),
+            "pbkdf2_sha256$310000$abcd$" + ("00" * 32),
+            "pbkdf2_sha256$310000$" + ("11" * 16) + "$not-hex",
+        ]
+        with mock.patch.object(server.hashlib, "pbkdf2_hmac", side_effect=AssertionError("PBKDF2 must not run")):
+            for encoded in malformed:
+                self.assertFalse(server.verify_password("valid-password", encoded))
+            valid_shape = "pbkdf2_sha256$310000$" + ("11" * 16) + "$" + ("00" * 32)
+            self.assertFalse(server.verify_password("x" * 257, valid_shape))
+
 
 if __name__ == "__main__":
     unittest.main()
