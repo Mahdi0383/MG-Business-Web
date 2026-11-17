@@ -313,7 +313,7 @@ class ApiIntegrationTests(unittest.TestCase):
             allocated=db.execute("""SELECT SUM(discount_amount) AS discount,
                 SUM(line_total-discount_amount) AS net
                 FROM order_items WHERE tenant_id=? AND order_id=?""",
-                (result["tenantId"],"order-test-1")).fetchone()
+                ("order-test-1",)).fetchone()
             self.assertEqual(allocated["discount"],5000)
             self.assertEqual(allocated["net"],165000)
         finally:
