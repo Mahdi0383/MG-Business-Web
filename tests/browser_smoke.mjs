@@ -66,9 +66,13 @@ try {
   await page.locator('#stockForm input[name="unitCost"]').fill("20000");
   const stockResponsePromise = page.waitForResponse(response =>
     response.url().endsWith("/api/inventory/movements") && response.request().method() === "POST"
-  );
+  , { timeout: 10000 }).catch(() => null);
   await page.locator("#stockForm button.primary").click();
   const stockResponse = await stockResponsePromise;
+  if (!stockResponse) {
+    throw new Error("Inventory form did not submit; browser errors: " + errors.join("; ") +
+      "; feedback: " + await page.locator("#toastRegion").innerText());
+  }
   assert.equal(stockResponse.status(), 201, "inventory API response: " + await stockResponse.text());
 
   await page.locator('#navigation [data-page="cafe"]').click();
