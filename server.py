@@ -1353,6 +1353,15 @@ class Handler(SimpleHTTPRequestHandler):
                     "netCashFlow":inflow-outflow,
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
                     "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
+            if path == "/api/accounting/periods":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                rows=db.execute("""SELECT p.id,p.start_date AS startDate,p.end_date AS endDate,
+                    p.closed_at AS closedAt,u.username AS closedBy
+                    FROM accounting_periods p JOIN users u ON u.id=p.closed_by
+                    WHERE p.tenant_id=? ORDER BY p.end_date DESC,p.closed_at DESC""",
+                    (user["tenant_id"],)).fetchall()
+                return self.send_json(200,{"items":[dict(row) for row in rows]})
             if path == "/api/accounting/account-ledger":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error":"ماژول حسابداری در لایسنس فعال نیست."})
@@ -1948,6 +1957,45 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
             user = self.authenticate(db)
             if not user: return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if path == "/api/accounting/periods/close":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] != "owner":
+                    return self.send_json(403,{"error":"فقط مالک کسب‌وکار می‌تواند دوره مالی را ببندد."})
+                if set(data)!={"startDate","endDate"}:
+                    return self.send_json(400,{"error":"فقط تاریخ شروع و پایان دوره باید ارسال شوند."})
+                start_date,end_date=data.get("startDate"),data.get("endDate")
+                try:
+                    for value in (start_date,end_date):
+                        if not isinstance(value,str) or len(value)!=10:
+                            raise ValueError
+                        parsed=time.strptime(value,"%Y-%m-%d")
+                        if time.strftime("%Y-%m-%d",parsed)!=value:
+                            raise ValueError
+                except (ValueError,TypeError):
+                    return self.send_json(400,{"error":"تاریخ دوره باید معتبر و با قالب YYYY-MM-DD باشد."})
+                if start_date>end_date:
+                    return self.send_json(400,{"error":"تاریخ شروع دوره نباید بعد از تاریخ پایان باشد."})
+                today=time.strftime("%Y-%m-%d")
+                if end_date>today:
+                    return self.send_json(400,{"error":"بستن دوره‌ای که تاریخ پایان آن در آینده است مجاز نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                overlap=db.execute("""SELECT id,start_date,end_date FROM accounting_periods
+                    WHERE tenant_id=? AND NOT(end_date<? OR start_date>?) LIMIT 1""",
+                    (user["tenant_id"],start_date,end_date)).fetchone()
+                if overlap:
+                    db.rollback()
+                    return self.send_json(409,{"error":"این بازه با یک دوره مالی بسته‌شده هم‌پوشانی دارد."})
+                period_id=secrets.token_urlsafe(18)
+                closed_at=int(time.time())
+                db.execute("""INSERT INTO accounting_periods
+                    (id,tenant_id,start_date,end_date,closed_by,closed_at) VALUES(?,?,?,?,?,?)""",
+                    (period_id,user["tenant_id"],start_date,end_date,user["id"],closed_at))
+                audit(db,user["tenant_id"],user["id"],"accounting.period.closed","accounting_period",period_id,
+                    {"startDate":start_date,"endDate":end_date})
+                db.commit()
+                return self.send_json(201,{"ok":True,"id":period_id,"startDate":start_date,
+                    "endDate":end_date,"closedAt":closed_at})
             if path == "/api/backup/restore":
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
