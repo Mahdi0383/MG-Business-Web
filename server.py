@@ -1388,6 +1388,23 @@ class Handler(SimpleHTTPRequestHandler):
                     "netCashFlow":inflow-outflow,
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
                     "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None})
+            if path == "/api/cash-register/shifts":
+                if not require_any_module(db,user["tenant_id"],"cafe","accounting","gamenet"):
+                    return self.send_json(403,{"error":"ماژول صندوق در لایسنس فعال نیست."})
+                rows=db.execute("""SELECT s.id,s.opened_at AS openedAt,s.opening_cash AS openingCash,
+                    s.status,s.closed_at AS closedAt,s.expected_cash AS expectedCash,
+                    s.counted_cash AS countedCash,s.difference,s.open_note AS openNote,
+                    s.close_note AS closeNote,op.username AS openedBy,cp.username AS closedBy
+                    FROM cash_register_shifts s JOIN users op ON op.id=s.opened_by
+                    LEFT JOIN users cp ON cp.id=s.closed_by
+                    WHERE s.tenant_id=? ORDER BY s.opened_at DESC LIMIT 100""",
+                    (user["tenant_id"],)).fetchall()
+                items=[dict(row) for row in rows]
+                active=next((item for item in items if item["status"]=="open"),None)
+                if active:
+                    active["expectedCash"]=cash_register_expected_cash(
+                        db,user["tenant_id"],active["openedAt"],active["openingCash"])
+                return self.send_json(200,{"items":items,"active":active})
             if path == "/api/accounting/periods":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
