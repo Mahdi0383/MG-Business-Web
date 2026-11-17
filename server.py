@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MG Business local-first HTTP application and SQLite API (stdlib only)."""
+"""MG Business local-first HTTP application; encrypted backups use cryptography."""
 from __future__ import annotations
 import base64, hashlib, hmac, ipaddress, json, os, re, secrets, sqlite3, time, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
