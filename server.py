@@ -497,7 +497,13 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("X-Permitted-Cross-Domain-Policies", "none")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+        if (os.environ.get("MG_ENV", "development").strip().lower() == "production"
+                and os.environ.get("MG_PUBLIC_URL", "").strip().lower().startswith("https://")):
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
         super().end_headers()
 
     def send_json(self, status, payload):

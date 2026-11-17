@@ -707,6 +707,24 @@ class ApiIntegrationTests(unittest.TestCase):
             server.BACKUP_MAX_ROWS = original_limit
             server.DB_PATH = original_db_path
 
+    def test_production_responses_include_hsts_and_cross_origin_guards(self):
+        old_env = {key: os.environ.get(key) for key in ("MG_ENV", "MG_PUBLIC_URL")}
+        try:
+            os.environ["MG_ENV"] = "production"
+            os.environ["MG_PUBLIC_URL"] = "https://business.example.com"
+            with urllib.request.urlopen(self.base + "/api/health", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("Strict-Transport-Security"), "max-age=31536000")
+                self.assertEqual(response.headers.get("Cross-Origin-Opener-Policy"), "same-origin")
+                self.assertEqual(response.headers.get("Cross-Origin-Resource-Policy"), "same-origin")
+                self.assertEqual(response.headers.get("X-Permitted-Cross-Domain-Policies"), "none")
+        finally:
+            for key, value in old_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_public_static_server_hides_source_and_development_files(self):
         with urllib.request.urlopen(self.base + "/", timeout=5) as response:
             self.assertEqual(response.status, 200)
