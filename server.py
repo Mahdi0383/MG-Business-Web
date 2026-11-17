@@ -429,11 +429,22 @@ def password_hash(password: str, salt: bytes | None = None) -> str:
 
 def verify_password(password: str, encoded: str) -> bool:
     try:
-        algorithm, rounds, salt_hex, expected = encoded.split("$")
-        if algorithm != "pbkdf2_sha256": return False
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(rounds)).hex()
+        if not isinstance(password, str) or len(password) > 256 or not isinstance(encoded, str):
+            return False
+        algorithm, rounds_text, salt_hex, expected = encoded.split("$")
+        if algorithm != "pbkdf2_sha256" or not rounds_text.isascii() or not rounds_text.isdecimal():
+            return False
+        rounds = int(rounds_text)
+        # Bound work for untrusted/corrupted stored hashes; current hashes use 310,000 rounds.
+        if not 100_000 <= rounds <= 1_000_000:
+            return False
+        salt = bytes.fromhex(salt_hex)
+        if len(salt) != 16 or len(expected) != 64:
+            return False
+        bytes.fromhex(expected)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds).hex()
         return hmac.compare_digest(actual, expected)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return False
 
 def seed_accounts(db, tenant_id):
@@ -1331,7 +1342,7 @@ class Handler(SimpleHTTPRequestHandler):
                 password = data.get("password", "")
                 if not 1 <= len(tenant_name) <= 120: return self.send_json(400, {"error": "نام کسب‌وکار معتبر نیست."})
                 if not 3 <= len(username) <= 64: return self.send_json(400, {"error": "نام کاربری باید ۳ تا ۶۴ نویسه باشد."})
-                if not isinstance(password, str) or len(password) < 12: return self.send_json(400, {"error": "رمز عبور باید حداقل ۱۲ نویسه باشد."})
+                if not isinstance(password, str) or not 12 <= len(password) <= 256: return self.send_json(400, {"error": "رمز عبور باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
                     db.rollback(); return self.send_json(409, {"error": "راه‌اندازی اولیه قبلاً انجام شده است."})
@@ -2097,7 +2108,7 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/account/password":
                 current_password = data.get("currentPassword")
                 new_password = data.get("newPassword")
-                if not isinstance(current_password,str) or not isinstance(new_password,str) or not 12 <= len(new_password) <= 256:
+                if not isinstance(current_password,str) or len(current_password) > 256 or not isinstance(new_password,str) or not 12 <= len(new_password) <= 256:
                     return self.send_json(400,{"error":"رمز فعلی و رمز جدید معتبر الزامی است؛ رمز جدید باید ۱۲ تا ۲۵۶ نویسه باشد."})
                 if not verify_password(current_password,user["password_hash"]):
                     return self.send_json(403,{"error":"رمز عبور فعلی صحیح نیست."})
@@ -2136,8 +2147,8 @@ class Handler(SimpleHTTPRequestHandler):
                 username, password, role = data.get("username"), data.get("password"), data.get("role")
                 if not isinstance(username,str) or not 3 <= len(username.strip()) <= 64:
                     return self.send_json(400, {"error": "نام کاربری باید ۳ تا ۶۴ نویسه باشد."})
-                if not isinstance(password,str) or len(password) < 12:
-                    return self.send_json(400, {"error": "رمز عبور باید حداقل ۱۲ نویسه باشد."})
+                if not isinstance(password,str) or not 12 <= len(password) <= 256:
+                    return self.send_json(400, {"error": "رمز عبور باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
                 if role not in ("manager","cashier","viewer"):
                     return self.send_json(400, {"error": "نقش کاربر معتبر نیست."})
                 target_id, now = secrets.token_urlsafe(18), int(time.time())
