@@ -39,8 +39,8 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
             errors.append("Production requires MG_LICENSE_SECRET with at least 32 characters.")
         if public_url.scheme != "https" or not public_url.netloc:
             errors.append("Production requires MG_PUBLIC_URL with a valid https:// URL.")
-        if host not in {"127.0.0.1", "::1", "localhost"} and not public_bind:
-            errors.append("Use a loopback bind behind a TLS reverse proxy, or explicitly document the public bind.")
+        if public_bind:
+            errors.append("Production MG_HOST must bind to loopback behind a TLS-terminating reverse proxy; direct public HTTP binding is not allowed.")
 
     paths = {
         "MG_DATA_DIR": Path(env.get("MG_DATA_DIR", str(Path.home() / ".mg-business-data"))).expanduser(),
