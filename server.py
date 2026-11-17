@@ -2237,7 +2237,14 @@ class Handler(SimpleHTTPRequestHandler):
                             if not isinstance(record,dict) or record.get("tenant_id") != tenant_id:
                                 db.rollback()
                                 return self.send_json(400, {"error": "رکورد نامعتبر یا متعلق به فضای کاری دیگر در پشتیبان وجود دارد."})
-                            if not set(record).issubset(column_map[name]):
+                            record_columns=set(record)
+                            if name=="journal_entries" and backup_version>=4:
+                                rowid=record.get("__rowid")
+                                if type(rowid) is not int or rowid<=0:
+                                    db.rollback()
+                                    return self.send_json(400,{"error":"شناسه ترتیبی سند حسابداری در پشتیبان معتبر نیست."})
+                                record_columns.discard("__rowid")
+                            if not record_columns.issubset(column_map[name]):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("tenant_modules","licenses","gamenet_reservations","game_session_segments","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
