@@ -140,9 +140,10 @@ class BackupManagerTests(unittest.TestCase):
             damaged = bytearray(snapshot.read_bytes())
             damaged[-20] ^= 0x01
             snapshot.write_bytes(damaged)
-            with self.assertRaises(Exception):
+            with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, root / "target.sqlite3", encryption_key=key)
             self.assertFalse((root / "target.sqlite3").exists())
+            self.assertFalse(list(root.glob("target.sqlite3.decrypt-*.tmp")))
 
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
