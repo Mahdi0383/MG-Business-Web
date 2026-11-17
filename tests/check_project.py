@@ -161,6 +161,10 @@ if "apiRequest('/api/accounting/journal'+accountingReportQuery())" not in app:
     raise SystemExit("The general ledger journal must follow the accounting report date range")
 if "day>=accountingFromDate" not in app or "day<=accountingToDate" not in app:
     raise SystemExit("The transaction ledger list must follow the accounting report date range")
+if 'data-accounting-export' not in app or "mg-accounting-" not in app:
+    raise SystemExit("Dated accounting report CSV export is missing")
+if "text/csv;charset=utf-8" not in app or String not in app:
+    raise SystemExit("Accounting report CSV export must use UTF-8 CSV output")
 if "accountingReportQuery()" not in app or "reportsDateQuery()" not in app:
     raise SystemExit("Report date filters must be passed to the financial API endpoints")
 if "data-clear-accounting-dates" not in app or "data-clear-reports-dates" not in app:
