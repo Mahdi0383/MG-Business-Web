@@ -24,6 +24,7 @@ jobs:
           node --check core.js
           node --check public-order.js
           node --check service-worker.js
+          node --check tests/browser_smoke.mjs
       - name: Compile Python sources
         run: python -m py_compile server.py license_tool.py backup_manager.py tests/test_server.py tests/test_backup_manager.py tests/check_project.py
       - name: Check repository structure and DOM references
