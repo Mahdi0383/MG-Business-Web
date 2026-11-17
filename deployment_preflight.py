@@ -34,15 +34,7 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
             errors.append("MG_HOST must not be empty.")
 
     try:
-        for proxy in env.get("MG_TRUSTED_PROXIES", "").split(","):
-        proxy = proxy.strip()
-        if proxy:
-            try:
-                ipaddress.ip_network(proxy, strict=False)
-            except ValueError:
-                errors.append(f"MG_TRUSTED_PROXIES contains an invalid IP address or CIDR: {proxy}")
-
-    public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
+        public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
         valid_https_url = (public_url.scheme == "https" and bool(public_url.hostname)
                            and not public_url.username and not public_url.password
                            and not public_url.fragment)
@@ -50,6 +42,14 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
             valid_https_url = public_url.port is None or 1 <= public_url.port <= 65535
     except ValueError:
         valid_https_url = False
+
+    for proxy in env.get("MG_TRUSTED_PROXIES", "").split(","):
+        proxy = proxy.strip()
+        if proxy:
+            try:
+                ipaddress.ip_network(proxy, strict=False)
+            except ValueError:
+                errors.append(f"MG_TRUSTED_PROXIES contains an invalid IP address or CIDR: {proxy}")
     if public_bind and not valid_https_url:
         errors.append("A non-loopback MG_HOST requires MG_PUBLIC_URL with a valid https:// URL.")
     if environment == "production":
