@@ -2277,5 +2277,65 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+
+    def test_viewer_cannot_mutate_cafe_or_gamenet_operations(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "viewer-write-authorization.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Viewer Authorization",
+                "username": "viewer-owner",
+                "password": "viewer-owner-password-2026"
+            })
+            self.assertEqual(status, 200)
+            owner_token = setup["token"]
+            status, created = self.request("POST", "/api/users", {
+                "username": "read-only-viewer",
+                "password": "read-only-viewer-password-2026",
+                "role": "viewer"
+            }, owner_token)
+            self.assertEqual(status, 201)
+            status, login = self.request("POST", "/api/login", {
+                "username": "read-only-viewer",
+                "password": "read-only-viewer-password-2026"
+            })
+            self.assertEqual(status, 200)
+            viewer_token = login["token"]
+
+            attempts = [
+                ("POST", "/api/orders", {"items": []}),
+                ("POST", "/api/gamenet/devices", {
+                    "name": "Unauthorized Device", "deviceType": "pc",
+                    "hourlyRate": 10000, "isFree": False
+                }),
+                ("POST", "/api/customers/missing-viewer-customer/payments", {
+                    "amount": 10000, "paymentMethod": "cash"
+                })
+            ]
+            for method, path, payload in attempts:
+                with self.subTest(path=path):
+                    status, result = self.request(method, path, payload, viewer_token)
+                    self.assertEqual(status, 403)
+                    self.assertIn("error", result)
+
+            db = server.connect()
+            try:
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM orders WHERE tenant_id=?",
+                    (setup["user"]["tenantId"],)
+                ).fetchone()[0], 0)
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM game_devices WHERE tenant_id=? AND name='Unauthorized Device'",
+                    (setup["user"]["tenantId"],)
+                ).fetchone()[0], 0)
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM customer_ledger WHERE tenant_id=? AND source_type='payment'",
+                    (setup["user"]["tenantId"],)
+                ).fetchone()[0], 0)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
 if __name__ == "__main__":
     unittest.main()
