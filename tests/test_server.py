@@ -497,6 +497,34 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_payment["duplicate"])
         self.assertEqual(duplicate_payment["remainingBalance"],35000)
+        # A customer-payment retry must not succeed if its accounting journal was damaged.
+        db=server.connect()
+        try:
+            db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
+            journal_id=db.execute("""SELECT id FROM journal_entries
+                WHERE tenant_id=? AND source_type='customer_payment' AND source_id=?""",
+                (tenant_id,"customer-payment-01")).fetchone()["id"]
+            saved_customer_payment_lines=[dict(row) for row in db.execute(
+                "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
+            ).fetchall()]
+            db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
+            db.commit()
+        finally:
+            db.close()
+        status, corrupted_customer_retry=self.request("POST", "/api/customers/customer-1/payments", {
+            "id":"customer-payment-01","amount":50000,"paymentMethod":"card"
+        },token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            columns=list(saved_customer_payment_lines[0])
+            placeholders=",".join("?" for _ in columns)
+            db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
+                [tuple(line[column] for column in columns) for line in saved_customer_payment_lines])
+            db.commit()
+        finally:
+            db.close()
         status, changed_method_retry = self.request("POST", "/api/customers/customer-1/payments", {
             "id":"customer-payment-01","amount":50000,"paymentMethod":"cash"
         },token)
