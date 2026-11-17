@@ -253,7 +253,7 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_tx_lines])
-            db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
                 BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
             db.commit()
         finally:
