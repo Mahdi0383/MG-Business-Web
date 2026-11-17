@@ -118,7 +118,7 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             restore_snapshot(snapshot, restored, encryption_key=key)
             safety_backups = list((root / "backups").glob("*.sqlite3.enc"))
-            self.assertEqual(len(safety_backups), 1)
+            self.assertEqual(len(safety_backups), 2)
             db = sqlite3.connect(restored)
             self.assertEqual(db.execute("SELECT value FROM private_records").fetchone()[0],
                              "confidential backup payload")
