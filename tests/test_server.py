@@ -585,6 +585,23 @@ class ApiIntegrationTests(unittest.TestCase):
             "hourlyRate": 120000, "isFree": True
         }, token)
         self.assertEqual(status, 201)
+        # An unassigned reservation must block sessions too; null customer IDs
+        # must never be treated as proof that the reservation belongs to the session.
+        from datetime import datetime, timezone, timedelta
+        unassigned_start=datetime.now(timezone.utc).isoformat(timespec="seconds")
+        unassigned_end=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(timespec="seconds")
+        status, unassigned_reservation = self.request("POST", "/api/gamenet/reservations", {
+            "id":"reservation-unassigned","deviceId":"pc-free",
+            "startsAt":unassigned_start,"endsAt":unassigned_end,"playersCount":1
+        }, token)
+        self.assertEqual(status,201)
+        status, blocked_unassigned = self.request("POST", "/api/gamenet/sessions", {
+            "id":"session-free-blocked","deviceId":"pc-free","playersCount":1
+        }, token)
+        self.assertEqual(status,409)
+        status, cancelled_unassigned = self.request("POST",
+            "/api/gamenet/reservations/reservation-unassigned/cancel", {}, token)
+        self.assertEqual(status,200)
         status, result = self.request("POST", "/api/gamenet/sessions", {
             "id": "session-free", "deviceId": "pc-free", "playersCount": 1
         }, token)
