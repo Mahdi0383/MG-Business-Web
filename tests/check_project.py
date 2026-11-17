@@ -121,6 +121,10 @@ if "(['owner','manager'].includes(apiUser?.role)?apiRequest('/api/users'):Promis
 
 if "userPasswordForm" not in app or "/password" not in app:
     raise SystemExit("User password reset UI is missing")
+if "userRoleForm" not in app or "data-user-change-role" not in app or "'/role'" not in app:
+    raise SystemExit("Owner user-role editing UI is missing")
+if 'path.endswith("/role")' not in server or '"user.role.changed"' not in server:
+    raise SystemExit("Server-side user-role change enforcement is missing")
 if any(fragment in app for fragment in (
     "value=\"'+d.hourlyRate+'\"",
     "value=\"'+d.playersCount+'\"",
