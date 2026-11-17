@@ -197,7 +197,17 @@ try {
     if (!cash) return { status: chartResponse.status, missingCashAccount: true };
     const query = new URLSearchParams({ accountId: cash.id, fromDate: reportDate, toDate: reportDate });
     const response = await fetch("/api/accounting/account-ledger?" + query, { headers });
-    return { status: response.status, body: await response.json() };
+    const body = await response.json();
+    const pageQuery = new URLSearchParams({ accountId: cash.id, fromDate: reportDate, toDate: reportDate, limit: "1", offset: "0" });
+    const pageResponse = await fetch("/api/accounting/account-ledger?" + pageQuery, { headers });
+    const firstPage = await pageResponse.json();
+    let secondPage = null;
+    if (firstPage.hasMore) {
+      pageQuery.set("offset", String(firstPage.nextOffset));
+      const nextResponse = await fetch("/api/accounting/account-ledger?" + pageQuery, { headers });
+      secondPage = await nextResponse.json();
+    }
+    return { status: response.status, body, pageStatus: pageResponse.status, firstPage, secondPage };
   }, accountingToday);
   assert.equal(accountLedgerCheck.status, 200, "account-level ledger endpoint must work from the browser");
   assert.equal(accountLedgerCheck.body.account.code, "1000");
@@ -207,6 +217,17 @@ try {
     accountLedgerCheck.body.openingBalance +
     accountLedgerCheck.body.periodDebit - accountLedgerCheck.body.periodCredit,
     "debit-normal cash account closing balance must reconcile to opening plus period movement");
+  assert.equal(accountLedgerCheck.pageStatus, 200, "account ledger page request must succeed");
+  assert.equal(accountLedgerCheck.firstPage.items.length <= 1, true, "account ledger page size must be enforced");
+  assert.equal(accountLedgerCheck.firstPage.totalItems >= accountLedgerCheck.firstPage.items.length, true);
+  if (accountLedgerCheck.secondPage) {
+    assert.equal(accountLedgerCheck.secondPage.offset, accountLedgerCheck.firstPage.nextOffset);
+    assert.equal(accountLedgerCheck.firstPage.items[0].runningBalance,
+      accountLedgerCheck.secondPage.items[0].runningBalance +
+      accountLedgerCheck.firstPage.items[0].debit -
+      accountLedgerCheck.firstPage.items[0].credit,
+      "running balance must remain continuous across newest-first pages");
+  }
   await page.locator("#accountLedgerFilter select[name=accountId]").selectOption(accountLedgerCheck.body.account.id);
   await page.locator("#accountLedgerFilter input[name=fromDate]").fill(accountingToday);
   await page.locator("#accountLedgerFilter input[name=toDate]").fill(accountingToday);
