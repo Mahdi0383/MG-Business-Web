@@ -170,9 +170,19 @@ try {
   assert.equal(roleChangeBody.changed, true, "role change must report a real change");
   await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("فقط مشاهده", { exact: true }).waitFor({ state: "visible" });
   await page.locator("#modulePage").getByText("user.role.changed", { exact: false }).waitFor({ state: "visible" });
+  const deactivateButton = page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).locator('[data-user-deactivate]');
+  const deactivationResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/users/" + createdUserId) && response.request().method() === "DELETE"
+  );
+  await deactivateButton.click();
+  await page.locator('#confirmOverlay [data-confirm="yes"]').click();
+  const deactivationResponse = await deactivationResponsePromise;
+  const deactivationBody = await deactivationResponse.json();
+  assert.equal(deactivationResponse.status(), 200, "user deactivation response: " + JSON.stringify(deactivationBody));
+  await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("غیرفعال", { exact: true }).waitFor({ state: "visible" });
 
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, and owner user-role management.");
+  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, and owner user-role management/deactivation.");
 } finally {
   await browser.close();
 }
