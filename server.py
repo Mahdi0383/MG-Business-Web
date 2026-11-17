@@ -2711,9 +2711,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if not customer:
                     db.rollback()
                     return self.send_json(404, {"error": "مشتری پیدا نشد."})
-                existing=db.execute("SELECT customer_id,credit FROM customer_ledger WHERE tenant_id=? AND source_type='payment' AND source_id=?",
+                existing=db.execute("SELECT customer_id,debit,credit FROM customer_ledger WHERE tenant_id=? AND source_type='payment' AND source_id=?",
                                     (user["tenant_id"],payment_id)).fetchone()
                 if existing:
+                    ledger_count=db.execute("SELECT COUNT(*) FROM customer_ledger WHERE tenant_id=? AND source_type='payment' AND source_id=?",
+                                             (user["tenant_id"],payment_id)).fetchone()[0]
                     journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
                         JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
                         JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
@@ -2726,7 +2728,8 @@ class Handler(SimpleHTTPRequestHandler):
                     expected_rows=sorted([(expected_account,amount,0),("1100",0,amount)])
                     actual_rows=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
                     payment_matches=(journal_entries==1 and len(journal_rows)==2 and actual_rows==expected_rows)
-                    if (existing["customer_id"]==customer_id and existing["credit"]==amount and payment_matches):
+                    if (ledger_count==1 and existing["customer_id"]==customer_id and existing["debit"]==0 and
+                        existing["credit"]==amount and payment_matches):
                         balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
                                            (user["tenant_id"],customer_id)).fetchone()[0]
                         db.commit()
