@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import os
 import secrets
 import sqlite3
@@ -25,8 +26,8 @@ def decode_encryption_key(value: str | bytes | None) -> bytes | None:
     if not isinstance(value, str):
         raise ValueError("Backup encryption key must be a URL-safe base64 string.")
     try:
-        key = base64.urlsafe_b64decode(value.encode("ascii"))
-    except (ValueError, UnicodeError) as exc:
+        key = base64.b64decode(value.encode("ascii"), altchars=b"-_", validate=True)
+    except (ValueError, UnicodeError, binascii.Error) as exc:
         raise ValueError("Backup encryption key is not valid URL-safe base64.") from exc
     if len(key) != 32:
         raise ValueError("Backup encryption key must decode to exactly 32 bytes.")
@@ -149,6 +150,8 @@ def create_snapshot(
         for temporary in (temp_db, temp_output):
             if temporary.exists():
                 temporary.unlink()
+        if key and final_path.exists():
+            final_path.unlink()
         raise
     finally:
         if source is not None:
@@ -226,6 +229,10 @@ def restore_snapshot(
     check = sqlite3.connect(str(restore_source), timeout=30)
     try:
         _validate_mg_database(check)
+    except Exception:
+        if decrypted_path.exists():
+            decrypted_path.unlink()
+        raise
     finally:
         check.close()
 
