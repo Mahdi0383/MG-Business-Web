@@ -2238,10 +2238,15 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "رمز عبور باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
                 if role not in ("manager","cashier","viewer"):
                     return self.send_json(400, {"error": "نقش کاربر معتبر نیست."})
+                normalized_username=username.strip()
                 target_id, now = secrets.token_urlsafe(18), int(time.time())
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                           (target_id,user["tenant_id"],username.strip(),password_hash(password),role,now))
+                try:
+                    db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
+                               (target_id,user["tenant_id"],normalized_username,password_hash(password),role,now))
+                except sqlite3.IntegrityError:
+                    db.rollback()
+                    return self.send_json(409, {"error":"این نام کاربری قبلاً در این کسب‌وکار ثبت شده است."})
                 audit(db,user["tenant_id"],user["id"],"user.created","user",target_id,{"role":role})
                 db.commit()
                 return self.send_json(201, {"id": target_id, "ok": True})
