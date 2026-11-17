@@ -36,7 +36,15 @@ try {
   const transactionResponse = await transactionResponsePromise;
   const transactionBody = await transactionResponse.json();
   assert.equal(transactionResponse.status(), 201, "transaction API response: " + JSON.stringify(transactionBody));
-  await page.locator("#modal").waitFor({ state: "hidden" });
+  await page.waitForTimeout(500);
+  if (await page.locator("#modal").isVisible()) {
+    console.log("Transaction UI diagnostic:", {
+      errors,
+      toast: await page.locator("#toastRegion").innerText(),
+      modalClass: await page.locator("#modal").getAttribute("class")
+    });
+  }
+  await page.locator("#modal").waitFor({ state: "hidden", timeout: 5000 });
   await page.locator("#transactions").getByText("درآمد آزمون مرورگر", { exact: true }).waitFor({ state: "visible" });
 
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
