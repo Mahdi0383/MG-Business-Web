@@ -760,6 +760,39 @@ class ApiIntegrationTests(unittest.TestCase):
                     if key[0] == ip:
                         server.LOGIN_FAILURES.pop(key, None)
 
+    def test_manager_cannot_reset_owner_password(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "owner-password-guard.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Owner Guard", "username": "owner-guard",
+                "password": "owner-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+            owner_token = setup["token"]
+            status, created = self.request("POST", "/api/users", {
+                "username": "delegated-manager",
+                "password": "manager-secure-password-2026",
+                "role": "manager"
+            }, owner_token)
+            self.assertEqual(status, 201)
+            status, manager_login = self.request("POST", "/api/login", {
+                "username": "delegated-manager",
+                "password": "manager-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, denied = self.request("POST", "/api/users/"+setup["user"]["id"]+"/password", {
+                "password": "attacker-controlled-password"
+            }, manager_login["token"])
+            self.assertEqual(status, 403)
+            status, owner_login = self.request("POST", "/api/login", {
+                "username": "owner-guard",
+                "password": "owner-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_user_can_change_own_password_and_revoke_old_sessions(self):
         original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp.name) / "password-change-test.sqlite3"

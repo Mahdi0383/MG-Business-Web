@@ -1522,12 +1522,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(new_password,str) or len(new_password)<12 or len(new_password)>256:
                     return self.send_json(400,{"error":"رمز جدید باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
                 db.execute("BEGIN IMMEDIATE")
-                target=db.execute("SELECT id,active FROM users WHERE id=? AND tenant_id=?",
+                target=db.execute("SELECT id,active,role FROM users WHERE id=? AND tenant_id=?",
                                   (target_id,user["tenant_id"])).fetchone()
                 if not target:
                     db.rollback(); return self.send_json(404,{"error":"کاربر پیدا نشد."})
                 if not target["active"]:
                     db.rollback(); return self.send_json(409,{"error":"رمز کاربر غیرفعال قابل تغییر نیست."})
+                if target["role"] == "owner":
+                    db.rollback(); return self.send_json(403,{"error":"بازنشانی رمز حساب مالک از این مسیر مجاز نیست."})
                 db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
                            (password_hash(new_password),target_id,user["tenant_id"]))
                 db.execute("DELETE FROM sessions WHERE user_id=?",(target_id,))
