@@ -1018,6 +1018,17 @@ class ApiIntegrationTests(unittest.TestCase):
         ]
         status, result = self.request("POST", "/api/backup/restore", missing_chart, token)
         self.assertEqual(status, 400)
+        incomplete_snapshot = json.loads(json.dumps(snapshot))
+        incomplete_snapshot["tables"].pop("orders")
+        status, incomplete_result = self.request(
+            "POST", "/api/backup/restore", incomplete_snapshot, token
+        )
+        self.assertEqual(status,400)
+        self.assertIn("ناقص",incomplete_result["error"])
+        # Rejected partial snapshots must not delete any existing workspace data.
+        status, sessions_after_incomplete = self.request("GET","/api/gamenet/sessions",token=token)
+        self.assertEqual(status,200)
+        self.assertGreaterEqual(len(sessions_after_incomplete["items"]),2)
         unbalanced = json.loads(json.dumps(snapshot))
         unbalanced["tables"]["journal_lines"][0]["debit"] += 1
         status, result = self.request("POST", "/api/backup/restore", unbalanced, token)
