@@ -2803,6 +2803,76 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_cash_register_shift_reconciliation_and_backup_restore(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"cash-register-shifts.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Cash Register","username":"cash-owner",
+                "password":"cash-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            today=date.today().isoformat()
+
+            status,opened=self.request("POST","/api/cash-register/shifts/open",
+                {"openingCash":50000,"note":"افتتاح شیفت صبح"},owner)
+            self.assertEqual(status,201)
+            self.assertEqual(opened["expectedCash"],50000)
+            status,duplicate=self.request("POST","/api/cash-register/shifts/open",
+                {"openingCash":10000},owner)
+            self.assertEqual(status,409)
+
+            status,income=self.request("POST","/api/transactions",{
+                "id":"cash-shift-income","title":"فروش نقدی","amount":20000,
+                "kind":"income","category":"فروش","createdAt":today+"T12:00:00Z"},owner)
+            self.assertEqual(status,201)
+            status,expense=self.request("POST","/api/transactions",{
+                "id":"cash-shift-expense","title":"هزینه نقدی","amount":5000,
+                "kind":"expense","category":"هزینه","createdAt":today+"T12:01:00Z"},owner)
+            self.assertEqual(status,201)
+
+            status,active=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(active["active"]["id"],opened["id"])
+            self.assertEqual(active["active"]["expectedCash"],65000)
+
+            status,closed=self.request("POST","/api/cash-register/shifts/"+opened["id"]+"/close",
+                {"countedCash":64000,"note":"کسری هزار تومان"},owner)
+            self.assertEqual(status,200)
+            self.assertEqual(closed["expectedCash"],65000)
+            self.assertEqual(closed["countedCash"],64000)
+            self.assertEqual(closed["difference"],-1000)
+            status,closed_again=self.request("POST","/api/cash-register/shifts/"+opened["id"]+"/close",
+                {"countedCash":64000},owner)
+            self.assertEqual(status,409)
+
+            status,reopened=self.request("POST","/api/cash-register/shifts/open",
+                {"openingCash":30000,"note":"شیفت عصر"},owner)
+            self.assertEqual(status,201)
+            status,snapshot=self.request("GET","/api/backup",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(snapshot["version"],3)
+            self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),2)
+
+            db=server.connect()
+            try:
+                db.execute("DELETE FROM cash_register_shifts WHERE tenant_id=?",
+                    (setup["user"]["tenantId"],))
+                db.commit()
+            finally:
+                db.close()
+            status,restored=self.request("POST","/api/backup/restore",snapshot,owner)
+            self.assertEqual(status,200)
+            status,history=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(history["items"]),2)
+            self.assertEqual(history["active"]["id"],reopened["id"])
+            self.assertEqual(history["active"]["expectedCash"],30000)
+            closed_row=next(item for item in history["items"] if item["id"]==opened["id"])
+            self.assertEqual(closed_row["difference"],-1000)
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_accounting_period_close_blocks_backdated_postings_and_reversals(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"accounting-period-close.sqlite3"
