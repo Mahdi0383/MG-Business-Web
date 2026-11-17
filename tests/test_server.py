@@ -2699,6 +2699,110 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_cash_register_shift_reconciles_cash_and_survives_versioned_backup(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"cash-register-shifts.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Cash Register","username":"cash-owner",
+                "password":"cash-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+
+            status,invalid=self.request("POST","/api/cash-register/shifts/open",{
+                "openingCash":-1},owner)
+            self.assertEqual(status,400)
+            status,opened=self.request("POST","/api/cash-register/shifts/open",{
+                "openingCash":5000,"note":"morning handover"},owner)
+            self.assertEqual(status,201)
+            self.assertEqual(opened["expectedCash"],5000)
+            shift_id=opened["id"]
+
+            status,duplicate=self.request("POST","/api/cash-register/shifts/open",{
+                "openingCash":1000},owner)
+            self.assertEqual(status,409)
+
+            now=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())
+            status,income=self.request("POST","/api/transactions",{
+                "id":"cash-shift-income","title":"Cash shift sale","amount":1000,
+                "kind":"income","category":"cash test","createdAt":now},owner)
+            self.assertEqual(status,201)
+            status,expense=self.request("POST","/api/transactions",{
+                "id":"cash-shift-expense","title":"Cash shift expense","amount":250,
+                "kind":"expense","category":"cash test","createdAt":now},owner)
+            self.assertEqual(status,201)
+
+            status,active=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(active["active"]["id"],shift_id)
+            self.assertEqual(active["active"]["expectedCash"],5750)
+
+            status,cashier_created=self.request("POST","/api/users",{
+                "username":"cash-shift-cashier","password":"cash-shift-cashier-password","role":"cashier"},owner)
+            self.assertEqual(status,201)
+            status,cashier_login=self.request("POST","/api/login",{
+                "username":"cash-shift-cashier","password":"cash-shift-cashier-password"})
+            self.assertEqual(status,200)
+            cashier=cashier_login["token"]
+
+            status,forbidden=self.request("POST",f"/api/cash-register/shifts/{shift_id}/close",{
+                "countedCash":5750},cashier)
+            self.assertEqual(status,403)
+            status,invalid_close=self.request("POST",f"/api/cash-register/shifts/{shift_id}/close",{
+                "countedCash":-1},owner)
+            self.assertEqual(status,400)
+
+            status,closed=self.request("POST",f"/api/cash-register/shifts/{shift_id}/close",{
+                "countedCash":5700,"note":"shortage counted"},owner)
+            self.assertEqual(status,200)
+            self.assertEqual(closed["expectedCash"],5750)
+            self.assertEqual(closed["countedCash"],5700)
+            self.assertEqual(closed["difference"],-50)
+            status,duplicate_close=self.request("POST",f"/api/cash-register/shifts/{shift_id}/close",{
+                "countedCash":5750},owner)
+            self.assertEqual(status,409)
+
+            status,cashier_shift=self.request("POST","/api/cash-register/shifts/open",{
+                "openingCash":1000,"note":"cashier shift"},cashier)
+            self.assertEqual(status,201)
+            status,second_open=self.request("POST","/api/cash-register/shifts/open",{
+                "openingCash":0},owner)
+            self.assertEqual(status,409)
+            status,cashier_close=self.request("POST",f"/api/cash-register/shifts/{cashier_shift['id']}/close",{
+                "countedCash":1000},cashier)
+            self.assertEqual(status,200)
+            self.assertEqual(cashier_close["difference"],0)
+
+            status,snapshot=self.request("GET","/api/backup",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(snapshot["version"],3)
+            self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),2)
+            db=server.connect()
+            try:
+                db.execute("DELETE FROM cash_register_shifts WHERE tenant_id=?",(setup["user"]["tenantId"],))
+                db.commit()
+            finally:
+                db.close()
+            status,restored=self.request("POST","/api/backup/restore",snapshot,owner)
+            self.assertEqual(status,200)
+            status,history=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(history["items"]),2)
+            first=next(item for item in history["items"] if item["id"]==shift_id)
+            self.assertEqual(first["difference"],-50)
+
+            legacy_v2=json.loads(json.dumps(snapshot))
+            legacy_v2["version"]=2
+            legacy_v2["tables"].pop("cash_register_shifts")
+            status,legacy_restore=self.request("POST","/api/backup/restore",legacy_v2,owner)
+            self.assertEqual(status,200)
+            status,preserved=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(len(preserved["items"]),2,
+                "v2 restores must preserve current cash shifts absent from that backup format")
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_accounting_period_close_blocks_backdated_postings_and_reversals(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"accounting-period-close.sqlite3"
