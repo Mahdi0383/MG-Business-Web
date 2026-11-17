@@ -360,6 +360,11 @@ class ApiIntegrationTests(unittest.TestCase):
         }
         status, expense_created=self.request("POST","/api/transactions",expense_payload,token)
         self.assertEqual(status,201)
+        status, updated_cash_flow=self.request("GET","/api/accounting/cash-flow?fromDate=2026-11-16&toDate=2026-11-16",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(updated_cash_flow["inflow"],150000)
+        self.assertEqual(updated_cash_flow["outflow"],25000)
+        self.assertEqual(updated_cash_flow["netCashFlow"],125000)
         status, expense_duplicate=self.request("POST","/api/transactions",expense_payload,token)
         self.assertEqual(status,200)
         self.assertTrue(expense_duplicate["duplicate"])
