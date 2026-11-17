@@ -1317,7 +1317,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error":"ماژول حسابداری در لایسنس فعال نیست."})
                 params=parse_qs(urlparse(self.path).query,keep_blank_values=True)
-                if set(params)-{"accountId","fromDate","toDate"} or any(len(v)!=1 for v in params.values()):
+                if set(params)-{"accountId","fromDate","toDate","limit","offset"} or any(len(v)!=1 for v in params.values()):
                     return self.send_json(400,{"error":"پارامترهای دفتر معین نامعتبر هستند."})
                 account_id=params.get("accountId",[""])[0]
                 if not account_id or len(account_id)>100:
@@ -1325,6 +1325,21 @@ class Handler(SimpleHTTPRequestHandler):
                 try:
                     dates=parse_report_dates("&".join(
                         key+"="+values[0] for key,values in params.items() if key in ("fromDate","toDate")))
+                except ValueError as exc:
+                    return self.send_json(400,{"error":str(exc)})
+                def page_integer(name,default,maximum):
+                    raw=params.get(name,[str(default)])[0]
+                    if not raw.isascii() or not raw.isdigit() or len(raw)>10:
+                        raise ValueError("پارامتر صفحه‌بندی دفتر معین نامعتبر است.")
+                    value=int(raw)
+                    if value>maximum:
+                        raise ValueError("مقدار صفحه‌بندی دفتر معین بیش از حد مجاز است.")
+                    return value
+                try:
+                    page_size=page_integer("limit",200,500)
+                    page_offset=page_integer("offset",0,1000000)
+                    if page_size<1:
+                        raise ValueError("اندازه صفحه باید بین ۱ تا ۵۰۰ باشد.")
                 except ValueError as exc:
                     return self.send_json(400,{"error":str(exc)})
                 account=db.execute("""SELECT id,code,name,account_type AS accountType,
@@ -1350,30 +1365,56 @@ class Handler(SimpleHTTPRequestHandler):
                 if "toDate" in dates:
                     conditions.append("e.entry_date<=?")
                     values.append(time.strftime("%Y-%m-%d",dates["toDate"]))
-                rows=db.execute("""SELECT e.id AS entryId,e.entry_date AS entryDate,e.memo,
+                where=" AND ".join(conditions)
+                totals=db.execute("""SELECT COUNT(*) AS totalItems,
+                    COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit
+                    FROM journal_lines l JOIN journal_entries e
+                    ON e.id=l.entry_id AND e.tenant_id=l.tenant_id WHERE """+where,values).fetchone()
+                page_rows=db.execute("""SELECT e.id AS entryId,e.entry_date AS entryDate,e.memo,
                     e.source_type AS sourceType,e.source_id AS sourceId,e.created_at AS createdAt,
-                    l.debit,l.credit FROM journal_lines l
+                    l.id AS lineId,l.debit,l.credit FROM journal_lines l
                     JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
-                    WHERE """+" AND ".join(conditions)+"""
-                    ORDER BY e.entry_date,e.created_at,e.id,l.id LIMIT 5000""",values).fetchall()
-                debit=sum(row["debit"] for row in rows)
-                credit=sum(row["credit"] for row in rows)
+                    WHERE """+where+"""
+                    ORDER BY e.entry_date DESC,e.created_at DESC,e.id DESC,l.id DESC
+                    LIMIT ? OFFSET ?""",(*values,page_size,page_offset)).fetchall()
+                rows=list(reversed(page_rows))
                 normal_delta=(opening_debit-opening_credit if account["normalBalance"]=="debit"
                               else opening_credit-opening_debit)
                 opening_balance=normal_delta
+                if rows:
+                    first=rows[0]
+                    prior=db.execute("""SELECT COALESCE(SUM(l.debit),0) AS debit,
+                        COALESCE(SUM(l.credit),0) AS credit
+                        FROM journal_lines l JOIN journal_entries e
+                        ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                        WHERE """+where+"""
+                        AND (e.entry_date,e.created_at,e.id,l.id)<(?,?,?,?)""",
+                        (*values,first["entryDate"],first["createdAt"],first["entryId"],first["lineId"])).fetchone()
+                    normal_delta += (prior["debit"]-prior["credit"] if account["normalBalance"]=="debit"
+                                     else prior["credit"]-prior["debit"])
+                elif page_offset:
+                    normal_delta += (totals["debit"]-totals["credit"] if account["normalBalance"]=="debit"
+                                     else totals["credit"]-totals["debit"])
                 items=[]
                 for row in rows:
                     normal_delta += (row["debit"]-row["credit"] if account["normalBalance"]=="debit"
                                      else row["credit"]-row["debit"])
                     item=dict(row)
+                    item.pop("lineId",None)
                     item["runningBalance"]=normal_delta
                     items.append(item)
+                next_offset=page_offset+len(rows)
+                has_more=next_offset<totals["totalItems"]
+                closing_delta=(opening_balance +
+                    (totals["debit"]-totals["credit"] if account["normalBalance"]=="debit"
+                     else totals["credit"]-totals["debit"]))
                 return self.send_json(200,{"account":dict(account),"openingBalance":opening_balance,
-                    "periodDebit":debit,"periodCredit":credit,"closingBalance":normal_delta,
+                    "periodDebit":totals["debit"],"periodCredit":totals["credit"],"closingBalance":closing_delta,
                     "items":list(reversed(items)),
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
                     "toDate":time.strftime("%Y-%m-%d",dates["toDate"]) if "toDate" in dates else None,
-                    "truncated":len(rows)==5000})
+                    "totalItems":totals["totalItems"],"limit":page_size,"offset":page_offset,
+                    "hasMore":has_more,"nextOffset":next_offset,"truncated":has_more})
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
