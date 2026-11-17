@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS order_items(
  quantity INTEGER NOT NULL CHECK(quantity>0), unit_price INTEGER NOT NULL CHECK(unit_price>=0),
  unit_cost INTEGER NOT NULL CHECK(unit_cost>=0), line_total INTEGER NOT NULL CHECK(line_total>=0),
  addons_json TEXT NOT NULL DEFAULT '[]',
+ discount_amount INTEGER NOT NULL DEFAULT 0 CHECK(discount_amount>=0),
  FOREIGN KEY(order_id) REFERENCES orders(id),
  FOREIGN KEY(product_id) REFERENCES products(id)
 );
@@ -309,6 +310,31 @@ CREATE TABLE IF NOT EXISTS audit_log(
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_log(tenant_id, created_at DESC);
 """
+
+def allocate_proportional_discount(items, discount):
+    """Allocate an integer order discount by gross line value with deterministic largest remainders."""
+    if type(discount) is not int or discount < 0:
+        raise ValueError("discount must be a non-negative integer")
+    gross_total=sum(int(amount) for _,amount in items)
+    if discount == 0:
+        return {key:0 for key,_ in items}
+    if gross_total <= 0 or discount >= gross_total:
+        raise ValueError("discount must be less than the gross line total")
+    shares={}
+    remainders=[]
+    allocated=0
+    for key,amount in items:
+        amount=int(amount)
+        numerator=discount*amount
+        share,remainder=divmod(numerator,gross_total)
+        shares[key]=share
+        allocated+=share
+        remainders.append((remainder,str(key)))
+    remaining=discount-allocated
+    for _,key in sorted(remainders,key=lambda item:(-item[0],item[1]))[:remaining]:
+        shares[next(original for original,_ in items if str(original)==key)]+=1
+    return shares
+
 
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -384,6 +410,18 @@ def connect():
             db.execute("""UPDATE game_sessions SET payment_method='credit'
                 WHERE status='ended' AND customer_id IS NOT NULL AND amount_due>0""")
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(11,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=12").fetchone():
+        item_columns={row["name"] for row in db.execute("PRAGMA table_info(order_items)").fetchall()}
+        if "discount_amount" not in item_columns:
+            db.execute("ALTER TABLE order_items ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0 CHECK(discount_amount>=0)")
+        for order in db.execute("SELECT id,discount FROM orders WHERE discount>0").fetchall():
+            legacy_items=db.execute("SELECT id,line_total FROM order_items WHERE order_id=? ORDER BY id",(order["id"],)).fetchall()
+            if not legacy_items:
+                continue
+            shares=allocate_proportional_discount([(row["id"],row["line_total"]) for row in legacy_items],int(order["discount"]))
+            for item_id,share in shares.items():
+                db.execute("UPDATE order_items SET discount_amount=? WHERE id=?",(share,item_id))
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(12,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -956,7 +994,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(404,{"error":"سفارش پیدا نشد."})
                 items=[]
                 for row in db.execute("""SELECT id,product_id AS productId,product_name AS productName,
-                    quantity,unit_price AS unitPrice,line_total AS lineTotal,addons_json AS addonsJson
+                    quantity,unit_price AS unitPrice,line_total AS lineTotal,
+                    discount_amount AS discountAmount,addons_json AS addonsJson
                     FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY rowid""",
                     (user["tenant_id"],order_id)).fetchall():
                     item=dict(row)
@@ -1040,7 +1079,7 @@ class Handler(SimpleHTTPRequestHandler):
                 day_start=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday,0,0,0,0,0,-1)))
                 day_end=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday+1,0,0,0,0,0,-1)))
                 rows=db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
-                    SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue,
+                    SUM(i.quantity) AS quantity,SUM(i.line_total-i.discount_amount) AS revenue,
                     COUNT(DISTINCT o.id) AS orderCount
                     FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
                     WHERE i.tenant_id=? AND o.status='paid' AND o.created_at>=? AND o.created_at<?
@@ -1053,7 +1092,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not module_enabled(db,user["tenant_id"],"reports"):
                     return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
-                    SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue
+                    SUM(i.quantity) AS quantity,SUM(i.line_total-i.discount_amount) AS revenue
                     FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
                     WHERE i.tenant_id=? AND o.status='paid'
                     GROUP BY i.product_id,i.product_name ORDER BY revenue DESC LIMIT 100""",
@@ -1544,6 +1583,15 @@ class Handler(SimpleHTTPRequestHandler):
                     # Older JSON backups predate segmented GameNet billing. Reconstruct
                     # one historical segment per session so restored running sessions
                     # remain adjustable and ended sessions retain their original rates.
+                    if any("discount_amount" not in row for row in tables.get("order_items",[])):
+                        for legacy_order in db.execute("SELECT id,discount FROM orders WHERE tenant_id=? AND discount>0",(tenant_id,)).fetchall():
+                            legacy_items=db.execute("SELECT id,line_total FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY id",
+                                (tenant_id,legacy_order["id"])).fetchall()
+                            if legacy_items:
+                                shares=allocate_proportional_discount([(row["id"],row["line_total"]) for row in legacy_items],int(legacy_order["discount"]))
+                                for item_id,share in shares.items():
+                                    db.execute("UPDATE order_items SET discount_amount=? WHERE id=? AND tenant_id=?",
+                                        (share,item_id,tenant_id))
                     if any("payment_method" not in row for row in tables.get("game_sessions",[])):
                         db.execute("""UPDATE game_sessions SET payment_method='credit'
                             WHERE tenant_id=? AND status='ended' AND customer_id IS NOT NULL AND amount_due>0
@@ -2011,6 +2059,8 @@ class Handler(SimpleHTTPRequestHandler):
                     db.rollback()
                     return self.send_json(400, {"error": "تخفیف باید از مبلغ سفارش کمتر باشد."})
                 total = subtotal - discount
+                discount_shares=allocate_proportional_discount(
+                    [(str(index),line[5]) for index,line in enumerate(order_lines)],discount)
                 now = int(time.time())
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
@@ -2022,9 +2072,9 @@ class Handler(SimpleHTTPRequestHandler):
                     db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                         VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
                         "order",order_id,total,"فروش اعتباری "+order_number,now))
-                for product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot in order_lines:
-                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total,addons_json)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,unit_price,average_cost,line_total,json.dumps(addon_snapshot,ensure_ascii=False,separators=(",",":"))))
+                for line_index,(product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot) in enumerate(order_lines):
+                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total,addons_json,discount_amount)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,unit_price,average_cost,line_total,json.dumps(addon_snapshot,ensure_ascii=False,separators=(",",":")),discount_shares[str(line_index)]))
                 for product_id,(product,quantity,average_cost) in products.items():
                     db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                         VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],product_id,user["id"],"sale",-quantity,average_cost,"سفارش "+order_number,now))
