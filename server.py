@@ -1452,6 +1452,9 @@ class Handler(SimpleHTTPRequestHandler):
                 used=db.execute("""SELECT 1 FROM journal_lines
                     WHERE tenant_id=? AND account_id=? LIMIT 1""",
                     (user["tenant_id"],account_id)).fetchone()
+                if account["code"] in {"1000","1020","1100","1200","2000","3000","4000","4100","5000","5100","5200"}:
+                    db.rollback()
+                    return self.send_json(409,{"error":"سرفصل سیستمی برای ثبت خودکار عملیات مالی ضروری است و قابل غیرفعال‌سازی نیست."})
                 if used:
                     db.rollback()
                     return self.send_json(409,{"error":"این سرفصل در اسناد حسابداری استفاده شده و قابل غیرفعال‌سازی نیست."})
