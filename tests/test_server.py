@@ -725,7 +725,7 @@ class ApiIntegrationTests(unittest.TestCase):
             status, menu = self.request("GET","/api/public/menu")
             self.assertEqual(status,200)
             menu_product=next(x for x in menu["items"] if x["id"]=="public-addon-product")
-            self.assertEqual(menu_product["addons"],[{"id":"public-addon-01","name":"Oat milk","price":25}])
+            self.assertEqual(menu_product["addons"],[{"id":"public-addon-01","productId":"public-addon-product","name":"Oat milk","price":25}])
             payload={
                 "clientOrderId":"public-addon-order-01","customerName":"Online Guest",
                 "phone":"+49123456789",
