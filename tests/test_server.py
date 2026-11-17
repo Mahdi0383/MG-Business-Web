@@ -784,6 +784,10 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_supplier_payment["duplicate"])
         self.assertEqual(duplicate_supplier_payment["remainingBalance"],319999)
+        status, changed_supplier_method = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "id":"supplier-payment-01","amount":100000,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,409)
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "amount":319999,"paymentMethod":"cash"
         }, token)
