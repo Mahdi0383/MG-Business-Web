@@ -635,6 +635,16 @@ class ApiIntegrationTests(unittest.TestCase):
         altered["tenant"]["id"] = "different-workspace"
         status, result = self.request("POST", "/api/backup/restore", altered, token)
         self.assertEqual(status, 400)
+        missing_chart = json.loads(json.dumps(snapshot))
+        missing_chart["tables"]["accounts"] = [
+            row for row in missing_chart["tables"]["accounts"] if row["code"] != "5100"
+        ]
+        status, result = self.request("POST", "/api/backup/restore", missing_chart, token)
+        self.assertEqual(status, 400)
+        unbalanced = json.loads(json.dumps(snapshot))
+        unbalanced["tables"]["journal_lines"][0]["debit"] += 1
+        status, result = self.request("POST", "/api/backup/restore", unbalanced, token)
+        self.assertEqual(status, 400)
         broken = json.loads(json.dumps(snapshot))
         broken["tables"]["order_items"].append({
             "id": "broken-backup-item", "tenant_id": broken["tenant"]["id"],
