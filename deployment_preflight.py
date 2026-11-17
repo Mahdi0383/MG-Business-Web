@@ -29,9 +29,12 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
         address = ipaddress.ip_address(host)
         public_bind = not address.is_loopback
     except ValueError:
-        public_bind = host not in {"localhost"}
+        is_localhost = host.lower() == "localhost"
+        public_bind = not is_localhost
         if not host:
             errors.append("MG_HOST must not be empty.")
+        elif not is_localhost:
+            errors.append("MG_HOST must be an IP address or localhost; hostname-based binding is not allowed.")
 
     try:
         public_url = urlparse(env.get("MG_PUBLIC_URL", "").strip())
