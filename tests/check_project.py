@@ -69,6 +69,8 @@ if "data-public-addon" not in public_order or "addons:x.addons.map" not in publi
     raise SystemExit("Public QR ordering must support optional product add-ons")
 if "startsDate.toISOString()" not in app or "start_dt.utcoffset() is None" not in server:
     raise SystemExit("Game reservations must use explicit timezone-aware timestamps")
+if '"duplicate":True' not in server or "reservation-cancel" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
+    raise SystemExit("Game reservation cancellation must be retry-safe")
 if "def public_order_duplicate" not in server or 'item["addons"]=addons_by_product.get' not in server:
     raise SystemExit("Public order add-on snapshots and retry validation are missing")
 if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
