@@ -188,6 +188,25 @@ try {
     assert.ok(accountingReportRequests.some(url => url.pathname === path && url.searchParams.get("fromDate") === accountingToday && url.searchParams.get("toDate") === accountingToday),
       "accounting date range must reach " + path);
   }
+  const accountLedgerCheck = await page.evaluate(async (reportDate) => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const headers = { Authorization: "Bearer " + token };
+    const chartResponse = await fetch("/api/accounting/accounts", { headers });
+    const chart = await chartResponse.json();
+    const cash = chart.items.find(account => account.code === "1000");
+    if (!cash) return { status: chartResponse.status, missingCashAccount: true };
+    const query = new URLSearchParams({ accountId: cash.id, fromDate: reportDate, toDate: reportDate });
+    const response = await fetch("/api/accounting/account-ledger?" + query, { headers });
+    return { status: response.status, body: await response.json() };
+  }, accountingToday);
+  assert.equal(accountLedgerCheck.status, 200, "account-level ledger endpoint must work from the browser");
+  assert.equal(accountLedgerCheck.body.account.code, "1000");
+  assert.equal(accountLedgerCheck.body.periodDebit >= 0, true);
+  assert.equal(accountLedgerCheck.body.periodCredit >= 0, true);
+  assert.equal(accountLedgerCheck.body.closingBalance,
+    accountLedgerCheck.body.openingBalance +
+    accountLedgerCheck.body.periodDebit - accountLedgerCheck.body.periodCredit,
+    "debit-normal cash account closing balance must reconcile to opening plus period movement");
   await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
   const accountingDownloadPromise = page.waitForEvent("download");
   await page.locator('[data-accounting-export]').click();
@@ -256,7 +275,7 @@ try {
   await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("غیرفعال", { exact: true }).waitFor({ state: "visible" });
 
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
-  console.log("Browser E2E passed: setup, login, accounting, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, and owner user-role management/deactivation.");
+  console.log("Browser E2E passed: setup, login, accounting, account-level general ledger, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, and owner user-role management/deactivation.");
 } finally {
   await browser.close();
 }
