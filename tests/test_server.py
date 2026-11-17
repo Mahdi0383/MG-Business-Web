@@ -1019,6 +1019,23 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(partial_statement["balance"],319999)
         status, unknown_supplier = self.request("GET", "/api/suppliers/missing-supplier/ledger", token=token)
         self.assertEqual(status,404)
+        # A retry must reject invoice totals/status that no longer reconcile to supplier payment rows.
+        db=server.connect()
+        try:
+            db.execute("UPDATE purchase_invoices SET paid_amount=100001 WHERE id='purchase-invoice-1'")
+            db.commit()
+        finally:
+            db.close()
+        status, inconsistent_invoice_retry = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "id":"supplier-payment-01","amount":100000,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            db.execute("UPDATE purchase_invoices SET paid_amount=100000,status='partial' WHERE id='purchase-invoice-1'")
+            db.commit()
+        finally:
+            db.close()
         status, duplicate_supplier_payment = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "id":"supplier-payment-01","amount":100000,"paymentMethod":"card"
         }, token)
