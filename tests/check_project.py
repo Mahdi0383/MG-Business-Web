@@ -59,6 +59,12 @@ if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
 if "supplierLedgerPanel" not in app or "supplierStatementForm" not in app or "data-supplier-ledger-close" not in app:
     raise SystemExit("Supplier account statement UI is missing")
+if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
+    raise SystemExit("Supplier account statement CSV export is missing")
+if "const safe=" not in app or "[=+@-]" not in app:
+    raise SystemExit("Supplier CSV export must neutralize spreadsheet formula injection")
+if "result.totalPurchases" not in app or "item.balanceAfter" not in app:
+    raise SystemExit("Supplier statement export must include totals and running balances")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
 if "stableRequestId" not in app:
