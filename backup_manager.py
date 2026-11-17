@@ -78,6 +78,18 @@ def _validate_mg_database(connection: sqlite3.Connection) -> None:
     required = {"schema_migrations", "tenants", "users"}
     if not integrity or integrity[0] != "ok" or violations or not required.issubset(tables):
         raise sqlite3.DatabaseError("Selected file is not a valid MG Business database snapshot.")
+    required_columns = {
+        "schema_migrations": {"version", "applied_at"},
+        "tenants": {"id", "name", "created_at"},
+        "users": {"id", "tenant_id", "username", "password_hash", "role", "active", "created_at"},
+    }
+    for table, expected in required_columns.items():
+        actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if not expected.issubset(actual):
+            raise sqlite3.DatabaseError(f"Selected file has an invalid MG Business {table} schema.")
+    migration = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+    if not migration or migration[0] is None or migration[0] < 1:
+        raise sqlite3.DatabaseError("Selected file has no applied MG Business schema migration.")
 
 
 def restore_snapshot(snapshot_path: str | Path, db_path: str | Path, safety_backup_dir: str | Path | None = None) -> Path:
