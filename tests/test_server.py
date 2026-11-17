@@ -487,6 +487,10 @@ class ApiIntegrationTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
+        status, invalid_adjust = self.request("POST", "/api/gamenet/sessions/session-01/adjust", {
+            "playersCount":0
+        }, token)
+        self.assertEqual(status,400)
         status, moved = self.request("POST", "/api/gamenet/sessions/session-01/adjust", {
             "deviceId":"pc-02","playersCount":3,"isFree":True
         }, token)
@@ -525,6 +529,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(segments["items"][0]["playersCount"],2)
         self.assertEqual(segments["items"][1]["playersCount"],3)
         self.assertTrue(segments["items"][1]["isFree"])
+        status, game_backup = self.request("GET","/api/backup",token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(len(game_backup["tables"]["game_session_segments"]),2)
 
         status, result = self.request("POST", "/api/gamenet/devices", {
             "id": "pc-free", "name": "Free PC", "deviceType": "pc",
