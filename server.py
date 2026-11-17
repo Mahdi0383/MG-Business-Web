@@ -1517,12 +1517,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"دسترسی لغو رزرو ندارید."})
                 reservation_id=path.split("/")[-2]
                 db.execute("BEGIN IMMEDIATE")
-                changed=db.execute("""UPDATE gamenet_reservations SET status='cancelled'
-                    WHERE id=? AND tenant_id=? AND status='booked'""",(reservation_id,user["tenant_id"])).rowcount
-                if not changed:
-                    db.rollback(); return self.send_json(404,{"error":"رزرو فعال پیدا نشد."})
+                existing=db.execute("SELECT status FROM gamenet_reservations WHERE id=? AND tenant_id=?",
+                                     (reservation_id,user["tenant_id"])).fetchone()
+                if not existing:
+                    db.rollback(); return self.send_json(404,{"error":"رزرو پیدا نشد."})
+                if existing["status"]=="cancelled":
+                    db.commit(); return self.send_json(200,{"ok":True,"status":"cancelled","duplicate":True})
+                if existing["status"]!="booked":
+                    db.rollback(); return self.send_json(409,{"error":"فقط رزرو فعال قابل لغو است."})
+                db.execute("UPDATE gamenet_reservations SET status='cancelled' WHERE id=? AND tenant_id=? AND status='booked'",
+                           (reservation_id,user["tenant_id"]))
                 audit(db,user["tenant_id"],user["id"],"gamenet.reservation.cancelled","gamenet_reservation",reservation_id)
-                db.commit(); return self.send_json(200,{"ok":True,"status":"cancelled"})
+                db.commit(); return self.send_json(200,{"ok":True,"status":"cancelled","duplicate":False})
             if path == "/api/gamenet/sessions":
                 if not module_enabled(db,user["tenant_id"],"gamenet"):
                     return self.send_json(403, {"error": "ماژول گیم‌نت در لایسنس فعال نیست."})
