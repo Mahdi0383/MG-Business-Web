@@ -34,6 +34,7 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
+SCHEMA_VERSION = 13
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -809,13 +810,15 @@ class Handler(SimpleHTTPRequestHandler):
                 missing=sorted(required_tables-present)
                 integrity=db.execute("PRAGMA quick_check").fetchone()[0]
                 foreign_key_error=db.execute("PRAGMA foreign_key_check").fetchone()
-                migration_count=db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-                ready=not missing and integrity=="ok" and foreign_key_error is None and migration_count>0
+                migration_version=db.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
+                migrations_current=migration_version==SCHEMA_VERSION
+                ready=not missing and integrity=="ok" and foreign_key_error is None and migrations_current
                 return self.send_json(200 if ready else 503,{
                     "ready":ready,"service":"mg-business",
                     "checks":{"databaseIntegrity":integrity=="ok",
                               "foreignKeys":foreign_key_error is None,
-                              "requiredSchema":not missing,"migrations":migration_count>0},
+                              "requiredSchema":not missing,"migrations":migrations_current},
+                    "schemaVersion":migration_version,"expectedSchemaVersion":SCHEMA_VERSION,
                     "missingTables":missing if missing else []
                 })
             if path == "/api/setup-status":
