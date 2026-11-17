@@ -703,7 +703,17 @@ class ApiIntegrationTests(unittest.TestCase):
             db = server.connect()
             try:
                 now = int(server.time.time())
-                db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (now - 1, token_hash))
+                db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (now + 5, token_hash))
+                db.commit()
+            finally:
+                db.close()
+            status, _ = self.request("GET", "/api/me", token=token)
+            self.assertEqual(status, 200)
+            db = server.connect()
+            try:
+                refreshed = db.execute("SELECT expires_at FROM sessions WHERE token_hash=?", (token_hash,)).fetchone()
+                self.assertGreaterEqual(refreshed["expires_at"], int(server.time.time()) + 29 * 60)
+                db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (int(server.time.time()) - 1, token_hash))
                 db.commit()
             finally:
                 db.close()
