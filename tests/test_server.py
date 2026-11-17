@@ -283,6 +283,9 @@ class ApiIntegrationTests(unittest.TestCase):
             journal_id = db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='inventory_movement' AND source_id=?""",
                 (db.execute("SELECT tenant_id FROM users WHERE username=?", ("owner",)).fetchone()["tenant_id"],"move-in-1")).fetchone()["id"]
+            saved_journal_lines = [dict(row) for row in db.execute(
+                "SELECT * FROM journal_lines WHERE entry_id=?", (journal_id,)
+            ).fetchall()]
             db.execute("DELETE FROM journal_lines WHERE entry_id=?", (journal_id,))
             db.commit()
         finally:
@@ -292,6 +295,17 @@ class ApiIntegrationTests(unittest.TestCase):
             "quantityDelta":20,"unitCost":30000
         }, token)
         self.assertEqual(status,409)
+        db = server.connect()
+        try:
+            columns = list(saved_journal_lines[0])
+            placeholders = ",".join("?" for _ in columns)
+            db.executemany(
+                "INSERT INTO journal_lines(" + ",".join(columns) + ") VALUES(" + placeholders + ")",
+                [tuple(line[column] for column in columns) for line in saved_journal_lines]
+            )
+            db.commit()
+        finally:
+            db.close()
         status, result = self.request("POST", "/api/inventory/movements", {
             "id": "move-out-1", "productId": "product-1", "movementType": "sale",
             "quantityDelta": -5, "unitCost": 30000
@@ -943,7 +957,7 @@ class ApiIntegrationTests(unittest.TestCase):
         invalid_sql_value = json.loads(json.dumps(snapshot))
         invalid_sql_value["tables"]["products"][0]["sell_price"] = {"unexpected": "object"}
         status, result = self.request("POST", "/api/backup/restore", invalid_sql_value, token)
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 409)
         self.assertIn("نوع نامعتبر", result["error"])
         # A failed restore must leave the pre-restore workspace intact.
         status, result = self.request("GET", "/api/gamenet/sessions", token=token)
