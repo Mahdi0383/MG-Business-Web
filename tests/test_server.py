@@ -1534,6 +1534,44 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertFalse(server.verify_password("x" * 257, valid_shape))
 
 
+    def test_inventory_movement_rejects_stock_total_above_safe_integer(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "inventory-stock-overflow.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Stock Overflow Test", "username": "stock-overflow-owner",
+                "password": "stock-overflow-secure-password-2026"
+            })
+            self.assertEqual(status, 200)
+            token = setup["token"]
+            status, product = self.request("POST", "/api/products", {
+                "id": "stock-overflow-product", "name": "Overflow stock",
+                "sellPrice": 100, "costPrice": 10
+            }, token)
+            self.assertEqual(status, 201)
+            db = server.connect()
+            try:
+                db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,
+                    quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    ("seed-overflow-stock", setup["user"]["tenantId"], "stock-overflow-product",
+                     setup["user"]["id"], "adjustment", 9007199254740991, 0, "test seed", int(time.time())))
+                db.commit()
+            finally:
+                db.close()
+            status, result = self.request("POST", "/api/inventory/movements", {
+                "id": "stock-overflow-increment", "productId": "stock-overflow-product",
+                "movementType": "purchase", "quantityDelta": 1, "unitCost": 0
+            }, token)
+            self.assertEqual(status, 409)
+            db = server.connect()
+            try:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM inventory_movements WHERE id=?",
+                    ("stock-overflow-increment",)).fetchone()[0], 0)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_transaction_reversal_is_balanced_and_idempotent(self):
         original_db_path = server.DB_PATH
         server.DB_PATH = Path(self.temp.name) / "transaction-reversal.sqlite3"
