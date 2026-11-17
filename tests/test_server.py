@@ -2650,6 +2650,10 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertTrue(deactivated["deactivated"])
             status,repeated_deactivate=self.request("DELETE","/api/accounting/accounts/"+created["id"],token=owner)
             self.assertEqual(status,404)
+            status,posted_for_cash=self.request("POST","/api/transactions",{
+                "id":"chart-account-use","title":"Cash account usage","amount":1000,
+                "kind":"income","category":"test","createdAt":"2026-11-17T10:00:00Z"},owner)
+            self.assertEqual(status,201)
             status,used_account=self.request("DELETE","/api/accounting/accounts/"+custom["1000"]["id"],token=owner)
             self.assertEqual(status,409)
             status,after_deactivate=self.request("GET","/api/accounting/accounts",token=owner)
