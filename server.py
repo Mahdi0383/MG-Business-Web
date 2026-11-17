@@ -627,9 +627,11 @@ def assert_accounting_period_open(db, tenant_id, entry_date):
 def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000'):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
     cash, counterpart = accounts[debit_account_code] if kind == "income" else accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
+    entry_date=occurred_at[:10]
+    assert_accounting_period_open(db,tenant_id,entry_date)
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,occurred_at[:10],title,"transaction",tx_id,user_id,now))
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,title,"transaction",tx_id,user_id,now))
     lines = ((cash,amount,0),(counterpart,0,amount)) if kind == "income" else ((counterpart,amount,0),(cash,0,amount))
     for account_id, debit, credit in lines:
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
@@ -652,9 +654,11 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
         lines = ((accounts["1200"],amount,0),(accounts["4100"],0,amount))
     else:
         lines = ((accounts["5200"],amount,0),(accounts["1200"],0,amount))
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"گردش انبار "+movement_id,
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"گردش انبار "+movement_id,
                                       "inventory_movement",movement_id,user_id,now))
     for account_id,debit,credit in lines:
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
@@ -663,9 +667,11 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
 def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_id, amount, payment_method):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
     cash_code = {"cash":"1000","card":"1010","online":"1020"}[payment_method]
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"دریافت از مشتری "+customer_id,
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"دریافت از مشتری "+customer_id,
                                       "customer_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts[cash_code],amount,0),(accounts["1100"],0,amount)):
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
@@ -696,9 +702,11 @@ def post_order_cogs_journal(db, tenant_id, user_id, order_id, cost_total):
     if cost_total <= 0:
         return
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"بهای تمام‌شده سفارش "+order_id,
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"بهای تمام‌شده سفارش "+order_id,
                                       "order_cogs",order_id,user_id,now))
     for account_id,debit,credit in ((accounts["5100"],cost_total,0),(accounts["1200"],0,cost_total)):
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
@@ -717,9 +725,12 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
     credit_total = sum(line["credit"] for line in lines)
     if debit_total <= 0 or debit_total != credit_total:
         raise sqlite3.IntegrityError("Original transaction journal is not balanced.")
+    reversal_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,original["entry_date"])
+    assert_accounting_period_open(db,tenant_id,reversal_date)
     entry_id, now = secrets.token_urlsafe(18), int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,reversal_of,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,time.strftime("%Y-%m-%d"),"برگشت تراکنش "+tx_id,
+        VALUES(?,?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,reversal_date,"برگشت تراکنش "+tx_id,
                                        "transaction_reversal",tx_id,original["id"],user_id,now))
     lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
                        (tenant_id,original["id"])).fetchall()
@@ -776,9 +787,11 @@ def verify_license_code(code):
 def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, method):
     accounts={r["code"]:r["id"] for r in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1",(tenant_id,))}
     cash_code={"cash":"1000","card":"1010","online":"1020"}[method]
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
     entry_id,now=secrets.token_urlsafe(18),int(time.time())
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""",(entry_id,tenant_id,time.strftime("%Y-%m-%d"),"پرداخت به تأمین‌کننده","supplier_payment",payment_id,user_id,now))
+        VALUES(?,?,?,?,?,?,?,?)""",(entry_id,tenant_id,entry_date,"پرداخت به تأمین‌کننده","supplier_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts["2000"],amount,0),(accounts[cash_code],0,amount)):
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
             (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
