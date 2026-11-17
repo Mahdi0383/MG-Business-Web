@@ -749,9 +749,18 @@ class Handler(SimpleHTTPRequestHandler):
             parts = resolved.relative_to(ROOT).parts
         except ValueError:
             return str(ROOT / "__blocked_resource__")
-        blocked = any(part.startswith(".") or part in ("data","__pycache__",".venv","tests",".github") for part in parts)
-        blocked = blocked or resolved.name in ("server.py","license_tool.py","backup_manager.py","README.md")
-        blocked = blocked or resolved.suffix.lower() in (".sqlite",".sqlite3",".db",".env")
+        # The web root contains both browser assets and operational/developer files.
+        # Never publish deployment templates, Python sources, docs, or test fixtures.
+        blocked = any(part.startswith(".") or part in (
+            "data", "__pycache__", ".venv", "tests", "deploy", ".github"
+        ) for part in parts)
+        blocked = blocked or resolved.name in (
+            "server.py", "license_tool.py", "backup_manager.py", "README.md"
+        )
+        blocked = blocked or resolved.suffix.lower() in (
+            ".sqlite", ".sqlite3", ".db", ".env", ".py", ".md", ".yml",
+            ".yaml", ".sh", ".service", ".conf", ".example", ".toml", ".lock"
+        )
         return str(ROOT / "__blocked_resource__") if blocked else str(resolved)
 
     def list_directory(self, path):
