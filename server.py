@@ -1156,8 +1156,9 @@ class Handler(SimpleHTTPRequestHandler):
                     audit(db,tenant_id,user["id"],"backup.restored","tenant",tenant_id,{"rows":total_rows})
                     db.commit()
                     return self.send_json(200, {"ok":True,"restoredRows":total_rows})
-                except sqlite3.IntegrityError:
+                except sqlite3.IntegrityError as exc:
                     db.rollback()
+                    self.log_error("Backup restore rejected by SQLite integrity constraint: %s", exc)
                     return self.send_json(409, {"error": "بازیابی به‌دلیل ناسازگاری ارتباط رکوردها انجام نشد؛ اطلاعات قبلی حفظ شد."})
             if path == "/api/licenses/activate":
                 if user["role"] != "owner":
