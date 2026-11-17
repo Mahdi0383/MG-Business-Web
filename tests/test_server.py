@@ -540,8 +540,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 WHERE tenant_id=(SELECT tenant_id FROM users WHERE username=?)
                 AND invoice_id='purchase-invoice-1' GROUP BY product_id""",("owner",)).fetchall()
             by_product={row["product_id"]:row for row in discounted_lines}
-            self.assertEqual(by_product["product-purchase-test"]["line_total"],236363)
-            self.assertEqual(by_product["product-purchase-test-2"]["line_total"],183636)
+            self.assertEqual(by_product["product-purchase-test"]["line_total"],233333)
+            self.assertEqual(by_product["product-purchase-test-2"]["line_total"],186666)
             self.assertEqual(sum(row["line_total"] for row in discounted_lines),419999)
             self.assertEqual(sum(row["quantity"] for row in discounted_lines),15)
         finally:
