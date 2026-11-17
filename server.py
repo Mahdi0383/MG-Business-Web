@@ -34,6 +34,24 @@ LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
 
+def allocate_proportional_discount(amounts, discount):
+    """Allocate a whole-order discount to lines with deterministic largest remainders."""
+    if not isinstance(amounts, (list, tuple)) or any(type(x) is not int or x < 0 for x in amounts):
+        raise ValueError("line amounts must be non-negative integers")
+    if type(discount) is not int or discount < 0 or discount > sum(amounts):
+        raise ValueError("discount is outside the order subtotal")
+    subtotal=sum(amounts)
+    if subtotal == 0:
+        if discount:
+            raise ValueError("cannot discount a zero subtotal")
+        return [0 for _ in amounts]
+    allocations=[(discount*amount)//subtotal for amount in amounts]
+    remainder=discount-sum(allocations)
+    order=sorted(range(len(amounts)),key=lambda i:((discount*amounts[i])%subtotal,amounts[i],-i),reverse=True)
+    for index in order[:remainder]:
+        allocations[index]+=1
+    return allocations
+
 def remember_login_failure(key, ip, now):
     LOGIN_FAILURES.setdefault(key, []).append(now)
     LOGIN_IP_FAILURES.setdefault(ip, []).append(now)
@@ -285,6 +303,7 @@ CREATE TABLE IF NOT EXISTS order_items(
  product_id TEXT NOT NULL, product_name TEXT NOT NULL,
  quantity INTEGER NOT NULL CHECK(quantity>0), unit_price INTEGER NOT NULL CHECK(unit_price>=0),
  unit_cost INTEGER NOT NULL CHECK(unit_cost>=0), line_total INTEGER NOT NULL CHECK(line_total>=0),
+ discount_amount INTEGER NOT NULL DEFAULT 0 CHECK(discount_amount>=0 AND discount_amount<=line_total),
  addons_json TEXT NOT NULL DEFAULT '[]',
  FOREIGN KEY(order_id) REFERENCES orders(id),
  FOREIGN KEY(product_id) REFERENCES products(id)
@@ -331,6 +350,8 @@ def connect():
     order_item_columns = {row["name"] for row in db.execute("PRAGMA table_info(order_items)").fetchall()}
     if "addons_json" not in order_item_columns:
         db.execute("ALTER TABLE order_items ADD COLUMN addons_json TEXT NOT NULL DEFAULT '[]'")
+    if "discount_amount" not in order_item_columns:
+        db.execute("ALTER TABLE order_items ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0 CHECK(discount_amount>=0)")
     columns = {row["name"] for row in db.execute("PRAGMA table_info(transactions)").fetchall()}
     if "status" not in columns:
         db.execute("ALTER TABLE transactions ADD COLUMN status TEXT NOT NULL DEFAULT 'posted' CHECK(status IN ('posted','voided'))")
@@ -384,6 +405,8 @@ def connect():
             db.execute("""UPDATE game_sessions SET payment_method='credit'
                 WHERE status='ended' AND customer_id IS NOT NULL AND amount_due>0""")
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(11,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=12").fetchone():
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(12,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -1040,7 +1063,7 @@ class Handler(SimpleHTTPRequestHandler):
                 day_start=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday,0,0,0,0,0,-1)))
                 day_end=int(time.mktime((local.tm_year,local.tm_mon,local.tm_mday+1,0,0,0,0,0,-1)))
                 rows=db.execute("""SELECT i.product_id AS productId,i.product_name AS productName,
-                    SUM(i.quantity) AS quantity,SUM(i.line_total) AS revenue,
+                    SUM(i.quantity) AS quantity,SUM(i.line_total-i.discount_amount) AS revenue,
                     COUNT(DISTINCT o.id) AS orderCount
                     FROM order_items i JOIN orders o ON o.id=i.order_id AND o.tenant_id=i.tenant_id
                     WHERE i.tenant_id=? AND o.status='paid' AND o.created_at>=? AND o.created_at<?
@@ -2019,6 +2042,7 @@ class Handler(SimpleHTTPRequestHandler):
                     db.rollback()
                     return self.send_json(400, {"error": "تخفیف باید از مبلغ سفارش کمتر باشد."})
                 total = subtotal - discount
+                line_discounts=allocate_proportional_discount([line[5] for line in order_lines],discount)
                 now = int(time.time())
                 order_number = "MG-%s-%s" % (time.strftime("%Y%m%d"), secrets.token_hex(3).upper())
                 db.execute("""INSERT INTO orders(id,tenant_id,order_number,customer_id,created_by,status,subtotal,discount,total,payment_method,created_at)
@@ -2030,9 +2054,9 @@ class Handler(SimpleHTTPRequestHandler):
                     db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                         VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],
                         "order",order_id,total,"فروش اعتباری "+order_number,now))
-                for product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot in order_lines:
-                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total,addons_json)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,unit_price,average_cost,line_total,json.dumps(addon_snapshot,ensure_ascii=False,separators=(",",":"))))
+                for line_index,(product_id,product,quantity,unit_price,average_cost,line_total,addon_snapshot) in enumerate(order_lines):
+                    db.execute("""INSERT INTO order_items(id,tenant_id,order_id,product_id,product_name,quantity,unit_price,unit_cost,line_total,discount_amount,addons_json)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],order_id,product_id,product["name"],quantity,unit_price,average_cost,line_total,line_discounts[line_index],json.dumps(addon_snapshot,ensure_ascii=False,separators=(",",":"))))
                 for product_id,(product,quantity,average_cost) in products.items():
                     db.execute("""INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at)
                         VALUES(?,?,?,?,?,?,?,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],product_id,user["id"],"sale",-quantity,average_cost,"سفارش "+order_number,now))
