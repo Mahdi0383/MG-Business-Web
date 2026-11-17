@@ -1023,33 +1023,6 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("SELECT id,username,role,active,created_at AS createdAt FROM users WHERE tenant_id=? ORDER BY username",
                                   (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
-            if path == "/api/accounting/accounts":
-                if not module_enabled(db,user["tenant_id"],"accounting"):
-                    return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
-                if user["role"] not in ("owner","manager"):
-                    return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند سرفصل حساب جدید تعریف کند."})
-                code=data.get("code"); name=data.get("name"); account_type=data.get("accountType")
-                if "normalBalance" in data:
-                    return self.send_json(400,{"error":"ماهیت حساب بر اساس نوع حساب تعیین می‌شود و قابل ارسال جداگانه نیست."})
-                if not isinstance(code,str) or not re.fullmatch(r"[0-9]{4,12}",code.strip()):
-                    return self.send_json(400,{"error":"کد حساب باید ۴ تا ۱۲ رقم باشد."})
-                if not isinstance(name,str) or not 1<=len(name.strip())<=120:
-                    return self.send_json(400,{"error":"نام حساب معتبر نیست."})
-                expected_balance={"asset":"debit","expense":"debit","liability":"credit","equity":"credit","revenue":"credit"}
-                if account_type not in expected_balance:
-                    return self.send_json(400,{"error":"نوع حساب معتبر نیست."})
-                normal_balance=expected_balance[account_type]
-                account_id=secrets.token_urlsafe(18)
-                db.execute("BEGIN IMMEDIATE")
-                if db.execute("SELECT 1 FROM accounts WHERE tenant_id=? AND code=?",(user["tenant_id"],code.strip())).fetchone():
-                    db.rollback()
-                    return self.send_json(409,{"error":"کد حساب قبلاً در این کسب‌وکار ثبت شده است."})
-                db.execute("""INSERT INTO accounts(id,tenant_id,code,name,account_type,normal_balance)
-                    VALUES(?,?,?,?,?,?)""",(account_id,user["tenant_id"],code.strip(),name.strip(),account_type,normal_balance))
-                audit(db,user["tenant_id"],user["id"],"account.created","account",account_id,
-                    {"code":code.strip(),"accountType":account_type})
-                db.commit()
-                return self.send_json(201,{"id":account_id,"ok":True})
             if path == "/api/transactions":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
@@ -2993,6 +2966,33 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"customer.created","customer",customer_id)
                 db.commit()
                 return self.send_json(201, {"id": customer_id, "ok": True})
+            if path == "/api/accounting/accounts":
+                if not module_enabled(db,user["tenant_id"],"accounting"):
+                    return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند سرفصل حساب جدید تعریف کند."})
+                code=data.get("code"); name=data.get("name"); account_type=data.get("accountType")
+                if "normalBalance" in data:
+                    return self.send_json(400,{"error":"ماهیت حساب بر اساس نوع حساب تعیین می‌شود و قابل ارسال جداگانه نیست."})
+                if not isinstance(code,str) or not re.fullmatch(r"[0-9]{4,12}",code.strip()):
+                    return self.send_json(400,{"error":"کد حساب باید ۴ تا ۱۲ رقم باشد."})
+                if not isinstance(name,str) or not 1<=len(name.strip())<=120:
+                    return self.send_json(400,{"error":"نام حساب معتبر نیست."})
+                expected_balance={"asset":"debit","expense":"debit","liability":"credit","equity":"credit","revenue":"credit"}
+                if account_type not in expected_balance:
+                    return self.send_json(400,{"error":"نوع حساب معتبر نیست."})
+                normal_balance=expected_balance[account_type]
+                account_id=secrets.token_urlsafe(18)
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM accounts WHERE tenant_id=? AND code=?",(user["tenant_id"],code.strip())).fetchone():
+                    db.rollback()
+                    return self.send_json(409,{"error":"کد حساب قبلاً در این کسب‌وکار ثبت شده است."})
+                db.execute("""INSERT INTO accounts(id,tenant_id,code,name,account_type,normal_balance)
+                    VALUES(?,?,?,?,?,?)""",(account_id,user["tenant_id"],code.strip(),name.strip(),account_type,normal_balance))
+                audit(db,user["tenant_id"],user["id"],"account.created","account",account_id,
+                    {"code":code.strip(),"accountType":account_type})
+                db.commit()
+                return self.send_json(201,{"id":account_id,"ok":True})
             if path == "/api/transactions":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
