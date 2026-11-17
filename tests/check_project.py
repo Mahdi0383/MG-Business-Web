@@ -55,6 +55,10 @@ if any(name not in server for name in ("purchase_invoice_items","supplier_paymen
 app = (root / "app.js").read_text(encoding="utf-8")
 if "purchaseLines" not in app or "supplierPaymentForm" not in app:
     raise SystemExit("multi-line purchase invoice and supplier payment UI are missing")
+if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in app:
+    raise SystemExit("supplier account statement CSV export is missing")
+if "statement.totalPurchases" not in app or "item.balanceAfter" not in app:
+    raise SystemExit("supplier statement export must include reconciled totals and running balances")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
 if "stableRequestId" not in app:
