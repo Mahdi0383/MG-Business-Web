@@ -46,7 +46,7 @@ git pull --ff-only
 - `GET /api/health` و `GET /api/setup-status`
 - `POST /api/setup` برای ایجاد اولین کسب‌وکار و حساب مالک (رمز حداقل ۱۲ نویسه)
 - `POST /api/login` و `POST /api/logout`
-- `GET /api/me`، `GET/POST /api/users`، `DELETE /api/users/{id}`، `POST /api/users/{id}/password` و `GET /api/audit-log` برای مشاهده تاریخچه ممیزی برای بازنشانی رمز کاربر و باطل‌کردن نشست‌های قبلی
+- `GET /api/me`، `POST /api/account/password` برای تغییر رمز حساب فعلی با تأیید رمز قبلی و ابطال نشست‌های قبلی، `GET/POST /api/users`، `DELETE /api/users/{id}`، `POST /api/users/{id}/password` برای بازنشانی رمز کاربران توسط مالک، و `GET /api/audit-log` برای مشاهده تاریخچه ممیزی
 - `GET /api/modules`، `GET /api/licenses/status` و `POST /api/licenses/activate`
 - `GET/POST /api/orders` و `DELETE /api/orders/{id}`
 - `GET /api/public/menu` و `POST /api/public/orders` برای منوی عمومی و سفارش QR
@@ -60,7 +60,7 @@ git pull --ff-only
 - `GET/POST /api/gamenet/devices`، `POST/DELETE /api/gamenet/devices/{id}`، `GET /api/gamenet/sessions` و `POST /api/gamenet/sessions/{id}/end`
 - `GET/POST /api/gamenet/reservations` و `POST /api/gamenet/reservations/{id}/cancel` برای رزرو دستگاه و جلوگیری از تداخل زمان‌ها
 
-توکن نشست به‌صورت hash در SQLite نگهداری می‌شود؛ رمز عبور با PBKDF2-HMAC-SHA256 و salt تصادفی ذخیره می‌شود. ورود و سفارش عمومی rate-limit پایه دارند؛ داده‌ها در API به tenant محدود هستند و تغییرات مهم در audit log ثبت می‌شوند. این API هنوز به بازبینی امنیتی مستقل، TLS، مدیریت کاربران و نقش‌های کامل و آزمون نفوذ قبل از انتشار عمومی نیاز دارد. برای دسترسی از شبکه عمومی، سرور را مستقیم بدون HTTPS و تنظیمات امنیتی در معرض اینترنت قرار ندهید.
+توکن نشست به‌صورت hash در SQLite نگهداری می‌شود؛ نشست‌ها دارای مهلت بیکاری ۳۰ دقیقه‌ای با تمدید در درخواست معتبر و سقف عمر مطلق ۷ روز هستند. رمز عبور با PBKDF2-HMAC-SHA256 و salt تصادفی ذخیره می‌شود. ورود علاوه بر محدودیت هر نام کاربری، محدودیت تجمیعی هر IP نیز دارد؛ سفارش عمومی نیز rate-limit پایه دارد. تغییر رمز شخصی با تأیید رمز قبلی انجام می‌شود و نشست‌های قبلی باطل می‌شوند؛ بازنشانی رمز کاربران فقط در اختیار مالک است و مدیر نمی‌تواند رمز مالک را تغییر دهد. داده‌ها در API به tenant محدود هستند و تغییرات مهم در audit log ثبت می‌شوند. این API هنوز به بازبینی امنیتی مستقل، TLS، تکمیل مدیریت کاربران و نقش‌های ریزدانه و آزمون نفوذ قبل از انتشار عمومی نیاز دارد. برای دسترسی از شبکه عمومی، سرور را مستقیم بدون HTTPS و تنظیمات امنیتی در معرض اینترنت قرار ندهید.
 
 ## قابلیت‌های پیاده‌سازی‌شده فعلی
 
