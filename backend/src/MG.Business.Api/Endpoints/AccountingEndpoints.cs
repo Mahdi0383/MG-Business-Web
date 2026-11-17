@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -70,6 +71,11 @@ public static class AccountingEndpoints
                 await transaction.RollbackAsync(cancellationToken);
                 return Results.Conflict(new { message = "ایجاد سرفصل‌های پایه با تغییر هم‌زمان دیگری تداخل پیدا کرد؛ دوباره تلاش کنید." });
             }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "پایگاه داده نتوانست سرفصل‌های پایه را با اطمینان ثبت کند؛ وضعیت حساب‌ها را بررسی کنید." });
+            }
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
         group.MapPost("/accounts", async (CreateAccountRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
@@ -79,7 +85,16 @@ public static class AccountingEndpoints
             if (!Enum.IsDefined(request.Type))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["type"] = ["نوع حساب معتبر نیست."] });
 
-            var account = new Account(tenantId, request.Code, request.Name, request.Type);
+            Account account;
+            try
+            {
+                account = new Account(tenantId, request.Code, request.Name, request.Type);
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["account"] = [exception.Message] });
+            }
+
             db.Accounts.Add(account);
             try
             {
@@ -89,17 +104,92 @@ public static class AccountingEndpoints
             {
                 return Results.Conflict(new { message = "کد حساب تکراری است یا اطلاعات با محدودیت پایگاه داده سازگار نیست." });
             }
+            catch (DbException)
+            {
+                return Results.Conflict(new { message = "پایگاه داده نتوانست حساب را با اطمینان ثبت کند؛ دوباره تلاش کنید." });
+            }
 
             return Results.Created($"/api/accounting/accounts/{account.Id}",
                 new AccountResponse(account.Id, account.Code, account.Name, account.Type.ToString(), account.IsActive));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
+        group.MapGet("/journal-entries", async (int? page, int? pageSize, DateOnly? from, DateOnly? to, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            var pageNumber = page ?? 1;
+            var take = pageSize ?? 50;
+            if (pageNumber < 1 || take is < 1 or > 200 || (from.HasValue && to.HasValue && from.Value > to.Value))
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["query"] = ["صفحه باید مثبت، اندازه صفحه بین ۱ تا ۲۰۰ و بازه تاریخ معتبر باشد."]
+                });
+
+            var query = db.JournalEntries.AsNoTracking()
+                .Where(x => x.TenantId == tenant.TenantId);
+            if (tenant.BranchId is Guid branchId)
+                query = query.Where(x => x.BranchId == branchId);
+            if (from is DateOnly fromDate)
+                query = query.Where(x => x.EntryDate >= fromDate);
+            if (to is DateOnly toDate)
+                query = query.Where(x => x.EntryDate <= toDate);
+
+            var totalCount = await query.CountAsync(cancellationToken);
+            var entries = await query.OrderByDescending(x => x.EntryDate)
+                .ThenByDescending(x => x.Id)
+                .Skip((pageNumber - 1) * take)
+                .Take(take)
+                .Select(x => new
+                {
+                    x.Id, x.BranchId, x.EntryDate, x.Description, x.Reference, x.CreatedAtUtc
+                })
+                .ToListAsync(cancellationToken);
+
+            var entryIds = entries.Select(x => x.Id).ToArray();
+            var lines = await db.JournalEntryLines.AsNoTracking()
+                .Where(x => x.TenantId == tenant.TenantId && entryIds.Contains(x.JournalEntryId))
+                .Join(db.Accounts.AsNoTracking().Where(x => x.TenantId == tenant.TenantId),
+                    line => new { line.TenantId, line.AccountId },
+                    account => new { account.TenantId, AccountId = account.Id },
+                    (line, account) => new
+                    {
+                        line.JournalEntryId, line.Id, line.AccountId,
+                        AccountCode = account.Code, AccountName = account.Name,
+                        line.Debit, line.Credit, line.Description
+                    })
+                .ToListAsync(cancellationToken);
+
+            var lineGroups = lines.GroupBy(x => x.JournalEntryId).ToDictionary(x => x.Key, x => x.ToArray());
+            var result = entries.Select(entry =>
+            {
+                var entryLines = lineGroups.GetValueOrDefault(entry.Id) ?? [];
+                return new
+                {
+                    entry.Id, entry.BranchId, entry.EntryDate, entry.Description, entry.Reference, entry.CreatedAtUtc,
+                    TotalDebit = entryLines.Sum(x => x.Debit),
+                    TotalCredit = entryLines.Sum(x => x.Credit),
+                    Lines = entryLines.Select(x => new
+                    {
+                        x.Id, x.AccountId, x.AccountCode, x.AccountName,
+                        x.Debit, x.Credit, x.Description
+                    })
+                };
+            }).ToList();
+
+            return Results.Ok(new
+            {
+                page = pageNumber,
+                pageSize = take,
+                totalCount,
+                totalPages = (int)Math.Ceiling(totalCount / (double)take),
+                items = result
+            });
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
         group.MapPost("/journal-entries", async (CreateJournalEntryRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
                 return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
-            if (request.Lines is null || request.Lines.Count < 2)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["سند باید حداقل دو ردیف داشته باشد."] });
+            if (request.Lines is null || request.Lines.Count < 2 || request.Lines.Any(line => line is null))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["سند باید حداقل دو ردیف معتبر داشته باشد و ردیف خالی مجاز نیست."] });
 
             var accountIds = request.Lines.Select(x => x.AccountId).Distinct().ToArray();
             var validAccountCount = await db.Accounts.CountAsync(x =>
@@ -120,7 +210,37 @@ public static class AccountingEndpoints
             }
 
             db.JournalEntries.Add(entry);
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                // EF Core persists the entry and all lines in one SaveChanges transaction.
+                // Convert provider/concurrency failures into a safe retryable response;
+                // never expose database details or report a partially posted journal.
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Results.Conflict(new
+                {
+                    code = "journal_entry_concurrency_conflict",
+                    message = "اطلاعات حساب‌ها هم‌زمان تغییر کرده است؛ سند را تازه‌سازی و دوباره ثبت کنید."
+                });
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new
+                {
+                    code = "journal_entry_persistence_conflict",
+                    message = "ثبت سند به دلیل تعارض یا محدودیت اطلاعات پایگاه داده انجام نشد."
+                });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new
+                {
+                    code = "journal_entry_provider_conflict",
+                    message = "پایگاه داده نتوانست سند را با اطمینان ثبت کند؛ وضعیت سند را بررسی کنید."
+                });
+            }
 
             return Results.Created($"/api/accounting/journal-entries/{entry.Id}", new
             {

@@ -25,6 +25,11 @@ export class MgApiClient {
     this.onSessionChanged = null;
     this.tenantId = null;
     this.branchId = null;
+    this.deviceSigner = null;
+  }
+
+  setDeviceSigner(signer) {
+    this.deviceSigner = signer || null;
   }
 
   setSession(session) {
@@ -78,10 +83,39 @@ export class MgApiClient {
     const headers = new Headers(options.headers || {});
     if (this.session?.accessToken)
       headers.set("Authorization", `Bearer ${this.session.accessToken}`);
-    if (this.tenantId)
+    if (Object.prototype.hasOwnProperty.call(options, "tenantId")) {
+      if (options.tenantId) headers.set("X-MG-Tenant", options.tenantId);
+      else headers.delete("X-MG-Tenant");
+    } else if (this.tenantId) {
       headers.set("X-MG-Tenant", this.tenantId);
-    if (this.branchId)
+    }
+
+    if (Object.prototype.hasOwnProperty.call(options, "branchId")) {
+      // An explicit empty branch header clears mutable client context for this request.
+      headers.set("X-MG-Branch", options.branchId || "");
+    } else if (this.branchId) {
       headers.set("X-MG-Branch", this.branchId);
+    }
+
+    if (this.deviceSigner && path.startsWith("/api/sync/")
+      && !path.startsWith("/api/sync/enrollment/")) {
+      if (typeof options.actorId !== "string" || !options.actorId.trim())
+        throw new Error("Authenticated actor identity is required for signed device sync.");
+      const tenantId = Object.prototype.hasOwnProperty.call(options, "tenantId")
+        ? options.tenantId : this.tenantId;
+      const branchId = Object.prototype.hasOwnProperty.call(options, "branchId")
+        ? options.branchId : this.branchId;
+      const bodyJson = options.body === undefined ? "" : JSON.stringify(options.body);
+      const signedHeaders = await this.deviceSigner.createRequestHeaders({
+        method: options.method || "GET",
+        path,
+        tenantId,
+        branchId: branchId || null,
+        actorId: options.actorId,
+        bodyJson
+      });
+      for (const [name, value] of Object.entries(signedHeaders)) headers.set(name, value);
+    }
 
     try {
       return await this.rawRequest(path, { ...options, headers });
@@ -126,4 +160,11 @@ export function formatApiError(error) {
   if (error instanceof ApiError) return error.message;
   if (error instanceof TypeError) return "ارتباط با سرور برقرار نشد. نشانی API، اینترنت و تنظیمات CORS را بررسی کنید.";
   return error?.message || "خطای غیرمنتظره رخ داد.";
+}
+
+
+export function isNetworkUnavailable(error) {
+  if (error instanceof ApiError) return false;
+  return error instanceof TypeError
+    || (typeof navigator !== "undefined" && navigator.onLine === false);
 }

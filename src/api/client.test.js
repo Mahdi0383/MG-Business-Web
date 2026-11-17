@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, MgApiClient } from "./client.js";
+import { ApiError, isNetworkUnavailable, MgApiClient } from "./client.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -95,4 +95,69 @@ test("serializes JSON request bodies and surfaces API validation messages", asyn
   });
   assert.equal(request.headers.get("Content-Type"), "application/json");
   assert.deepEqual(JSON.parse(request.body), { name: " " });
+});
+
+test("pins a request to its captured branch even after the shared client context changes", async () => {
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push(options.headers);
+    return response(200, { ok: true });
+  };
+
+  const client = new MgApiClient("https://api.example.test");
+  client.setTenantContext("tenant-1", "branch-b");
+  await client.get("/api/sync/operations", { tenantId: "tenant-1", branchId: "branch-a" });
+  await client.get("/api/sync/operations", { tenantId: "tenant-1", branchId: null });
+
+  assert.equal(requests[0].get("X-MG-Branch"), "branch-a");
+  assert.equal(requests[1].get("X-MG-Branch"), "");
+  assert.equal(requests[1].get("X-MG-Tenant"), "tenant-1");
+});
+
+
+test("classifies fetch failures as offline without hiding HTTP errors", () => {
+  assert.equal(isNetworkUnavailable(new TypeError("Failed to fetch")), true);
+  assert.equal(isNetworkUnavailable(new ApiError(503, "Service unavailable")), false);
+  assert.equal(isNetworkUnavailable(new Error("Unexpected application error")), false);
+});
+
+test("signs sync requests using the exact serialized body and selected tenant branch", async () => {
+  let signed;
+  let sent;
+  const client = new MgApiClient("https://api.example.test");
+  client.setTenantContext("tenant-default", "branch-default");
+  client.setDeviceSigner({
+    async createRequestHeaders(input) {
+      signed = input;
+      return { "X-MG-Device-Signature": "signed-proof" };
+    }
+  });
+  globalThis.fetch = async (url, options) => {
+    sent = { url, options };
+    return response(200, { ok: true });
+  };
+
+  await client.post("/api/sync/operations?limit=5", { operations: [] }, {
+    tenantId: "tenant-1",
+    branchId: "branch-1",
+    actorId: "actor-1"
+  });
+
+  assert.equal(signed.method, "POST");
+  assert.equal(signed.path, "/api/sync/operations?limit=5");
+  assert.equal(signed.tenantId, "tenant-1");
+  assert.equal(signed.branchId, "branch-1");
+  assert.equal(signed.actorId, "actor-1");
+  assert.equal(signed.bodyJson, '{"operations":[]}');
+  assert.equal(sent.options.headers.get("X-MG-Device-Signature"), "signed-proof");
+  assert.equal(sent.options.body, signed.bodyJson);
+});
+
+test("does not require a device signature for enrollment bootstrap routes", async () => {
+  let signed = false;
+  const client = new MgApiClient("https://api.example.test");
+  client.setDeviceSigner({ async createRequestHeaders() { signed = true; return {}; } });
+  globalThis.fetch = async () => response(200, { ok: true });
+  await client.post("/api/sync/enrollment/challenges", { deviceId: "device-1" });
+  assert.equal(signed, false);
 });

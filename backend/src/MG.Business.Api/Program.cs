@@ -7,14 +7,19 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
+using System.Net;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
+var authorityLeaseSigner = new AuthorityLeaseSigner(builder.Configuration);
+builder.Services.AddSingleton(authorityLeaseSigner);
  builder.Services.AddHealthChecks();
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var trustedProxyAddresses = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
  builder.Services.AddCors(options => options.AddPolicy("frontend", policy =>
 {
     if (allowedOrigins.Length > 0)
@@ -28,6 +33,13 @@ if (!string.IsNullOrWhiteSpace(dataProtectionKeysDirectory))
     Directory.CreateDirectory(dataProtectionKeysDirectory);
     dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysDirectory));
 }
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    foreach (var address in trustedProxyAddresses)
+        options.KnownProxies.Add(IPAddress.Parse(address));
+});
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -45,8 +57,43 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var provider = builder.Configuration["Database:Provider"] ?? "Sqlite";
-var connectionString = builder.Configuration.GetConnectionString("Business")
-    ?? "Data Source=mg-business-dev.db";
+var configuredConnectionString = builder.Configuration.GetConnectionString("Business");
+var connectionString = configuredConnectionString ?? "Data Source=mg-business-dev.db";
+
+if (builder.Environment.IsProduction())
+{
+    if (!string.Equals(provider, "PostgreSql", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Production deployments must explicitly configure PostgreSQL; the development SQLite default is not permitted.");
+
+    if (string.IsNullOrWhiteSpace(configuredConnectionString))
+        throw new InvalidOperationException("Production deployments must explicitly configure ConnectionStrings:Business.");
+
+    if (string.IsNullOrWhiteSpace(dataProtectionKeysDirectory))
+        throw new InvalidOperationException("Production deployments must configure persistent private DataProtection:KeysDirectory storage.");
+
+    if (allowedOrigins.Length == 0 || allowedOrigins.Any(origin =>
+        !Uri.TryCreate(origin, UriKind.Absolute, out var parsedOrigin)
+        || parsedOrigin.Scheme != Uri.UriSchemeHttps
+        || parsedOrigin.AbsolutePath != "/"
+        || !string.IsNullOrEmpty(parsedOrigin.Query)
+        || !string.IsNullOrEmpty(parsedOrigin.Fragment)))
+        throw new InvalidOperationException("Production deployments must configure exact HTTPS frontend origins in Cors:AllowedOrigins.");
+
+    if (trustedProxyAddresses.Length == 0 || trustedProxyAddresses.Any(address => !IPAddress.TryParse(address, out _)))
+        throw new InvalidOperationException("Production deployments must configure the exact trusted reverse-proxy IP addresses in ForwardedHeaders:KnownProxies.");
+
+    if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireDeviceSignatures"))
+        throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireDeviceSignatures.");
+
+    if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireAuthorityLeases"))
+        throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireAuthorityLeases.");
+
+    if (!authorityLeaseSigner.IsConfigured)
+        throw new InvalidOperationException("Production deployments must configure SyncSecurity:AuthoritySigningPrivateKeyPkcs8Base64 for signed authority leases.");
+
+    if (!builder.Configuration.GetValue<bool>("SyncSecurity:RequireAuthorityLeases"))
+        throw new InvalidOperationException("Production deployments must enable SyncSecurity:RequireAuthorityLeases to enforce fencing epochs.");
+}
 
 builder.Services.AddDbContext<BusinessDbContext>(options =>
 {
@@ -103,6 +150,7 @@ else if (app.Environment.IsDevelopment()
 }
 
 app.UseExceptionHandler();
+app.UseForwardedHeaders();
 if (app.Environment.IsProduction())
 {
     app.UseHsts();
@@ -115,6 +163,7 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseMiddleware<TenantResolutionMiddleware>();
 app.UseAuthorization();
+app.UseMiddleware<DeviceRequestSignatureMiddleware>();
 
 app.MapGroup("/auth").RequireRateLimiting("auth").MapIdentityApi<ApplicationUser>();
 app.MapTenantContextEndpoints();
@@ -127,6 +176,9 @@ app.MapCafeEndpoints();
 app.MapGameNetEndpoints();
 app.MapBranchEndpoints();
 app.MapMembershipEndpoints();
+app.MapSyncEndpoints();
+app.MapDeviceEnrollmentEndpoints();
+app.MapDeviceAuthorityEndpoints();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = "mg-business-api" }))
    .WithName("Liveness");

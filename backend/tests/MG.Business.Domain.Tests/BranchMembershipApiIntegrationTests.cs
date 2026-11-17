@@ -49,6 +49,11 @@ public sealed class BranchMembershipApiIntegrationTests
         Assert.Equal("Cashier", context!.Role);
         Assert.Equal(branch.Id, context.BranchId);
 
+        var forbiddenBranchCreate = await staff.PostAsJsonAsync("/api/branches", new { name = "Unauthorized Branch", code = "B03" });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenBranchCreate.StatusCode);
+        var forbiddenBranchDisable = await staff.PatchAsJsonAsync($"/api/branches/{branch.Id}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenBranchDisable.StatusCode);
+
         staff.DefaultRequestHeaders.Remove("X-MG-Branch");
         staff.DefaultRequestHeaders.Add("X-MG-Branch", tenant.BranchId.ToString());
         var otherBranch = await staff.GetAsync("/api/context");
@@ -56,6 +61,10 @@ public sealed class BranchMembershipApiIntegrationTests
 
         var disabled = await owner.PatchAsJsonAsync($"/api/branches/{branch.Id}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.OK, disabled.StatusCode);
+        var repeatedDisable = await owner.PatchAsJsonAsync($"/api/branches/{branch.Id}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.OK, repeatedDisable.StatusCode);
+        var disableFinalBranch = await owner.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
+        Assert.Equal(HttpStatusCode.Conflict, disableFinalBranch.StatusCode);
         staff.DefaultRequestHeaders.Remove("X-MG-Branch");
         staff.DefaultRequestHeaders.Add("X-MG-Branch", branch.Id.ToString());
         var inactiveBranch = await staff.GetAsync("/api/context");

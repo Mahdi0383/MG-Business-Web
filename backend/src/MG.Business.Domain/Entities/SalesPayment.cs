@@ -7,7 +7,7 @@ public sealed class SalesPayment
     private SalesPayment() { }
 
     public SalesPayment(Guid tenantId, Guid branchId, Guid salesOrderId, decimal amount,
-        PaymentMethod method, string? reference = null)
+        PaymentMethod method, string? reference = null, string? idempotencyKey = null, string? requestFingerprint = null)
     {
         if (tenantId == Guid.Empty) throw new ArgumentException("Tenant is required.", nameof(tenantId));
         if (branchId == Guid.Empty) throw new ArgumentException("Branch is required.", nameof(branchId));
@@ -24,6 +24,8 @@ public sealed class SalesPayment
         Amount = amount;
         Method = method;
         Reference = string.IsNullOrWhiteSpace(reference) ? null : reference.Trim();
+        IdempotencyKey = idempotencyKey ?? $"sale:{salesOrderId:N}";
+        RequestFingerprint = requestFingerprint ?? new string('0', 64);
         CreatedAtUtc = DateTimeOffset.UtcNow;
     }
 
@@ -34,5 +36,7 @@ public sealed class SalesPayment
     public decimal Amount { get; private set; }
     public PaymentMethod Method { get; private set; }
     public string? Reference { get; private set; }
+    public string? IdempotencyKey { get; private set; }
+    public string? RequestFingerprint { get; private set; }
     public DateTimeOffset CreatedAtUtc { get; private set; }
 }

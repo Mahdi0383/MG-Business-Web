@@ -1,0 +1,28 @@
+# Environment files and deployment secrets
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+# Frontend build output and dependencies
+node_modules/
+dist/
+coverage/
+
+# .NET build output
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+
+# Local databases and transient SQLite files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local ASP.NET Core Data Protection key material
+**/DataProtection-Keys/
+**/dataprotection-keys/

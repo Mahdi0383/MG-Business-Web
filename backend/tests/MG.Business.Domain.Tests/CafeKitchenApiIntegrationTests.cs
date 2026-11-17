@@ -67,6 +67,15 @@ public sealed class CafeKitchenApiIntegrationTests
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponse>();
 
+        var duplicateTicket = await client.PostAsJsonAsync("/api/cafe/kitchen/tickets", new
+        {
+            salesOrderId = sale.Id,
+            serviceType = CafeServiceType.DineIn,
+            tableLabel = "T-04",
+            notes = "Duplicate request"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, duplicateTicket.StatusCode);
+
         var disableBranch = await client.PatchAsJsonAsync($"/api/branches/{tenant.BranchId}/active", new { isActive = false });
         Assert.Equal(HttpStatusCode.Conflict, disableBranch.StatusCode);
 

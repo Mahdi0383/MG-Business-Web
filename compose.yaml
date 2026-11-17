@@ -30,6 +30,7 @@ services:
       ConnectionStrings__Business: Host=database;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       DataProtection__KeysDirectory: /var/lib/mg-business/keys
       Cors__AllowedOrigins__0: ${MG_FRONTEND_ORIGIN:?Set MG_FRONTEND_ORIGIN in .env.docker}
+      ForwardedHeaders__KnownProxies__0: ${MG_TRUSTED_PROXY_IP:?Set MG_TRUSTED_PROXY_IP to the reverse proxy address seen by the API container}
     ports:
       - "${MG_API_BIND_ADDRESS:-127.0.0.1}:${MG_API_PORT:-8080}:8080"
     volumes:

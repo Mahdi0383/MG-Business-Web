@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Infrastructure.Persistence;
@@ -25,7 +26,7 @@ public static class CustomerEndpoints
             }
 
             var customers = await query.OrderBy(x => x.Name).Take(100)
-                .Select(x => new CustomerResponse(x.Id, x.Code, x.Name, x.Phone, x.Email, x.Address, x.Notes, x.IsActive))
+                .Select(x => new CustomerResponse(x.Id, x.Code, x.Name, x.Phone, x.Email, x.Address, x.Notes, x.IsActive, x.Version))
                 .ToListAsync(cancellationToken);
             return Results.Ok(customers);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
@@ -52,7 +53,11 @@ public static class CustomerEndpoints
             }
             catch (DbUpdateException)
             {
-                return Results.Conflict(new { message = "کد مشتری در این کسب‌وکار قبلاً استفاده شده است." });
+                return Results.Conflict(new { code = "customer_create_conflict", message = "کد مشتری در این کسب‌وکار قبلاً استفاده شده است یا ثبت با تعارض داده مواجه شد." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { code = "customer_create_provider_conflict", message = "پایگاه داده نتوانست مشتری را با اطمینان ثبت کند؛ دوباره تلاش کنید." });
             }
 
             return Results.Created($"/api/customers/{customer.Id}", ToResponse(customer));
@@ -72,6 +77,10 @@ public static class CustomerEndpoints
             if (customer is null)
                 return Results.NotFound();
 
+            if (request.BaseVersion < 1)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["baseVersion"] = ["نسخه مبنا باید عدد صحیح مثبت باشد."] });
+
+            db.Entry(customer).Property(x => x.Version).OriginalValue = request.BaseVersion;
             try
             {
                 customer.UpdateContact(request.Name, request.Phone, request.Email, request.Address, request.Notes);
@@ -81,6 +90,18 @@ public static class CustomerEndpoints
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["customer"] = [exception.Message] });
             }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Results.Conflict(new { code = "customer_version_conflict", message = "اطلاعات مشتری توسط کاربر دیگری تغییر کرده است؛ اطلاعات را دوباره دریافت کنید." });
+            }
+            catch (DbUpdateException)
+            {
+                return Results.Conflict(new { code = "customer_update_persistence_conflict", message = "ذخیره تغییرات مشتری با محدودیت یا تعارض داده مواجه شد." });
+            }
+            catch (DbException)
+            {
+                return Results.Conflict(new { code = "customer_update_provider_conflict", message = "پایگاه داده نتوانست تغییرات مشتری را با اطمینان ثبت کند؛ وضعیت را تازه‌سازی کنید." });
+            }
 
             return Results.Ok(ToResponse(customer));
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
@@ -89,9 +110,9 @@ public static class CustomerEndpoints
     }
 
     private static CustomerResponse ToResponse(Customer customer) =>
-        new(customer.Id, customer.Code, customer.Name, customer.Phone, customer.Email, customer.Address, customer.Notes, customer.IsActive);
+        new(customer.Id, customer.Code, customer.Name, customer.Phone, customer.Email, customer.Address, customer.Notes, customer.IsActive, customer.Version);
 
     public sealed record CreateCustomerRequest(string Code, string Name, string? Phone, string? Email, string? Address, string? Notes);
-    public sealed record UpdateCustomerRequest(string Name, string? Phone, string? Email, string? Address, string? Notes);
-    public sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
+    public sealed record UpdateCustomerRequest(int BaseVersion, string Name, string? Phone, string? Email, string? Address, string? Notes);
+    public sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive, int Version);
 }

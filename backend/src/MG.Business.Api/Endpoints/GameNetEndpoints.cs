@@ -135,8 +135,22 @@ public static class GameNetEndpoints
                 await transaction.RollbackAsync(cancellationToken);
                 return Results.Conflict(new { message = "شروع جلسه به دلیل هم‌زمانی یا تعارض داده‌ها انجام نشد." });
             }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "تغییر هم‌زمان پایگاه داده رخ داد؛ وضعیت دستگاه را بررسی و دوباره تلاش کنید." });
+            }
 
-            await transaction.CommitAsync(cancellationToken);
+            try
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (DbException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return Results.Conflict(new { message = "تأیید نهایی شروع جلسه به دلیل تعارض پایگاه داده انجام نشد؛ وضعیت دستگاه را بررسی کنید." });
+            }
+
             return Results.Created($"/api/gamenet/sessions/{session.Id}",
                 new { session.Id, session.DeviceId, session.CustomerId, session.StartedAtUtc, session.HourlyRate, session.BillingIntervalMinutes });
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
@@ -150,14 +164,69 @@ public static class GameNetEndpoints
                 || (request.AmountPaid > 0m && request.PaymentMethod == PaymentMethod.OnAccount)
                 || (request.AmountPaid == 0m && request.PaymentMethod != PaymentMethod.OnAccount))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت با مبلغ پرداختی سازگار نیست."] });
+            if (request.AmountPaid < 0m || decimal.Round(request.AmountPaid, 2) != request.AmountPaid)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداخت باید غیرمنفی و حداکثر دارای دو رقم اعشار باشد."] });
+            if (request.PaymentReference?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
 
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             try
             {
                 var session = await db.GameSessions.SingleOrDefaultAsync(x =>
-                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == sessionId
-                    && x.Status == GameSessionStatus.Active, cancellationToken);
+                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == sessionId, cancellationToken);
                 if (session is null) return Results.NotFound();
+
+                // A close request may be retried after the database committed but the
+                // client lost the response. Return the original linked order instead
+                // of turning a successful financial operation into a misleading 404.
+                if (session.Status == GameSessionStatus.Closed)
+                {
+                    if (session.SalesOrderId is not Guid existingOrderId)
+                        return Results.Conflict(new { message = "جلسه بسته شده اما فاکتور متناظر ندارد؛ برای جلوگیری از ثبت مالی تکراری نیاز به بررسی مدیر است." });
+                    var existingOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Id == existingOrderId, cancellationToken);
+                    if (existingOrder is null)
+                        return Results.Conflict(new { message = "فاکتور ثبت‌شده برای این جلسه پیدا نشد؛ عملیات به بررسی مدیر نیاز دارد." });
+                    if (request.AmountPaid != existingOrder.PaidAmount)
+                        return Results.Conflict(new { message = "این جلسه قبلاً با مبلغ دیگری تسویه شده است؛ نتیجه ثبت‌شده را از تاریخچه فاکتور بررسی کنید." });
+                    var existingEntry = await db.JournalEntries.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Reference == existingOrder.Number, cancellationToken);
+                    if (existingEntry is null)
+                        return Results.Conflict(new { message = "سند حسابداری جلسه پیدا نشد؛ نتیجه ثبت‌شده نیاز به بررسی مدیر دارد." });
+                    var existingLines = await db.JournalEntryLines.AsNoTracking()
+                        .Where(x => x.TenantId == tenantId && x.JournalEntryId == existingEntry.Id)
+                        .ToListAsync(cancellationToken);
+                    if (!existingLines.Any(x => x.AccountId == request.RevenueAccountId && x.Credit == existingOrder.Total)
+                        || (existingOrder.PaidAmount > 0m && !existingLines.Any(x =>
+                            x.AccountId == request.PaymentAccountId && x.Debit == existingOrder.PaidAmount))
+                        || (existingOrder.BalanceDue > 0m && !existingLines.Any(x =>
+                            x.AccountId == request.ReceivableAccountId && x.Debit == existingOrder.BalanceDue)))
+                        return Results.Conflict(new { message = "حساب‌های درخواست با سند مالی ثبت‌شده یکسان نیستند؛ از همان اطلاعات درخواست اولیه استفاده کنید." });
+                    if (existingOrder.PaidAmount > 0m)
+                    {
+                        var existingPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.TenantId == tenantId && x.BranchId == branchId && x.SalesOrderId == existingOrder.Id, cancellationToken);
+                        var normalizedReference = string.IsNullOrWhiteSpace(request.PaymentReference)
+                            ? null : request.PaymentReference.Trim();
+                        if (existingPayment is null || existingPayment.Method != request.PaymentMethod
+                            || existingPayment.Reference != normalizedReference)
+                            return Results.Conflict(new { message = "درخواست بستن با اطلاعات تسویه ثبت‌شده یکسان نیست؛ از همان اطلاعات درخواست اولیه استفاده کنید." });
+                    }
+                    return Results.Ok(new
+                    {
+                        session.Id,
+                        session.DeviceId,
+                        session.StartedAtUtc,
+                        session.EndedAtUtc,
+                        session.BilledMinutes,
+                        session.HourlyRate,
+                        session.TotalAmount,
+                        salesOrderId = existingOrder.Id,
+                        existingOrder.PaidAmount,
+                        existingOrder.BalanceDue,
+                        replayed = true
+                    });
+                }
 
                 var device = await db.GameDevices.SingleAsync(x =>
                     x.TenantId == tenantId && x.Id == session.DeviceId, cancellationToken);
@@ -210,7 +279,8 @@ public static class GameNetEndpoints
                     session.TotalAmount,
                     salesOrderId = order.Id,
                     order.PaidAmount,
-                    order.BalanceDue
+                    order.BalanceDue,
+                    replayed = false
                 });
             }
             catch (ArgumentException exception)

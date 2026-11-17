@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatApiError, MgApiClient } from "../api/client.js";
 import ServerWorkspace from "../server/ServerWorkspace.jsx";
+import { LocalOperationStore } from "../sync/local-operation-store.js";
+import { SyncAgent } from "../sync/sync-agent.js";
+import { DeviceEnrollmentClient } from "../sync/device-enrollment.js";
+import { IncomingOperationProcessor } from "../sync/incoming-operation-processor.js";
+import { classifyIncomingOperation } from "../sync/conflict-policy.js";
 import "../server/server.css";
 
 const SESSION_KEY = "mg-business-session";
@@ -18,6 +23,18 @@ function AuthShell({ apiBaseUrl }) {
   const clientRef = useRef(null);
   if (!clientRef.current) clientRef.current = new MgApiClient(apiBaseUrl);
   const client = clientRef.current;
+  const operationStoreRef = useRef(new LocalOperationStore());
+  const deviceEnrollmentRef = useRef(null);
+  if (!deviceEnrollmentRef.current) deviceEnrollmentRef.current = new DeviceEnrollmentClient(client, operationStoreRef.current);
+  if (client.deviceSigner !== deviceEnrollmentRef.current) client.setDeviceSigner(deviceEnrollmentRef.current);
+  const syncAgentRef = useRef(null);
+  if (!syncAgentRef.current) syncAgentRef.current = new SyncAgent(client, operationStoreRef.current);
+  const incomingProcessorRef = useRef(null);
+  if (!incomingProcessorRef.current) incomingProcessorRef.current = new IncomingOperationProcessor({
+    store: operationStoreRef.current,
+    adapter: operationStoreRef.current,
+    classify: classifyIncomingOperation
+  });
 
   const [session, setSessionState] = useState(readSavedSession);
   const [stage, setStage] = useState("restoring");
@@ -31,8 +48,15 @@ function AuthShell({ apiBaseUrl }) {
   const [branches, setBranches] = useState([]);
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  const [activeActorId, setActiveActorId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const [pendingOperations, setPendingOperations] = useState(0);
+  const [incomingOperations, setIncomingOperations] = useState(0);
+  const [openSyncConflicts, setOpenSyncConflicts] = useState(0);
+  const [disconnectedDevices, setDisconnectedDevices] = useState([]);
+  const [deviceStatuses, setDeviceStatuses] = useState([]);
 
   useEffect(() => {
     client.onSessionChanged = value => {
@@ -56,6 +80,7 @@ function AuthShell({ apiBaseUrl }) {
       client.setTenantContext(null, null);
       setSelectedTenant(null);
       setSelectedBranch(null);
+      setActiveActorId(null);
       setStage("login");
     }
   }, [session, stage, client]);
@@ -65,6 +90,7 @@ function AuthShell({ apiBaseUrl }) {
     setTenants(result || []);
     setSelectedTenant(null);
     setSelectedBranch(null);
+    setActiveActorId(null);
     setBranches([]);
     setStage(result?.length ? "tenant" : "create-tenant");
   }, [client]);
@@ -155,6 +181,7 @@ function AuthShell({ apiBaseUrl }) {
       client.setTenantContext(tenant.id, null);
       const result = await client.get("/api/branches/");
       setSelectedTenant(tenant);
+      setActiveActorId(null);
       setBranches(result || []);
       setSelectedBranch(null);
       setStage("branch");
@@ -170,7 +197,10 @@ function AuthShell({ apiBaseUrl }) {
     setError("");
     try {
       client.setTenantContext(selectedTenant.id, branch.id);
-      await client.get("/api/context");
+      const context = await client.get("/api/context");
+      if (typeof context?.userId !== "string" || !context.userId.trim())
+        throw new Error("شناسه کاربر از سرور دریافت نشد؛ دستگاه همگام‌سازی ثبت نمی‌شود.");
+      setActiveActorId(context.userId);
       setSelectedBranch(branch);
       setStage("workspace");
     } catch (contextError) {
@@ -188,6 +218,7 @@ function AuthShell({ apiBaseUrl }) {
     setBranches([]);
     setSelectedTenant(null);
     setSelectedBranch(null);
+    setActiveActorId(null);
     setPassword("");
     setStage("login");
   };
@@ -196,19 +227,165 @@ function AuthShell({ apiBaseUrl }) {
     client.setTenantContext(null, null);
     setSelectedTenant(null);
     setSelectedBranch(null);
+    setActiveActorId(null);
     setStage("tenant");
   };
 
+  useEffect(() => {
+    if (stage !== "workspace" || !selectedTenant?.id) return undefined;
+    let active = true;
+    const tenantId = selectedTenant.id;
+
+    const refreshPendingCount = async () => {
+      try {
+        const branchId = selectedBranch?.id || null;
+        const allowTenantWide = ["Owner", "Manager"].includes(selectedTenant?.role);
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, branchId);
+        const [pending, incoming, conflicts] = await Promise.all([
+          operationStoreRef.current.getPendingCount(tenantId, branchId, allowTenantWide, deviceId),
+          operationStoreRef.current.getInboxCount(tenantId, branchId, allowTenantWide),
+          operationStoreRef.current.getOpenConflicts(tenantId, branchId, allowTenantWide)
+        ]);
+        if (active) { setPendingOperations(pending); setIncomingOperations(incoming); setOpenSyncConflicts(conflicts.length); }
+      } catch {
+        if (active) setSyncStatus("error");
+      }
+    };
+
+    let synchronizing = false;
+    let syncDeviceRegistered = false;
+    const synchronize = async () => {
+      if (!active || synchronizing) return;
+      synchronizing = true;
+      try {
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          if (active) setSyncStatus("offline");
+          return;
+        }
+
+        if (!syncDeviceRegistered) {
+          const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, tenantId, selectedBranch?.id || null);
+          await client.post("/api/sync/heartbeat", {
+            deviceId,
+            deviceName: "MG Business Web",
+            platform: navigator.platform || "Web",
+            clientVersion: "0.1.0"
+          }, { tenantId, branchId: selectedBranch?.id || null, actorId: activeActorId });
+          syncDeviceRegistered = true;
+        }
+        
+        if (import.meta.env?.VITE_REQUIRE_AUTHORITY_LEASES === "true") {
+          await deviceEnrollmentRef.current.ensureAuthorityLease({
+            tenantId,
+            branchId: selectedBranch?.id || null,
+            actorId: activeActorId,
+            canAcquire: ["Owner", "Manager"].includes(selectedTenant?.role)
+          });
+        }
+
+        if (active) setSyncStatus("syncing");
+        let pullResult = null;
+        for (let page = 0; page < 5; page += 1) {
+          pullResult = await syncAgentRef.current.pullIncoming(tenantId, { branchId: selectedBranch?.id || null, actorId: activeActorId });
+          if (pullResult.status !== "more-available") break;
+        }
+        const replayResult = await incomingProcessorRef.current.processBatch(
+          tenantId,
+          100,
+          selectedBranch?.id || null,
+          ["Owner", "Manager"].includes(selectedTenant?.role)
+        );
+        const result = await syncAgentRef.current.pushPending(tenantId, {
+          branchId: selectedBranch?.id || null,
+          allowTenantWide: ["Owner", "Manager"].includes(selectedTenant?.role),
+          actorId: activeActorId
+        });
+        if (active) {
+          setSyncStatus(replayResult.blockedByConflict
+            ? "conflict"
+            : pullResult?.status === "offline" && result.status === "idle"
+              ? "offline"
+              : pullResult?.status === "more-available"
+                ? "syncing"
+                : result.status);
+        }
+      } catch {
+        if (active) setSyncStatus("error");
+      } finally {
+        synchronizing = false;
+        await refreshPendingCount();
+      }
+    };
+
+    const handleOnline = () => { synchronize(); };
+    const handleOffline = () => { setSyncStatus("offline"); refreshPendingCount(); };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    const timer = window.setInterval(synchronize, 15000);
+    synchronize();
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [stage, selectedTenant?.id, selectedTenant?.role, selectedBranch?.id, activeActorId]);
+
+  useEffect(() => {
+    if (stage !== "workspace" || !selectedTenant?.id) return undefined;
+    let active = true;
+    let heartbeatInFlight = false;
+    const sendHeartbeat = async () => {
+      if (!active || heartbeatInFlight || document.visibilityState === "hidden") return;
+      heartbeatInFlight = true;
+      try {
+        const deviceId = await operationStoreRef.current.getDeviceId(activeActorId, selectedTenant.id, selectedBranch?.id || null);
+        await client.post("/api/sync/heartbeat", {
+          deviceId,
+          deviceName: "MG Business Web",
+          platform: navigator.platform || "Web",
+          clientVersion: "0.1.0"
+        }, { tenantId: selectedTenant.id, branchId: selectedBranch?.id || null, actorId: activeActorId });
+        if (active && ["Owner", "Manager"].includes(selectedTenant.role)) {
+          const devices = await client.get("/api/sync/devices", { tenantId: selectedTenant.id, branchId: selectedBranch?.id || null, actorId: activeActorId });
+          if (active) {
+            setDeviceStatuses(devices || []);
+            setDisconnectedDevices((devices || []).filter(device => !device.isOnline));
+          }
+        }
+      } catch {
+        // A missed heartbeat is detected by the next successful manager poll.
+      } finally {
+        heartbeatInFlight = false;
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") sendHeartbeat();
+    };
+    window.addEventListener("focus", sendHeartbeat);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sendHeartbeat);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [stage, selectedTenant?.id, selectedTenant?.role, selectedBranch?.id, activeActorId, client]);
+
   const workspaceContext = useMemo(() => ({
     tenant: selectedTenant,
-    branch: selectedBranch
-  }), [selectedTenant, selectedBranch]);
+    branch: selectedBranch,
+    actorId: activeActorId
+  }), [selectedTenant, selectedBranch, activeActorId]);
 
   if (stage === "restoring")
     return <div className="mg-auth-screen"><div className="mg-auth-card"><div className="mg-brand-mark">MG</div><h1>در حال اتصال به MG Business</h1><p>در حال بررسی نشست کاربری و ارتباط با سرور...</p></div></div>;
 
   if (stage === "workspace" && selectedTenant && selectedBranch)
-    return <ServerWorkspace client={client} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
+    return <ServerWorkspace client={client} operationStore={operationStoreRef.current} actorId={activeActorId} syncStatus={syncStatus} pendingOperations={pendingOperations} incomingOperations={incomingOperations} openSyncConflicts={openSyncConflicts} disconnectedDevices={disconnectedDevices} deviceStatuses={deviceStatuses} {...workspaceContext} onLogout={logout} onSwitchContext={switchContext} />;
 
   return <div className="mg-auth-screen">
     <section className="mg-auth-card">

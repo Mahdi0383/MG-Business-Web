@@ -1,0 +1,37 @@
+name: MG Business Backend - SQLite CI
+
+on:
+  push:
+    branches: [main, 'feature/**']
+    paths: ['backend/**', '.github/workflows/backend-sqlite-ci.yml']
+  pull_request:
+    branches: [main, 'feature/**']
+    paths: ['backend/**', '.github/workflows/backend-sqlite-ci.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: backend-sqlite-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore tests
+        run: dotnet restore backend/tests/MG.Business.Domain.Tests/MG.Business.Domain.Tests.csproj
+      - name: Build API
+        run: dotnet build backend/src/MG.Business.Api/MG.Business.Api.csproj --configuration Release --no-restore
+      - name: Restore EF tools
+        run: dotnet tool restore
+      - name: Verify migration snapshot
+        run: dotnet ef migrations has-pending-model-changes --project backend/src/MG.Business.Infrastructure/MG.Business.Infrastructure.csproj --startup-project backend/src/MG.Business.Api/MG.Business.Api.csproj --context BusinessDbContext --configuration Release
+      - name: Run SQLite-backed integration and domain tests
+        run: dotnet test backend/tests/MG.Business.Domain.Tests/MG.Business.Domain.Tests.csproj --configuration Release --no-restore

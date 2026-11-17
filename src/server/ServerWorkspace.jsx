@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { formatApiError } from "../api/client.js";
+import { formatApiError, isNetworkUnavailable } from "../api/client.js";
 
 const money = value => new Intl.NumberFormat("fa-IR").format(Number(value || 0)) + " تومان";
 const count = value => new Intl.NumberFormat("fa-IR").format(Number(value || 0));
@@ -12,7 +12,9 @@ const navigation = [
   ["sales", "▣", "فروش / صندوق"],
   ["accounts", "∑", "حساب‌ها"],
   ["cafe", "☕", "آشپزخانه"],
-  ["gamenet", "⌁", "گیم‌نت"]
+  ["gamenet", "⌁", "گیم‌نت"],
+  ["devices", "◉", "وضعیت دستگاه‌ها"],
+  ["syncConflicts", "⚠", "تعارض‌های همگام‌سازی"]
 ];
 
 const accountTypeName = {
@@ -45,9 +47,13 @@ const kitchenActions = {
   Cancelled: []
 };
 
-function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) {
+function ServerWorkspace({ client, operationStore, actorId, syncStatus = "idle", pendingOperations = 0, incomingOperations = 0, openSyncConflicts = 0, disconnectedDevices = [], deviceStatuses = [], tenant, branch, onLogout, onSwitchContext }) {
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
+  const [productSearch, setProductSearch] = useState("");
+  const [appliedProductSearch, setAppliedProductSearch] = useState("");
+  const [productPage, setProductPage] = useState(1);
+  const [productCatalog, setProductCatalog] = useState({ page: 1, pageSize: 25, totalCount: 0, totalPages: 0 });
   const [stockRows, setStockRows] = useState([]);
   const [trialBalance, setTrialBalance] = useState(null);
   const [customers, setCustomers] = useState([]);
@@ -55,12 +61,15 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const [accounts, setAccounts] = useState([]);
   const [kitchenTickets, setKitchenTickets] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [syncConflicts, setSyncConflicts] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState("");
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState(null);
+  const [revokedDeviceIds, setRevokedDeviceIds] = useState(() => new Set());
 
   const canViewProducts = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "GameOperator", "InventoryManager", "Viewer"].includes(tenant.role);
   const canViewCustomers = ["Owner", "Manager", "Accountant", "Cashier", "Waiter", "Viewer"].includes(tenant.role);
@@ -71,6 +80,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   const canViewGameNet = ["Owner", "Manager", "Cashier", "GameOperator", "Accountant", "Viewer"].includes(tenant.role);
   const canCreateProduct = ["Owner", "Manager", "InventoryManager"].includes(tenant.role);
   const canCreateCustomer = ["Owner", "Manager", "Cashier"].includes(tenant.role);
+  const canEditCustomer = ["Owner", "Manager", "Cashier"].includes(tenant.role);
   const canCreateAccount = ["Owner", "Manager", "Accountant"].includes(tenant.role);
   const canCreateSales = ["Owner", "Manager", "Cashier"].includes(tenant.role);
   const canUpdateKitchen = ["Owner", "Manager", "Waiter", "KitchenStaff"].includes(tenant.role);
@@ -84,22 +94,63 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     if (id === "accounts") return canViewAccounts;
     if (id === "cafe") return canViewCafe;
     if (id === "gamenet") return canViewGameNet;
+    if (id === "devices") return ["Owner", "Manager"].includes(tenant.role);
+    if (id === "syncConflicts") return ["Owner", "Manager", "Accountant"].includes(tenant.role);
     return true;
   });
+
+  const loadCustomers = async () => {
+    let localRows = [];
+    try {
+      localRows = await operationStore.getCustomers(tenant.id);
+      if (localRows.length) setCustomers(localRows);
+    } catch { /* Local storage may be unavailable in private browsing. */ }
+    try {
+      const serverRows = await client.get("/api/customers");
+      try {
+        await operationStore.cacheServerCustomers(tenant.id, serverRows || []);
+        localRows = await operationStore.getCustomers(tenant.id);
+      } catch {
+        // Keep the online customer view available when browser storage is disabled or full.
+      }
+      const merged = new Map((localRows || []).map(row => [row.id, { ...row }]));
+      for (const row of serverRows || []) {
+        const local = merged.get(row.id);
+        merged.set(row.id, local?.syncStatus === "pending"
+          ? { ...row, ...local }
+          : { ...local, ...row, syncStatus: "synced" });
+      }
+      return [...merged.values()].sort((left, right) =>
+        String(right.updatedAtUtc || right.createdAtUtc || "").localeCompare(String(left.updatedAtUtc || left.createdAtUtc || "")));
+    } catch (loadError) {
+      if (isNetworkUnavailable(loadError)) return localRows;
+      throw loadError;
+    }
+  };
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      if (page === "products") {
-        const [productRows, currentStock] = await Promise.all([
-          client.get("/api/inventory/products"),
+      if (page === "syncConflicts") {
+        const allowTenantWide = ["Owner", "Manager"].includes(tenant.role);
+        const conflicts = await operationStore.getOpenConflicts(tenant.id, branch.id, allowTenantWide, 100);
+        setSyncConflicts(conflicts || []);
+      }
+      else if (page === "products") {
+        const [catalog, currentStock] = await Promise.all([
+          client.get("/api/inventory/products/catalog?page=" + productPage + "&pageSize=25&search=" + encodeURIComponent(appliedProductSearch.trim()) + "&activeOnly=false"),
           client.get("/api/inventory/stock")
         ]);
-        setProducts(productRows || []);
+        setProducts(catalog?.items || []);
+        setProductCatalog({ page: catalog?.page || productPage, pageSize: catalog?.pageSize || 25, totalCount: catalog?.totalCount || 0, totalPages: catalog?.totalPages || 0 });
         setStockRows(currentStock || []);
+        await operationStore.cacheInventorySnapshot({
+          tenantId: tenant.id, branchId: branch.id,
+          products: catalog?.items || [], stockRows: currentStock || []
+        });
       }
-      else if (page === "customers") setCustomers(await client.get("/api/customers"));
+      else if (page === "customers") setCustomers(await loadCustomers());
       else if (page === "sales") setSales(await client.get("/api/sales/orders"));
       else if (page === "accounts") {
         const accountRows = await client.get("/api/accounting/accounts");
@@ -118,7 +169,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         const [productRows, currentStock, customerRows, salesRows, accountRows, ticketRows, sessionRows] = await Promise.all([
           canViewProducts ? client.get("/api/inventory/products") : Promise.resolve([]),
           canViewProducts ? client.get("/api/inventory/stock") : Promise.resolve([]),
-          canViewCustomers ? client.get("/api/customers") : Promise.resolve([]),
+          canViewCustomers ? loadCustomers() : Promise.resolve([]),
           canViewSales ? client.get("/api/sales/orders") : Promise.resolve([]),
           canViewAccounts ? client.get("/api/accounting/accounts") : Promise.resolve([]),
           canViewCafe ? client.get("/api/cafe/kitchen/tickets") : Promise.resolve([]),
@@ -126,6 +177,12 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         ]);
         setProducts(productRows || []);
         setStockRows(currentStock || []);
+        if (canViewProducts) {
+          await operationStore.cacheInventorySnapshot({
+            tenantId: tenant.id, branchId: branch.id,
+            products: productRows || [], stockRows: currentStock || []
+          });
+        }
         if (canViewAccountingReports) {
           try { setTrialBalance(await client.get("/api/accounting/trial-balance")); }
           catch { setTrialBalance(null); }
@@ -137,13 +194,45 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         setActiveSessions(sessionRows || []);
       }
     } catch (loadError) {
-      setError(formatApiError(loadError));
+      if ((isNetworkUnavailable(loadError) || (typeof navigator !== "undefined" && navigator.onLine === false)) && canViewProducts
+        && (page === "products" || page === "dashboard")) {
+        try {
+          const [cachedProducts, cachedStock] = await Promise.all([
+            operationStore.getInventoryProducts(tenant.id),
+            operationStore.getInventoryStock(tenant.id, branch.id)
+          ]);
+          const visibleProducts = page === "products"
+            ? cachedProducts.filter(product => !appliedProductSearch.trim()
+              || product.name?.toLowerCase().includes(appliedProductSearch.trim().toLowerCase())
+              || product.sku?.toLowerCase().includes(appliedProductSearch.trim().toLowerCase()))
+            : cachedProducts;
+          setProducts(visibleProducts);
+          setStockRows(cachedStock || []);
+          setError("ارتباط با سرور برقرار نیست؛ اطلاعات ذخیره‌شده کالا و موجودی به‌صورت آفلاین نمایش داده می‌شود.");
+        } catch {
+          setError(formatApiError(loadError));
+        }
+      } else {
+        setError(formatApiError(loadError));
+      }
     } finally {
       setLoading(false);
     }
-  }, [client, page, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
+  }, [client, operationStore, tenant.id, tenant.role, branch.id, page, productPage, appliedProductSearch, canViewProducts, canViewCustomers, canViewSales, canViewAccounts, canViewAccountingReports, canViewCafe, canViewGameNet]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    const refreshCustomerProjection = () => {
+      if (page === "customers" || page === "dashboard" || page === "products") loadData();
+    };
+    window.addEventListener("mg-customer-sync-updated", refreshCustomerProjection);
+    window.addEventListener("mg-inventory-sync-updated", refreshCustomerProjection);
+    return () => {
+      window.removeEventListener("mg-customer-sync-updated", refreshCustomerProjection);
+      window.removeEventListener("mg-inventory-sync-updated", refreshCustomerProjection);
+    };
+  }, [page, loadData]);
 
   const openCreate = type => {
     const initial = type === "product"
@@ -153,6 +242,41 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         : { code: "", name: "", type: "1" };
     setForm(initial);
     setModal(type);
+    setError("");
+  };
+
+  const openStockMovement = product => {
+    if (!canCreateProduct || !product?.isActive || !product.tracksInventory) return;
+    if (!globalThis.crypto?.randomUUID) {
+      setError("مرورگر از تولید کلید امن درخواست پشتیبانی نمی‌کند؛ ثبت گردش انبار در این دستگاه ممکن نیست.");
+      return;
+    }
+    setForm({
+      productId: product.id,
+      productName: product.name,
+      type: "1",
+      quantity: "1",
+      unitCost: "",
+      reference: "",
+      idempotencyKey: crypto.randomUUID()
+    });
+    setModal("stockMovement");
+    setError("");
+  };
+
+  const openEditCustomer = customer => {
+    if (!canEditCustomer || customer.syncStatus === "pending") return;
+    setForm({
+      customerId: customer.id,
+      baseVersion: customer.version,
+      code: customer.code,
+      name: customer.name,
+      phone: customer.phone || "",
+      email: customer.email || "",
+      address: customer.address || "",
+      notes: customer.notes || ""
+    });
+    setModal("customerEdit");
     setError("");
   };
 
@@ -211,6 +335,50 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     }
   };
 
+  const openSaleSettlement = async order => {
+    if (Number(order.balanceDue || 0) <= 0) return;
+    setSaving(true);
+    setError("");
+    try {
+      const [accountRows, paymentRows, orderRows] = await Promise.all([
+        client.get("/api/accounting/accounts"),
+        client.get(`/api/sales/orders/${order.id}/payments`),
+        client.get("/api/sales/orders")
+      ]);
+      const latestOrder = (orderRows || []).find(row => row.id === order.id) || order;
+      setSales(orderRows || []);
+      if (Number(latestOrder.balanceDue || 0) <= 0) {
+        setError("این فاکتور قبلاً تسویه شده است.");
+        return;
+      }
+      const activeAssets = (accountRows || []).filter(account => account.type === "Asset" && account.isActive);
+      const cash = activeAssets.find(account => account.code === "1000") || activeAssets[0];
+      const receivable = activeAssets.find(account => account.code === "1100" && account.id !== cash?.id)
+        || activeAssets.find(account => account.id !== cash?.id);
+      if (!cash || !receivable || cash.id === receivable.id)
+        throw new Error("برای ثبت دریافت، دو حساب داراییِ فعال و مستقل برای وجه دریافتی و دریافتنی تعریف کنید.");
+      setAccounts(accountRows || []);
+      setForm({
+        orderId: latestOrder.id,
+        orderNumber: latestOrder.number,
+        total: Number(latestOrder.total || 0),
+        paidAmount: Number(latestOrder.paidAmount || 0),
+        balanceDue: Number(latestOrder.balanceDue || 0),
+        amount: String(latestOrder.balanceDue),
+        paymentMethod: "1",
+        paymentAccountId: cash.id,
+        receivableAccountId: receivable.id,
+        paymentReference: "",
+        paymentHistory: paymentRows || []
+      });
+      setModal("salePayment");
+    } catch (openError) {
+      setError(formatApiError(openError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateSaleLine = (index, field, value) => {
     const lines = [...form.lines];
     lines[index] = { ...lines[index], [field]: value };
@@ -240,13 +408,72 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     }
   };
 
+  const resolveInventoryConflict = async conflict => {
+    setSaving(true);
+    setError("");
+    try {
+      const productId = conflict.details?.productId;
+      if (!productId) throw new Error("شناسه کالای تعارض‌یافته در اطلاعات تعارض موجود نیست.");
+      const currentStock = await client.get("/api/inventory/stock");
+      const stockRow = (currentStock || []).find(row =>
+        row.productId === productId && row.branchId === branch.id
+      );
+      if (!stockRow) throw new Error("موجودی فعلی کالا در سرور پیدا نشد.");
+      await operationStore.resolveInventoryConflictFromServer({
+        tenantId: tenant.id,
+        branchId: branch.id,
+        sequence: conflict.sequence,
+        stockRow
+      });
+      await loadData();
+      setError("تعارض با دریافت موجودی مرجع سرور تعیین تکلیف شد؛ پردازش همگام‌سازی از همان توالی ادامه می‌یابد.");
+    } catch (resolveError) {
+      setError(formatApiError(resolveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const save = async event => {
     event.preventDefault();
     setSaving(true);
     setError("");
     let successNotice = "";
+    let paymentIntentStorageKey = null;
     try {
-      if (modal === "product") {
+      if (modal === "stockMovement") {
+        if (!form.idempotencyKey) throw new Error("کلید امن ثبت گردش موجود نیست؛ فرم را دوباره باز کنید.");
+        const type = Number(form.type);
+        const isInbound = type === 1 || type === 5 || type === 6;
+        const quantity = Number(form.quantity);
+        const unitCost = isInbound ? Number(form.unitCost) : null;
+        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("مقدار باید بیشتر از صفر باشد.");
+        if (isInbound && (!Number.isFinite(unitCost) || unitCost < 0)) throw new Error("بهای واحد معتبر برای ورود موجودی الزامی است.");
+        const movement = {
+          productId: form.productId,
+          type,
+          quantity,
+          unitCost,
+          reference: form.reference.trim() || null,
+          idempotencyKey: form.idempotencyKey
+        };
+        try {
+          await client.post("/api/inventory/movements", {
+            productId: movement.productId,
+            type: movement.type,
+            quantity: movement.quantity,
+            unitCost: movement.unitCost,
+            reference: movement.reference
+          }, { headers: { "Idempotency-Key": form.idempotencyKey } });
+          successNotice = "گردش انبار با موفقیت ثبت شد.";
+        } catch (movementError) {
+          if (!isNetworkUnavailable(movementError) && !(typeof navigator !== "undefined" && navigator.onLine === false)) throw movementError;
+          await operationStore.createStockMovement({
+            tenantId: tenant.id, branchId: branch.id, actorId, movement
+          });
+          successNotice = "ارتباط با سرور برقرار نیست؛ گردش انبار به‌صورت محلی ذخیره و در صف همگام‌سازی قرار گرفت.";
+        }
+      } else if (modal === "product") {
         await client.post("/api/inventory/products", {
           sku: form.sku.trim(),
           name: form.name.trim(),
@@ -255,14 +482,35 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           defaultSalePrice: Number(form.defaultSalePrice || 0)
         });
       } else if (modal === "customer") {
-        await client.post("/api/customers", {
-          code: form.code.trim(),
-          name: form.name.trim(),
-          phone: form.phone.trim() || null,
-          email: form.email.trim() || null,
-          address: form.address.trim() || null,
-          notes: form.notes.trim() || null
+        await operationStore.createCustomer({
+          tenantId: tenant.id,
+          branchId: branch.id,
+          actorId,
+          customer: {
+            code: form.code,
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            address: form.address,
+            notes: form.notes
+          }
         });
+        successNotice = "مشتری روی دستگاه ذخیره شد و در صف همگام‌سازی قرار گرفت.";
+      } else if (modal === "customerEdit") {
+        await operationStore.updateCustomer({
+          tenantId: tenant.id,
+          branchId: branch.id,
+          actorId,
+          customerId: form.customerId,
+          customer: {
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            address: form.address,
+            notes: form.notes
+          }
+        });
+        successNotice = "تغییرات مشتری به‌صورت محلی ذخیره و در صف همگام‌سازی قرار گرفت.";
       } else if (modal === "account") {
         await client.post("/api/accounting/accounts", {
           code: form.code.trim(),
@@ -303,6 +551,42 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           receivableAccountId: amountPaid < latestQuote.totalAmount ? form.receivableAccountId : null,
           paymentReference: form.paymentReference.trim() || null
         });
+      } else if (modal === "salePayment") {
+        const amount = Number(form.amount);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > form.balanceDue)
+          throw new Error("مبلغ دریافت باید بیشتر از صفر و حداکثر برابر مانده فاکتور باشد.");
+        if (!form.paymentAccountId || !form.receivableAccountId)
+          throw new Error("حساب دریافت وجه و حساب دریافتنی را انتخاب کنید.");
+        const paymentPayload = {
+          amount,
+          paymentMethod: Number(form.paymentMethod),
+          paymentAccountId: form.paymentAccountId,
+          receivableAccountId: form.receivableAccountId,
+          paymentReference: form.paymentReference.trim() || null
+        };
+        const intentFingerprint = JSON.stringify({ orderId: form.orderId, ...paymentPayload });
+        paymentIntentStorageKey = `mg-payment-intent:${tenant.id}:${branch.id}:${form.orderId}`;
+        let storedIntent;
+        try {
+          storedIntent = JSON.parse(window.localStorage.getItem(paymentIntentStorageKey) || "null");
+          if (storedIntent && storedIntent.fingerprint !== intentFingerprint)
+            throw new Error("یک دریافت قبلی با نتیجه نامشخص وجود دارد؛ ابتدا سوابق دریافت فاکتور را بررسی و صفحه را بروزرسانی کنید.");
+          if (!storedIntent) {
+            storedIntent = { fingerprint: intentFingerprint, key: crypto.randomUUID() };
+            window.localStorage.setItem(paymentIntentStorageKey, JSON.stringify(storedIntent));
+          }
+        } catch (storageError) {
+          if (storageError instanceof Error && storageError.message.startsWith("یک دریافت قبلی")) throw storageError;
+          throw new Error("ذخیره امن کلید تکرارناپذیری پرداخت در این مرورگر ممکن نیست؛ تنظیمات ذخیره‌سازی مرورگر را بررسی کنید.");
+        }
+        await client.post(`/api/sales/orders/${form.orderId}/payments`, paymentPayload, {
+          headers: { "Idempotency-Key": storedIntent.key }
+        });
+        try {
+          const currentIntent = JSON.parse(window.localStorage.getItem(paymentIntentStorageKey) || "null");
+          if (currentIntent?.key === storedIntent.key) window.localStorage.removeItem(paymentIntentStorageKey);
+        } catch { /* A completed payment remains protected by the server-side idempotency key. */ }
+        successNotice = `دریافت وجه فاکتور ${form.orderNumber} با موفقیت ثبت شد.`;
       } else if (modal === "sale") {
         const lines = form.lines.filter(line => line.productId).map(line => ({
           productId: line.productId,
@@ -349,7 +633,32 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
       await loadData();
       if (successNotice) setError(successNotice);
     } catch (saveError) {
+      const paymentWasDefinitelyRejected = saveError?.status === 400 || saveError?.status === 404
+        || (saveError?.status === 409 && saveError?.message?.includes("مبلغ دریافت از مانده فاکتور بیشتر است"));
+      if (modal === "salePayment" && paymentWasDefinitelyRejected && paymentIntentStorageKey) {
+        try { window.localStorage.removeItem(paymentIntentStorageKey); } catch { /* Keep the original validation error visible. */ }
+      }
       setError(formatApiError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const revokeRegisteredDevice = async device => {
+    if (!device?.deviceId || !["Owner", "Manager"].includes(tenant.role)) return;
+    if (revokeTarget !== device.deviceId) {
+      setRevokeTarget(device.deviceId);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await client.post("/api/sync/enrollment/revoke", { deviceId: device.deviceId });
+      setRevokedDeviceIds(previous => new Set([...previous, device.deviceId]));
+      setRevokeTarget(null);
+      setError("اعتبارنامه این دستگاه لغو شد؛ درخواست‌های همگام‌سازی بعدی آن رد می‌شوند.");
+    } catch (revokeError) {
+      setError(formatApiError(revokeError));
     } finally {
       setSaving(false);
     }
@@ -445,6 +754,8 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
   };
 
   const heading = navigation.find(item => item[0] === page)?.[2] || "نمای کلی";
+  const syncLabel = syncStatus === "offline" ? "اینترنت قطع است" : syncStatus === "syncing" ? "در حال همگام‌سازی" : syncStatus === "synced" ? "همگام‌سازی انجام شد" : syncStatus === "conflict" ? "عملیات نیازمند بررسی" : syncStatus === "error" ? "خطا در همگام‌سازی" : "آماده همگام‌سازی";
+  const syncClass = syncStatus === "offline" ? "offline" : syncStatus === "error" || syncStatus === "conflict" ? "error" : syncStatus === "syncing" ? "syncing" : "ready";
   const totalSales = useMemo(() => sales.reduce((sum, order) => sum + Number(order.total || 0), 0), [sales]);
   const assetAccounts = accounts.filter(x => x.type === "Asset");
   const revenueAccounts = accounts.filter(x => x.type === "Revenue");
@@ -465,12 +776,31 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
     <main className="mg-server-main">
       <header className="mg-server-topbar">
         <div><small>MG BUSINESS PLATFORM / {tenant.slug}</small><h1>{heading}</h1></div>
-        <div className="mg-server-status"><i /> متصل به سرور</div>
+        <div className={`mg-server-status ${syncClass}`} title="وضعیت صف عملیات محلی"><i /> {syncLabel} · صف ارسال: {count(pendingOperations)} · دریافتیِ بررسی‌نشده: {count(incomingOperations)} · تعارض‌های باز: {count(openSyncConflicts)}</div>
       </header>
 
       <section className="mg-server-content">
         {error && <div className="mg-server-error" role="alert">{error}</div>}
         {loading && <div className="mg-server-loading">در حال دریافت اطلاعات از سرور...</div>}
+        {syncStatus === "offline" && <div className="mg-server-offline-warning" role="status"><b>اتصال اینترنت قطع است.</b> پوسته برنامه و زیرساخت صف محلی موجود است، اما هنوز به فرم‌های فروش، انبار و حسابداری متصل نشده است؛ تا تکمیل این بخش، ثبت عملیات مالی را آفلاین انجام ندهید.</div>}
+        {disconnectedDevices.length > 0 && <div className="mg-server-device-alert" role="alert"><b>هشدار قطع ارتباط دستگاه‌ها</b><p>{count(disconnectedDevices.length)} دستگاه در ۹۰ ثانیه اخیر heartbeat ارسال نکرده‌اند.</p><ul>{disconnectedDevices.map(device => <li key={device.deviceId}>{device.deviceName} — آخرین ارتباط: {dateTime(device.lastSeenAtUtc)}</li>)}</ul></div>}
+
+        {page === "syncConflicts" && <section className="mg-server-panel">
+          <div className="mg-server-panel-head"><div><h2>تعارض‌ها و عملیات نیازمند بررسی</h2><p>{count(syncConflicts.length)} مورد باز · ترتیب پردازش تا تعیین تکلیف هر مورد متوقف می‌ماند</p></div><button className="mg-secondary-btn" onClick={loadData} disabled={loading}>↻ بروزرسانی</button></div>
+          {syncConflicts.length === 0
+            ? <div className="mg-server-empty">در این شعبه تعارض بازی ثبت نشده است.</div>
+            : <div className="mg-server-table-wrap"><table><thead><tr><th>شماره توالی</th><th>نوع عملیات</th><th>نتیجه بررسی</th><th>علت</th><th>زمان ثبت</th><th>جزئیات</th></tr></thead><tbody>{syncConflicts.map(conflict => <tr key={conflict.sequence}>
+              <td>{count(conflict.sequence)}</td><td dir="ltr">{conflict.operationType || "—"}</td><td>{conflict.disposition === "conflict" ? "تعارض داده" : "بررسی دستی"}</td><td>{conflict.reason}</td><td>{dateTime(conflict.createdAtUtc)}</td><td><details><summary>مشاهده داده</summary><pre className="mg-sync-conflict-details">{JSON.stringify({ operationId: conflict.operationId, branchId: conflict.branchId, details: conflict.details }, null, 2)}</pre></details>{conflict.operationType === "inventory.stock.movement.created" && conflict.reason === "stale-inventory-base-balance" && <button className="mg-secondary-btn" disabled={saving} onClick={() => resolveInventoryConflict(conflict)}>تطبیق با موجودی مرجع سرور</button>}</td>
+            </tr>)}</tbody></table></div>}
+          <p className="mg-server-modal-hint">برای جلوگیری از تغییر ناخواسته اطلاعات مالی و موجودی، این صفحه فقط جزئیات را نمایش می‌دهد؛ حل تعارض‌های حساس باید با سیاست تطبیق و تأیید صریح انجام شود.</p>
+        </section>}
+
+        {page === "devices" && <section className="mg-server-panel">
+          <div className="mg-server-panel-head"><div><h2>وضعیت اتصال دستگاه‌ها</h2><p>آستانه هشدار: ۹۰ ثانیه بدون heartbeat · آخرین بررسی هر ۳۰ ثانیه</p></div><span className="mg-server-device-count">{count(deviceStatuses.length)} دستگاه ثبت‌شده</span></div>
+          {deviceStatuses.length === 0
+            ? <div className="mg-server-empty">هنوز دستگاهی به این کسب‌وکار متصل نشده است.</div>
+            : <div className="mg-server-table-wrap"><table className="mg-server-table"><thead><tr><th>دستگاه</th><th>پلتفرم</th><th>نسخه</th><th>آخرین ارتباط</th><th>آخرین شماره همگام‌سازی</th><th>عملیات در انتظار دریافت</th><th>وضعیت</th>{["Owner", "Manager"].includes(tenant.role) && <th>امنیت</th>}</tr></thead><tbody>{deviceStatuses.map(device => <tr key={device.deviceId}><td>{device.deviceName}</td><td>{device.platform}</td><td>{device.clientVersion}</td><td>{dateTime(device.lastSeenAtUtc)}</td><td>{count(device.lastAcknowledgedSequence || 0)}</td><td>{count(device.pendingOperationCount || 0)}</td><td><span className={revokedDeviceIds.has(device.deviceId) ? "mg-device-offline" : device.isOnline ? "mg-device-online" : "mg-device-offline"}>{revokedDeviceIds.has(device.deviceId) ? "دسترسی لغوشده" : device.isOnline ? "متصل" : "قطع ارتباط"}</span></td>{["Owner", "Manager"].includes(tenant.role) && <td>{revokedDeviceIds.has(device.deviceId) ? "لغوشده" : <button className="mg-secondary-btn" disabled={saving} onClick={() => revokeRegisteredDevice(device)}>{revokeTarget === device.deviceId ? "تأیید لغو دسترسی" : "لغو دسترسی"}</button>}</td>}</tr>)}</tbody></table></div>}
+        </section>}
 
         {page === "dashboard" && !loading && <>
           <div className="mg-server-stats">
@@ -479,27 +809,39 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
             <div><small>تعداد فاکتور</small><b>{canViewSales ? count(sales.length) : "—"}</b></div>
             <div><small>سانس فعال گیم‌نت</small><b>{canViewGameNet ? count(activeSessions.length) : "—"}</b></div>
           </div>
-          <div className="mg-server-panel"><h2>اتصال واقعی برقرار است</h2><p>این صفحه اطلاعات را از API و پایگاه داده کسب‌وکار دریافت می‌کند؛ برخلاف پیش‌نمایش، داده‌ها در مرورگر ذخیره نمی‌شوند.</p></div>
+          <div className="mg-server-panel"><h2>اتصال واقعی برقرار است</h2><p>این صفحه اطلاعات را از API و پایگاه داده کسب‌وکار دریافت می‌کند. صف عملیات خروجی در مرورگر پایدار است و رویدادهای دریافتی نیز تا زمان وجود پردازشگر دامنه در صندوق ورودی محلی نگهداری می‌شوند.</p>{incomingOperations > 0 && <p className="mg-server-sync-warning" role="status">{count(incomingOperations)} رویداد از دستگاه‌های دیگر دریافت شده و هنوز به مدل‌های عملیاتی این دستگاه اعمال نشده است.</p>}</div>
         </>}
 
         {page === "products" && <section className="mg-server-panel">
-          <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button>}</div>
-          <div className="mg-server-table-wrap"><table><thead><tr><th>کد کالا</th><th>نام</th><th>واحد</th><th>قیمت پیش‌فرض</th><th>موجودی شعبه</th><th>میانگین بهای واحد</th><th>ارزش موجودی</th><th>نوع موجودی</th><th>وضعیت</th></tr></thead>
-            <tbody>{products.map(product => <tr key={product.id}><td>{product.sku}</td><td>{product.name}</td><td>{product.baseUnit}</td><td>{money(product.defaultSalePrice)}</td><td>{product.tracksInventory ? count(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.quantityOnHand || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.averageUnitCost || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.inventoryValue || 0) : "—"}</td><td>{product.tracksInventory ? "انبارگردانی‌شونده" : "خدماتی"}</td><td>{product.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
-          </table>{!products.length && <div className="mg-server-empty">هنوز کالایی ثبت نشده است.</div>}</div>
+          <div className="mg-server-panel-head"><div><h2>کالاها</h2><p>{count(products.length)} رکورد از پایگاه داده</p></div>{canCreateProduct && <div className="mg-server-panel-actions"><button className="mg-primary-btn" onClick={() => openCreate("product")}>＋ کالای جدید</button></div>}</div>
+          <div className="mg-server-panel-actions" style={{ marginBottom: 16 }}>
+            <form onSubmit={event => { event.preventDefault(); setProductPage(1); setAppliedProductSearch(productSearch); }} className="mg-server-search">
+              <input aria-label="جست‌وجوی کالا" placeholder="جست‌وجو بر اساس نام یا کد کالا" maxLength={100} value={productSearch} onChange={event => setProductSearch(event.target.value)} />
+              <button className="mg-secondary-btn" type="submit">جست‌وجو</button>
+              {productSearch && <button className="mg-secondary-btn" type="button" onClick={() => { setProductSearch(""); setAppliedProductSearch(""); setProductPage(1); }}>پاک‌کردن</button>}
+            </form>
+            <span>{count(productCatalog.totalCount)} کالا · صفحه {count(productCatalog.page)} از {count(productCatalog.totalPages)}</span>
+          </div>
+          <div className="mg-server-table-wrap"><table><thead><tr><th>کد کالا</th><th>نام</th><th>واحد</th><th>قیمت پیش‌فرض</th><th>موجودی شعبه</th><th>میانگین بهای واحد</th><th>ارزش موجودی</th><th>نوع موجودی</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>{products.map(product => <tr key={product.id}><td>{product.sku}</td><td>{product.name}</td><td>{product.baseUnit}</td><td>{money(product.defaultSalePrice)}</td><td>{product.tracksInventory ? count(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.quantityOnHand || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.averageUnitCost || 0) : "—"}</td><td>{product.tracksInventory ? money(stockRows.find(row => row.productId === product.id && row.branchId === branch.id)?.inventoryValue || 0) : "—"}</td><td>{product.tracksInventory ? "انبارگردانی‌شونده" : "خدماتی"}</td><td>{product.isActive ? "فعال" : "غیرفعال"}</td><td>{canCreateProduct && product.isActive && product.tracksInventory && <button className="mg-mini-btn" onClick={() => openStockMovement(product)}>ورود / خروج</button>}</td></tr>)}</tbody>
+          </table>{!products.length && <div className="mg-server-empty">{productSearch ? "کالایی با این جست‌وجو پیدا نشد." : "هنوز کالایی ثبت نشده است."}</div>}</div>
+          <div className="mg-server-panel-actions" style={{ justifyContent: "space-between", marginTop: 16 }}>
+            <button className="mg-secondary-btn" disabled={loading || productPage <= 1} onClick={() => setProductPage(value => Math.max(1, value - 1))}>صفحه قبل</button>
+            <button className="mg-secondary-btn" disabled={loading || productPage >= productCatalog.totalPages} onClick={() => setProductPage(value => Math.min(productCatalog.totalPages, value + 1))}>صفحه بعد</button>
+          </div>
         </section>}
 
         {page === "customers" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>مشتریان</h2><p>{count(customers.length)} رکورد از پایگاه داده</p></div>{canCreateCustomer && <button className="mg-primary-btn" onClick={() => openCreate("customer")}>＋ مشتری جدید</button>}</div>
-          <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th></tr></thead>
-            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.isActive ? "فعال" : "غیرفعال"}</td></tr>)}</tbody>
+          <div className="mg-server-table-wrap"><table><thead><tr><th>کد</th><th>نام مشتری</th><th>شماره تماس</th><th>ایمیل</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>{customers.map(customer => <tr key={customer.id}><td>{customer.code}</td><td>{customer.name}</td><td>{customer.phone || "—"}</td><td>{customer.email || "—"}</td><td>{customer.syncStatus === "pending" ? "در انتظار همگام‌سازی" : customer.isActive ? "فعال" : "غیرفعال"}</td><td>{canEditCustomer && <button className="mg-mini-btn" disabled={saving || customer.syncStatus === "pending" || !Number.isSafeInteger(customer.version) || customer.version < 1} onClick={() => openEditCustomer(customer)}>ویرایش</button>}</td></tr>)}</tbody>
           </table>{!customers.length && <div className="mg-server-empty">هنوز مشتری ثبت نشده است.</div>}</div>
         </section>}
 
         {page === "sales" && <section className="mg-server-panel">
           <div className="mg-server-panel-head"><div><h2>فروش‌ها</h2><p>{count(sales.length)} فاکتور اخیر</p></div><div className="mg-server-panel-actions">{canCreateSales && <button className="mg-primary-btn" onClick={openSale}>＋ فروش جدید</button>}<button className="mg-secondary-btn" onClick={loadData}>↻ بروزرسانی</button></div></div>
-          <div className="mg-server-table-wrap"><table><thead><tr><th>شماره فاکتور</th><th>مبلغ کل</th><th>پرداخت‌شده</th><th>مانده</th><th>وضعیت</th><th>زمان ثبت</th></tr></thead>
-            <tbody>{sales.map(order => <tr key={order.id}><td>{order.number}</td><td>{money(order.total)}</td><td>{money(order.paidAmount)}</td><td>{money(order.balanceDue)}</td><td>{order.status}</td><td>{dateTime(order.createdAtUtc)}</td></tr>)}</tbody>
+          <div className="mg-server-table-wrap"><table><thead><tr><th>شماره فاکتور</th><th>مبلغ کل</th><th>پرداخت‌شده</th><th>مانده</th><th>وضعیت</th><th>زمان ثبت</th><th>عملیات</th></tr></thead>
+            <tbody>{sales.map(order => <tr key={order.id}><td>{order.number}</td><td>{money(order.total)}</td><td>{money(order.paidAmount)}</td><td>{money(order.balanceDue)}</td><td>{order.status}</td><td>{dateTime(order.createdAtUtc)}</td><td>{canCreateSales && Number(order.balanceDue) > 0 && <button className="mg-mini-btn" disabled={saving} onClick={() => openSaleSettlement(order)}>ثبت دریافت</button>}</td></tr>)}</tbody>
           </table>{!sales.length && <div className="mg-server-empty">هنوز فاکتوری ثبت نشده است.</div>}</div>
         </section>}
 
@@ -539,8 +881,17 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
 
     {modal && <div className="mg-server-overlay" onMouseDown={event => event.target === event.currentTarget && setModal("")}>
       <form className="mg-server-modal" onSubmit={save}>
-        <div className="mg-server-modal-head"><h2>{modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
+        <div className="mg-server-modal-head"><h2>{modal === "stockMovement" ? "ثبت گردش انبار" : modal === "product" ? "ثبت کالای جدید" : modal === "customer" ? "ثبت مشتری جدید" : modal === "customerEdit" ? "ویرایش مشتری" : modal === "account" ? "ثبت حساب جدید" : modal === "sale" ? "ثبت فاکتور فروش" : modal === "salePayment" ? "دریافت وجه فاکتور" : modal === "gameDevice" ? "ثبت دستگاه گیم‌نت" : modal === "gameStart" ? "شروع سانس گیم‌نت" : "بستن سانس و تسویه"}</h2><button type="button" onClick={() => setModal("")}>×</button></div>
 
+        {modal === "stockMovement" && <>
+          <div className="mg-server-modal-hint">ثبت آنلاین و اتمیک گردش انبار. در صورت قطع ارتباط، فرم را نبندید و پس از اتصال دوباره با همین کلید تلاش کنید تا ثبت تکراری ایجاد نشود.</div>
+          <label>کالا<input readOnly value={form.productName || ""} /></label>
+          <label>نوع گردش<select required value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="1">ورود / خرید</option><option value="2">خروج / مصرف</option><option value="3">خروج بابت فروش</option><option value="4">مرجوعی خرید</option><option value="5">مرجوعی فروش</option><option value="6">افزایش تعدیلی</option><option value="7">کاهش تعدیلی</option></select></label>
+          <label>مقدار<input required type="number" min="0.001" step="0.001" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></label>
+          {[1,5,6].includes(Number(form.type)) && <label>بهای واحد (تومان)<input required type="number" min="0" step="0.01" value={form.unitCost} onChange={e => setForm({ ...form, unitCost: e.target.value })} /></label>}
+          <label>مرجع / توضیحات<input maxLength="200" value={form.reference} onChange={e => setForm({ ...form, reference: e.target.value })} /></label>
+        </>}
+        
         {modal === "product" && <>
           <label>کد کالا<input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></label>
           <label>نام کالا<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
@@ -549,12 +900,13 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <label className="mg-server-checkbox"><input type="checkbox" checked={form.tracksInventory} onChange={e => setForm({ ...form, tracksInventory: e.target.checked })} /> این کالا موجودی انبار دارد</label>
         </>}
 
-        {modal === "customer" && <>
-          <label>کد مشتری<input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
+        {(modal === "customer" || modal === "customerEdit") && <>
+          <label>کد مشتری<input required readOnly={modal === "customerEdit"} value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></label>
           <label>نام مشتری<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>
           <label>شماره تماس<input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
           <label>ایمیل<input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
           <label>نشانی<input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></label>
+          <label>یادداشت<input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
         </>}
 
         {modal === "account" && <>
@@ -591,6 +943,20 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
           <label>شناسه پرداخت / توضیحات<input value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
         </>}
 
+        {modal === "salePayment" && <>
+          <div className="mg-game-quote">
+            <span>فاکتور: {form.orderNumber}</span>
+            <b>پرداخت‌شده: {money(form.paidAmount)}</b>
+            <strong>مانده: {money(form.balanceDue)}</strong>
+          </div>
+          <label>مبلغ دریافت (تومان)<input required type="number" min="0.01" max={form.balanceDue} step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></label>
+          <label>روش دریافت<select required value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}><option value="1">نقدی</option><option value="2">کارت‌خوان</option><option value="3">انتقال بانکی</option><option value="4">کیف پول</option></select></label>
+          <label>حساب دریافت وجه<select required value={form.paymentAccountId} onChange={e => setForm({ ...form, paymentAccountId: e.target.value })}>{assetAccounts.filter(account => account.id !== form.receivableAccountId).map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>حساب دریافتنی<select required value={form.receivableAccountId} onChange={e => setForm({ ...form, receivableAccountId: e.target.value })}>{assetAccounts.filter(account => account.id !== form.paymentAccountId).map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label>
+          <label>شناسه پرداخت / توضیحات<input maxLength="100" value={form.paymentReference} onChange={e => setForm({ ...form, paymentReference: e.target.value })} /></label>
+          <div className="mg-server-modal-hint"><b>سوابق دریافت:</b> {(form.paymentHistory || []).length ? form.paymentHistory.map(payment => `${money(payment.amount)} · ${payment.method} · ${dateTime(payment.createdAtUtc)}`).join(" | ") : "هنوز دریافتی ثبت نشده است."}</div>
+        </>}
+
         {modal === "sale" && <>
           <label>مشتری (برای فروش نسیه الزامی است)<select value={form.customerId} onChange={e => setForm({ ...form, customerId: e.target.value })}><option value="">فروش نقدی بدون مشتری</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name} — {customer.code}</option>)}</select></label>
           <div className="mg-sale-lines">
@@ -619,7 +985,7 @@ function ServerWorkspace({ client, tenant, branch, onLogout, onSwitchContext }) 
         </>}
 
 
-        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
+        <div className="mg-server-modal-actions"><button type="button" className="mg-secondary-btn" onClick={() => setModal("")}>انصراف</button><button className="mg-primary-btn" disabled={saving}>{saving ? "در حال ذخیره..." : modal === "stockMovement" ? "ثبت گردش انبار" : modal === "sale" ? "ثبت فروش و سند حسابداری" : modal === "salePayment" ? "ثبت دریافت و سند حسابداری" : modal === "gameDevice" ? "ثبت دستگاه" : modal === "gameStart" ? "شروع سانس" : modal === "gameClose" ? "بستن سانس و ثبت تسویه" : "ذخیره در سرور"}</button></div>
       </form>
     </div>}
   </div>;

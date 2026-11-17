@@ -1,5 +1,8 @@
 using System.Data;
 using System.Data.Common;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using MG.Business.Api.Security;
 using MG.Business.Domain.Entities;
 using MG.Business.Domain.Enums;
@@ -19,22 +22,23 @@ public static class SalesEndpoints
 
         group.MapGet("/orders", async (ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
-            var orders = await db.SalesOrders.AsNoTracking()
+            var query = db.SalesOrders.AsNoTracking()
                 .Where(x => x.TenantId == tenant.TenantId
-                    && (tenant.BranchId == null || x.BranchId == tenant.BranchId))
-                .Take(100)
-                .Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
-                    x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc))
-                .ToListAsync(cancellationToken);
-            return Results.Ok(orders.OrderByDescending(x => x.CreatedAtUtc));
+                    && (tenant.BranchId == null || x.BranchId == tenant.BranchId));
+            var orderRows = db.Database.IsSqlite()
+                ? (await query.ToListAsync(cancellationToken)).OrderByDescending(x => x.CreatedAtUtc).Take(100).ToList()
+                : await query.OrderByDescending(x => x.CreatedAtUtc).Take(100).ToListAsync(cancellationToken);
+            var orders = orderRows.Select(x => new SalesOrderResponse(x.Id, x.Number, x.CustomerId, x.Subtotal,
+                x.LineDiscountTotal, x.Discount, x.Total, x.PaidAmount, x.BalanceDue, x.Status.ToString(), x.CreatedAtUtc));
+            return Results.Ok(orders);
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
 
         group.MapPost("/orders", async (CreateSaleRequest request, ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
         {
             if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
                 return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
-            if (request.Lines is null || request.Lines.Count == 0)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["فاکتور باید حداقل یک قلم داشته باشد."] });
+            if (request.Lines is null || request.Lines.Count == 0 || request.Lines.Any(line => line is null))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["فاکتور باید حداقل یک قلم معتبر داشته باشد و ردیف خالی مجاز نیست."] });
             if (!Enum.IsDefined(request.PaymentMethod))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت معتبر نیست."] });
             if ((request.AmountPaid > 0m && request.PaymentMethod == PaymentMethod.OnAccount)
@@ -42,6 +46,16 @@ public static class SalesEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش پرداخت با مبلغ پرداختی سازگار نیست."] });
             if (request.AmountPaid < 0m || decimal.Round(request.AmountPaid, 2) != request.AmountPaid)
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداخت معتبر نیست."] });
+            if (request.Discount < 0m || decimal.Round(request.Discount, 2) != request.Discount)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["discount"] = ["تخفیف فاکتور باید غیرمنفی و حداکثر تا دو رقم اعشار باشد."] });
+            if (request.Lines.Any(line => line.Quantity <= 0m || decimal.Round(line.Quantity, 3) != line.Quantity))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["تعداد هر قلم باید مثبت و حداکثر تا سه رقم اعشار باشد."] });
+            if (request.Lines.Any(line => line.UnitPrice is decimal price && (price < 0m || decimal.Round(price, 2) != price)))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["قیمت واحد باید غیرمنفی و حداکثر تا دو رقم اعشار باشد."] });
+            if (request.Lines.Any(line => line.Discount < 0m || decimal.Round(line.Discount, 2) != line.Discount))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["lines"] = ["تخفیف هر قلم باید غیرمنفی و حداکثر تا دو رقم اعشار باشد."] });
+            if (request.PaymentReference?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
 
             if (request.CustomerId is Guid customerId &&
                 !await db.Customers.AnyAsync(x => x.TenantId == tenantId && x.Id == customerId && x.IsActive, cancellationToken))
@@ -88,9 +102,11 @@ public static class SalesEndpoints
 
                 var orderNumber = $"S-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..19].ToUpperInvariant();
                 var order = new SalesOrder(tenantId, branchId, orderNumber, request.CustomerId, orderLines, request.Discount);
-                order.SetPaidAmount(request.AmountPaid);
-                if (order.BalanceDue > 0m && request.CustomerId is null)
+                if (request.AmountPaid > order.Total)
+                    return Results.ValidationProblem(new Dictionary<string, string[]> { ["amountPaid"] = ["مبلغ پرداختی نمی‌تواند از مبلغ نهایی فاکتور بیشتر باشد."] });
+                if (request.AmountPaid < order.Total && request.CustomerId is null)
                     return Results.ValidationProblem(new Dictionary<string, string[]> { ["customerId"] = ["برای فروش نسیه یا تسویه ناقص، انتخاب مشتری الزامی است."] });
+                order.SetPaidAmount(request.AmountPaid);
 
                 var dueAccountId = request.ReceivableAccountId;
                 if (order.BalanceDue > 0m &&
@@ -179,6 +195,150 @@ public static class SalesEndpoints
             }
         }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
 
+        group.MapGet("/orders/{orderId:guid}/payments", async (Guid orderId, ITenantContext tenant,
+            BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
+                return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
+
+            var orderExists = await db.SalesOrders.AsNoTracking().AnyAsync(x =>
+                x.TenantId == tenantId && x.BranchId == branchId && x.Id == orderId, cancellationToken);
+            if (!orderExists)
+                return Results.NotFound(new { message = "فاکتور در شعبه فعال پیدا نشد." });
+
+            var paymentQuery = db.SalesPayments.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.BranchId == branchId && x.SalesOrderId == orderId);
+            // SQLite cannot translate ordering over DateTimeOffset consistently; keep the
+            // tenant/branch filter in SQL and order the bounded invoice history in memory.
+            var paymentRows = await paymentQuery.ToListAsync(cancellationToken);
+            var payments = paymentRows.OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
+                .Select(x => new SalesPaymentResponse(x.Id, x.Amount, x.Method.ToString(), x.Reference, x.CreatedAtUtc))
+                .ToList();
+            return Results.Ok(payments);
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(ReadRoles)));
+
+        group.MapPost("/orders/{orderId:guid}/payments", async (Guid orderId, RecordPaymentRequest request, HttpRequest httpRequest,
+            ITenantContext tenant, BusinessDbContext db, CancellationToken cancellationToken) =>
+        {
+            if (tenant.TenantId is not Guid tenantId || tenant.BranchId is not Guid branchId)
+                return Results.BadRequest(new { message = "ابتدا کسب‌وکار و شعبه فعال را انتخاب کنید." });
+            if (!httpRequest.Headers.TryGetValue("Idempotency-Key", out var keyHeader)
+                || string.IsNullOrWhiteSpace(keyHeader.ToString()) || keyHeader.ToString().Length > 128)
+                return Results.BadRequest(new { message = "هدر Idempotency-Key الزامی است و باید حداکثر ۱۲۸ نویسه باشد." });
+            var idempotencyKey = keyHeader.ToString();
+            var fingerprintPayload = string.Join("|", orderId.ToString("D"), request.Amount.ToString("G29", CultureInfo.InvariantCulture),
+                ((int)request.PaymentMethod).ToString(CultureInfo.InvariantCulture), request.PaymentAccountId.ToString("D"),
+                request.ReceivableAccountId.ToString("D"), request.PaymentReference ?? string.Empty);
+            var requestFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintPayload)));
+            if (request.Amount <= 0m || decimal.Round(request.Amount, 2) != request.Amount)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["amount"] = ["مبلغ دریافت باید مثبت و حداکثر تا دو رقم اعشار باشد."] });
+            if (!Enum.IsDefined(request.PaymentMethod) || request.PaymentMethod == PaymentMethod.OnAccount)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentMethod"] = ["روش دریافت وجه معتبر نیست."] });
+            if (request.PaymentReference?.Length > 100)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["paymentReference"] = ["شناسه پرداخت نباید بیش از ۱۰۰ نویسه باشد."] });
+            if (request.PaymentAccountId == request.ReceivableAccountId)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["accounts"] = ["حساب دریافت وجه و حساب دریافتنی باید دو حساب مستقل باشند."] });
+
+            var priorPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+            if (priorPayment is not null)
+            {
+                if (!string.Equals(priorPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                    return Results.Conflict(new { message = "کلید Idempotency-Key قبلاً برای درخواست متفاوتی استفاده شده است." });
+                var priorOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == priorPayment.SalesOrderId, cancellationToken);
+                if (priorOrder is null)
+                    return Results.Conflict(new { message = "رکورد دریافت قبلی با فاکتور متناظر پیدا نشد." });
+                return Results.Ok(new { priorOrder.Id, priorOrder.Number, priorOrder.Total, priorOrder.PaidAmount, priorOrder.BalanceDue, paymentId = priorPayment.Id, replayed = true });
+            }
+
+            try
+            {
+                await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+                var order = await db.SalesOrders.SingleOrDefaultAsync(x =>
+                    x.TenantId == tenantId && x.BranchId == branchId && x.Id == orderId, cancellationToken);
+                if (order is null)
+                    return Results.NotFound(new { message = "فاکتور در شعبه فعال پیدا نشد." });
+                if (request.Amount > order.BalanceDue)
+                    return Results.Conflict(new { message = "مبلغ دریافت از مانده فاکتور بیشتر است.", balanceDue = order.BalanceDue });
+
+                var paymentAccount = await FindAccount(db, tenantId, request.PaymentAccountId, AccountType.Asset, cancellationToken);
+                if (paymentAccount is null)
+                    return Results.BadRequest(new { message = "حساب دریافت وجه معتبر نیست." });
+                var receivableAccount = await FindAccount(db, tenantId, request.ReceivableAccountId, AccountType.Asset, cancellationToken);
+                if (receivableAccount is null)
+                    return Results.BadRequest(new { message = "حساب دریافتنی معتبر نیست." });
+
+                order.SetPaidAmount(order.PaidAmount + request.Amount);
+                db.SalesPayments.Add(new SalesPayment(tenantId, branchId, order.Id,
+                    request.Amount, request.PaymentMethod, request.PaymentReference, idempotencyKey, requestFingerprint));
+                db.JournalEntries.Add(new JournalEntry(tenantId, branchId, DateOnly.FromDateTime(DateTime.UtcNow),
+                    $"Payment for {order.Number}",
+                    [
+                        new JournalEntryLine(tenantId, paymentAccount.Id, request.Amount, 0m, "Customer payment received"),
+                        new JournalEntryLine(tenantId, receivableAccount.Id, 0m, request.Amount, "Customer receivable settled")
+                    ], request.PaymentReference));
+
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return Results.Ok(new { order.Id, order.Number, order.Total, order.PaidAmount, order.BalanceDue, paymentId = db.SalesPayments.Local.Single(x => x.IdempotencyKey == idempotencyKey).Id, replayed = false });
+            }
+            catch (ArgumentException exception)
+            {
+                if (db.Database.CurrentTransaction is { } activeTransaction)
+                    await activeTransaction.RollbackAsync(cancellationToken);
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["payment"] = [exception.Message] });
+            }
+            catch (DbUpdateException)
+            {
+                if (db.Database.CurrentTransaction is { } activeTransaction)
+                    await activeTransaction.RollbackAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+                SalesPayment? racedPayment = null;
+                for (var attempt = 0; attempt < 5 && racedPayment is null; attempt++)
+                {
+                    racedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                    if (racedPayment is null && attempt < 4)
+                        await Task.Delay(40, cancellationToken);
+                }
+                if (racedPayment is not null)
+                {
+                    if (!string.Equals(racedPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                        return Results.Conflict(new { message = "کلید Idempotency-Key هم‌زمان برای درخواست متفاوتی استفاده شده است." });
+                    var racedOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Id == racedPayment.SalesOrderId, cancellationToken);
+                    if (racedOrder is not null)
+                        return Results.Ok(new { racedOrder.Id, racedOrder.Number, racedOrder.Total, racedOrder.PaidAmount, racedOrder.BalanceDue, paymentId = racedPayment.Id, replayed = true });
+                }
+                return Results.Conflict(new { message = "ثبت دریافت با تعارض داده‌ها انجام نشد؛ مانده فاکتور را دوباره بررسی کنید." });
+            }
+            catch (DbException)
+            {
+                if (db.Database.CurrentTransaction is { } activeTransaction)
+                    await activeTransaction.RollbackAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+                SalesPayment? committedPayment = null;
+                for (var attempt = 0; attempt < 5 && committedPayment is null; attempt++)
+                {
+                    committedPayment = await db.SalesPayments.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.IdempotencyKey == idempotencyKey, cancellationToken);
+                    if (committedPayment is null && attempt < 4)
+                        await Task.Delay(40, cancellationToken);
+                }
+                if (committedPayment is not null)
+                {
+                    if (!string.Equals(committedPayment.RequestFingerprint, requestFingerprint, StringComparison.Ordinal))
+                        return Results.Conflict(new { message = "کلید Idempotency-Key هم‌زمان برای درخواست متفاوتی استفاده شده است." });
+                    var committedOrder = await db.SalesOrders.AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.TenantId == tenantId && x.BranchId == branchId && x.Id == committedPayment.SalesOrderId, cancellationToken);
+                    if (committedOrder is not null)
+                        return Results.Ok(new { committedOrder.Id, committedOrder.Number, committedOrder.Total, committedOrder.PaidAmount, committedOrder.BalanceDue, paymentId = committedPayment.Id, replayed = true });
+                }
+                return Results.Conflict(new { message = "تغییر هم‌زمان اطلاعات رخ داد؛ مانده فاکتور را دوباره بررسی کنید." });
+            }
+        }).RequireAuthorization(policy => policy.AddRequirements(new TenantRoleRequirement(WriteRoles)));
+
         return endpoints;
     }
 
@@ -192,6 +352,8 @@ public static class SalesEndpoints
             x.TenantId == tenantId && x.Id == id && x.Type == type && x.IsActive, cancellationToken);
     }
 
+    public sealed record SalesPaymentResponse(Guid Id, decimal Amount, string Method, string? Reference, DateTimeOffset CreatedAtUtc);
+    public sealed record RecordPaymentRequest(decimal Amount, PaymentMethod PaymentMethod, Guid PaymentAccountId, Guid ReceivableAccountId, string? PaymentReference);
     public sealed record CreateSaleRequest(Guid? CustomerId, decimal Discount, decimal AmountPaid,
         PaymentMethod PaymentMethod, Guid RevenueAccountId, Guid? PaymentAccountId, Guid? ReceivableAccountId,
         Guid? InventoryAccountId, Guid? CostOfGoodsSoldAccountId, string? PaymentReference, List<SaleLineRequest> Lines);

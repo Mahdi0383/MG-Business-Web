@@ -15,6 +15,19 @@ public sealed class CustomerDomainTests
         Assert.Equal("user@example.com", customer.Email);
     }
 
+
+    [Fact]
+    public void CustomerUpdateAdvancesAggregateVersion()
+    {
+        var customer = new Customer(Guid.NewGuid(), "C-101", "Before");
+        Assert.Equal(1, customer.Version);
+
+        customer.UpdateContact("After", "09120000000", null, null, null);
+
+        Assert.Equal(2, customer.Version);
+        Assert.Equal("After", customer.Name);
+    }
+
     [Fact]
     public void CustomerRequiresTenantCodeAndName()
     {

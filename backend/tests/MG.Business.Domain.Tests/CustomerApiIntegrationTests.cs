@@ -41,6 +41,48 @@ public sealed class CustomerApiIntegrationTests
         var customer = await create.Content.ReadFromJsonAsync<CustomerResponse>();
         Assert.NotNull(customer);
 
+        Assert.Equal(1, customer!.Version);
+        var missingVersion = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
+        {
+            name = "Missing precondition", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, missingVersion.StatusCode);
+
+        var zeroVersion = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
+        {
+            baseVersion = 0, name = "Invalid precondition", phone = (string?)null,
+            email = (string?)null, address = (string?)null, notes = (string?)null
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, zeroVersion.StatusCode);
+
+        var update = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
+        {
+            baseVersion = customer.Version,
+            name = "مشتری ویرایش‌شده",
+            phone = "09121111111",
+            email = "updated@example.com",
+            address = "تهران",
+            notes = "نسخه دوم"
+        });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        var updatedCustomer = await update.Content.ReadFromJsonAsync<CustomerResponse>();
+        Assert.Equal(2, updatedCustomer!.Version);
+
+        var staleUpdate = await client.PutAsJsonAsync($"/api/customers/{customer.Id}", new
+        {
+            baseVersion = customer.Version,
+            name = "ویرایش قدیمی",
+            phone = "09120000000",
+            email = "customer@example.com",
+            address = "مشهد",
+            notes = "نباید ذخیره شود"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, staleUpdate.StatusCode);
+        var unchanged = await client.GetFromJsonAsync<CustomerResponse>($"/api/customers/{customer.Id}");
+        Assert.Equal(2, unchanged!.Version);
+        Assert.Equal("مشتری ویرایش‌شده", unchanged.Name);
+
         var list = await client.GetFromJsonAsync<CustomerResponse[]>("/api/customers?search=0912");
         Assert.Single(list!);
 
@@ -86,5 +128,5 @@ public sealed class CustomerApiIntegrationTests
 
     private sealed record TokenResponse(string TokenType, string AccessToken, int ExpiresIn, string RefreshToken);
     private sealed record TenantCreated(Guid TenantId, Guid BranchId, string Name, string Slug, string Role);
-    private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
+    private sealed record CustomerResponse(Guid Id, string Code, string Name, string? Phone, string? Email, string? Address, string? Notes, bool IsActive, int Version);
 }

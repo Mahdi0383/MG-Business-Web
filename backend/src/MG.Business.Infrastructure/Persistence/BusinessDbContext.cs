@@ -23,6 +23,14 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<JournalEntryLine> JournalEntryLines => Set<JournalEntryLine>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<SyncOperation> SyncOperations => Set<SyncOperation>();
+    public DbSet<DevicePresence> DevicePresences => Set<DevicePresence>();
+    public DbSet<DeviceEnrollmentChallenge> DeviceEnrollmentChallenges => Set<DeviceEnrollmentChallenge>();
+    public DbSet<DeviceCredential> DeviceCredentials => Set<DeviceCredential>();
+    public DbSet<DeviceRequestNonce> DeviceRequestNonces => Set<DeviceRequestNonce>();
+    public DbSet<DeviceAuthorityLease> DeviceAuthorityLeases => Set<DeviceAuthorityLease>();
+    public DbSet<SyncDeviceCursor> SyncDeviceCursors => Set<SyncDeviceCursor>();
+    public DbSet<SyncDeviceBranchCursor> SyncDeviceBranchCursors => Set<SyncDeviceBranchCursor>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,6 +84,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Email).HasMaxLength(254);
             entity.Property(x => x.Address).HasMaxLength(500);
             entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.Property(x => x.Version).IsConcurrencyToken().IsRequired().HasDefaultValue(1);
             entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
             entity.HasAlternateKey(x => new { x.TenantId, x.Id });
             entity.HasIndex(x => new { x.TenantId, x.Phone });
@@ -231,6 +240,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Amount).HasPrecision(18, 2);
             entity.Property(x => x.Method).HasConversion<string>().HasMaxLength(24).IsRequired();
             entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            entity.Property(x => x.RequestFingerprint).HasMaxLength(64);
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.SalesOrderId });
             entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
@@ -252,12 +264,127 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Quantity).HasColumnName("quantity").HasPrecision(18, 3);
             entity.Property(x => x.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
             entity.Property(x => x.Reference).HasMaxLength(100);
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128);
+            entity.Property(x => x.RequestFingerprint).HasMaxLength(64);
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.BranchId, x.CreatedAtUtc });
             entity.HasIndex(x => new { x.TenantId, x.ProductId, x.CreatedAtUtc });
             entity.HasOne<Product>().WithMany().HasForeignKey(x => new { x.TenantId, x.ProductId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
                 .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SyncOperation>(entity =>
+        {
+            entity.ToTable("sync_operations");
+            entity.HasKey(x => x.Sequence);
+            entity.Property(x => x.Sequence).ValueGeneratedOnAdd();
+            entity.Property(x => x.OperationType).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.PayloadJson).IsRequired();
+            entity.Property(x => x.PayloadSha256).HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.OperationId }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.Sequence });
+            entity.HasIndex(x => new { x.TenantId, x.DeviceId, x.Sequence });
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict).IsRequired(false);
+        });
+
+        modelBuilder.Entity<SyncDeviceBranchCursor>(entity =>
+        {
+            entity.ToTable("sync_device_branch_cursors");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId, x.BranchId });
+            entity.Property(x => x.LastAcknowledgedSequence).IsConcurrencyToken();
+            entity.HasIndex(x => new { x.TenantId, x.BranchId, x.LastAcknowledgedSequence }).HasDatabaseName("IX_sync_device_branch_cursor_scope_seq");
+            entity.HasIndex(x => new { x.TenantId, x.BranchId }).HasDatabaseName("IX_sync_device_branch_cursor_branch");
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SyncDeviceCursor>(entity =>
+        {
+            entity.ToTable("sync_device_cursors");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId });
+            entity.Property(x => x.LastAcknowledgedSequence).IsConcurrencyToken();
+            entity.HasIndex(x => new { x.TenantId, x.LastAcknowledgedSequence });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<DeviceEnrollmentChallenge>(entity =>
+        {
+            entity.ToTable("device_enrollment_challenges");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ChallengeSha256).HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.ActorId, x.DeviceId, x.ExpiresAtUtc });
+            entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DeviceCredential>(entity =>
+        {
+            entity.ToTable("device_credentials");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId });
+            entity.Property(x => x.PublicKeySpkiBase64).HasMaxLength(2048).IsRequired();
+            entity.Property(x => x.CredentialSha256).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.KeyVersion).IsConcurrencyToken().IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.ActorId });
+            entity.HasIndex(x => new { x.TenantId, x.BranchId });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DeviceRequestNonce>(entity =>
+        {
+            entity.ToTable("device_request_nonces");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId, x.Nonce });
+            entity.Property(x => x.Nonce).HasMaxLength(36).IsRequired();
+            entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.HasOne<DeviceCredential>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.DeviceId })
+                .HasPrincipalKey(x => new { x.TenantId, x.DeviceId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DeviceAuthorityLease>(entity =>
+        {
+            entity.ToTable("device_authority_leases");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ScopeKey).HasMaxLength(36).IsRequired();
+            entity.Property(x => x.Epoch).IsConcurrencyToken().IsRequired();
+            entity.Property(x => x.SignatureBase64).HasMaxLength(256).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.ScopeKey }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.DeviceId, x.ExpiresAtUtc });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<DeviceCredential>().WithMany()
+                .HasForeignKey(x => new { x.TenantId, x.DeviceId })
+                .HasPrincipalKey(x => new { x.TenantId, x.DeviceId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DevicePresence>(entity =>
+        {
+            entity.ToTable("device_presences");
+            entity.HasKey(x => new { x.TenantId, x.DeviceId });
+            entity.Property(x => x.DeviceName).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.Platform).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.ClientVersion).HasMaxLength(40).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.LastSeenAtUtc });
+            entity.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Branch>().WithMany().HasForeignKey(x => new { x.TenantId, x.BranchId })
+                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict).IsRequired(false);
         });
 
         modelBuilder.Entity<JournalEntryLine>(entity =>
