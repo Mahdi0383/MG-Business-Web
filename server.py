@@ -1699,8 +1699,10 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"دسترسی ثبت رزرو ندارید."})
                 device_id=data.get("deviceId"); customer_id=data.get("customerId")
                 starts=data.get("startsAt"); ends=data.get("endsAt"); players=data.get("playersCount",1); notes=data.get("notes","")
-                if not isinstance(device_id,str) or not isinstance(starts,str) or not isinstance(ends,str):
-                    return self.send_json(400,{"error":"دستگاه و زمان شروع و پایان رزرو الزامی است."})
+                if (not isinstance(device_id,str) or not 1<=len(device_id)<=100 or
+                        (customer_id is not None and (not isinstance(customer_id,str) or not 1<=len(customer_id)<=100)) or
+                        not isinstance(starts,str) or not isinstance(ends,str)):
+                    return self.send_json(400,{"error":"دستگاه، مشتری یا زمان رزرو معتبر نیست."})
                 if type(players) is not int or not 1<=players<=16 or not isinstance(notes,str) or len(notes)>500:
                     return self.send_json(400,{"error":"تعداد بازیکنان یا یادداشت رزرو معتبر نیست."})
                 from datetime import datetime
