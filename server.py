@@ -1242,10 +1242,16 @@ class Handler(SimpleHTTPRequestHandler):
                     ON m.product_id=p.id AND m.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? AND p.active=1
                     GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                items=[dict(row) for row in rows]
+                if user["role"] == "cashier":
+                    for item in items:
+                        item.pop("costPrice",None)
+                return self.send_json(200, {"items": items})
             if path == "/api/inventory/movements":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403, {"error":"دسترسی مشاهده بهای گردش انبار ندارید."})
                 rows = db.execute("""SELECT m.id,m.product_id AS productId,p.name AS productName,
                     m.movement_type AS movementType,m.quantity_delta AS quantityDelta,
                     m.unit_cost AS unitCost,m.note,m.created_at AS createdAt
@@ -1255,11 +1261,15 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/suppliers":
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403,{"error":"دسترسی مشاهده اطلاعات تأمین‌کنندگان ندارید."})
                 rows=db.execute("SELECT id,name,phone,email,notes,active,created_at AS createdAt FROM suppliers WHERE tenant_id=? ORDER BY name LIMIT 5000",(user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(r) for r in rows]})
             if path.startswith("/api/suppliers/") and path.endswith("/ledger"):
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403,{"error":"دسترسی مشاهده مانده تأمین‌کننده ندارید."})
                 supplier_id=path.split("/")[-2]
                 supplier=db.execute("SELECT id,name,phone,email FROM suppliers WHERE id=? AND tenant_id=?",
                                     (supplier_id,user["tenant_id"])).fetchone()
@@ -1285,6 +1295,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/purchase-invoices":
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403,{"error":"دسترسی مشاهده بدهی و فاکتورهای خرید ندارید."})
                 rows=db.execute("""SELECT i.id,i.invoice_number AS invoiceNumber,i.invoice_date AS invoiceDate,i.subtotal,i.discount,i.total,
                     i.paid_amount AS paidAmount,i.status,s.id AS supplierId,s.name AS supplierName
                     FROM purchase_invoices i JOIN suppliers s ON s.id=i.supplier_id WHERE i.tenant_id=?
@@ -3325,7 +3337,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
             if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
                 if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند بدهی تأمین‌کننده را پرداخت کند."})
                 iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
                 payid=str(data.get("id") or secrets.token_urlsafe(18))
                 if type(amount) is not int or amount<=0 or amount>9007199254740991 or method not in ("cash","card","online"):
