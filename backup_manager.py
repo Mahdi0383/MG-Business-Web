@@ -199,8 +199,10 @@ def _validate_mg_database(connection: sqlite3.Connection) -> None:
         if not expected.issubset(actual):
             raise sqlite3.DatabaseError(f"Selected file has an invalid MG Business {table} schema.")
     migration = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-    if not migration or migration[0] is None or migration[0] < 1:
-        raise sqlite3.DatabaseError("Selected file has no applied MG Business schema migration.")
+    if not migration or type(migration[0]) is not int or migration[0] < 1:
+        raise sqlite3.DatabaseError(
+            "Selected file has no valid integer MG Business schema migration."
+        )
     if migration[0] > SCHEMA_VERSION:
         raise sqlite3.DatabaseError(
             "Selected MG Business database schema is newer than this application supports."
