@@ -237,17 +237,18 @@ try {
   await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
   await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
-  const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
-    const url = new URL(response.url());
-    return url.pathname === path && url.searchParams.get("fromDate") === accountingToday &&
-      url.searchParams.get("toDate") === accountingToday;
-  }));
+  const reportResponses = reportPaths.map(path => page.waitForResponse(response =>
+    new URL(response.url()).pathname === path
+  ));
   await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
   const reportSettled = await Promise.allSettled(reportResponses);
   const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
   if (missingReports.length) throw new Error("Accounting report requests were not observed: " + JSON.stringify(missingReports));
   const reportResults = reportSettled.map(result => result.value);
   for (let index = 0; index < reportPaths.length; index++) {
+    const reportUrl = new URL(reportResults[index].url());
+    assert.equal(reportUrl.searchParams.get("fromDate"), accountingToday, "accounting report start date mismatch: " + reportPaths[index] + " " + reportUrl);
+    assert.equal(reportUrl.searchParams.get("toDate"), accountingToday, "accounting report end date mismatch: " + reportPaths[index] + " " + reportUrl);
     assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
   }
   await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
