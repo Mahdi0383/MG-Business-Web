@@ -457,6 +457,16 @@ try {
     if (reportPaths.includes(url.pathname)) accountingRequestEvents.push(url.href);
   });
   await page.locator("#accountingDateFilter").evaluate(form => {
+    document.addEventListener("submit", event => {
+      window.__mgAccountingDocumentCapture = {
+        targetId: event.target?.id,
+        bubbles: event.bubbles,
+        cancelable: event.cancelable,
+        moduleContainsForm: Boolean(document.getElementById("modulePage")?.contains(form)),
+        buttonFormId: form.querySelector('button[type="submit"]')?.form?.id || null,
+        parentTag: form.parentElement?.tagName || null
+      };
+    }, { capture: true, once: true });
     form.addEventListener("submit", event => {
       queueMicrotask(() => {
         window.__mgAccountingFilterSubmit = {
@@ -478,12 +488,13 @@ try {
   const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
   if (missingReports.length) {
     const filterState = await page.evaluate(() => window.__mgAccountingFilterSubmit || null);
+    const documentCapture = await page.evaluate(() => window.__mgAccountingDocumentCapture || null);
     const formValues = await page.locator("#accountingDateFilter").evaluate(form => ({
       fromDate: form.querySelector('[name="fromDate"]')?.value,
       toDate: form.querySelector('[name="toDate"]')?.value
     }));
     throw new Error("Accounting report requests were not observed: " + JSON.stringify({
-      missingReports, accountingRequestEvents, filterState, formValues
+      missingReports, accountingRequestEvents, filterState, documentCapture, formValues
     }));
   }
   const reportResults = reportSettled.map(result => result.value);
