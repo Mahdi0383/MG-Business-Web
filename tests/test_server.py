@@ -508,7 +508,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(statement["items"][-1]["sourceType"],"invoice")
         self.assertEqual(statement["items"][-1]["balanceAfter"],420000)
         self.assertTrue(all(item["entryDate"] for item in statement["items"]))
-        self.assertRegex(statement["items"][0]["entryDate"], r"^\\d{4}-\\d{2}-\\d{2}$")
+        self.assertRegex(statement["items"][0]["entryDate"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertEqual(
             [item["balanceAfter"] for item in reversed(statement["items"])],
             [420000,320000,0]
