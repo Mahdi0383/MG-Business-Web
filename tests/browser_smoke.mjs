@@ -293,11 +293,38 @@ try {
   await page.locator("#deviceForm").waitFor({ state: "visible" });
   await page.locator('#deviceForm input[name="name"]').fill("E2E-PC-01");
   await page.locator('#deviceForm input[name="hourlyRate"]').fill("36000");
+  const deviceRequestEvents = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/gamenet/devices" && request.method() === "POST") {
+      deviceRequestEvents.push({ url: request.url(), method: request.method() });
+    }
+  });
+  await page.locator("#deviceForm").evaluate(form => {
+    form.addEventListener("submit", event => {
+      queueMicrotask(() => {
+        window.__mgDeviceFormSubmit = {
+          defaultPrevented: event.defaultPrevented,
+          buttonDisabled: Boolean(form.querySelector('button[type="submit"]')?.disabled)
+        };
+      });
+    }, { once: true });
+  });
   const deviceResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/gamenet/devices") && response.request().method() === "POST"
+    new URL(response.url()).pathname === "/api/gamenet/devices" &&
+    response.request().method() === "POST",
+    { timeout: 10000 }
   );
   await page.locator("#deviceForm button[type=submit]").click();
-  const deviceResponse = await deviceResponsePromise;
+  let deviceResponse;
+  try {
+    deviceResponse = await deviceResponsePromise;
+  } catch (error) {
+    const formState = await page.evaluate(() => window.__mgDeviceFormSubmit || null);
+    throw new Error("GameNet device form did not produce its API response: " + JSON.stringify({
+      formState, deviceRequestEvents, buttonDisabled: await page.locator("#deviceForm button[type=submit]").isDisabled()
+    }) + "; " + error.message);
+  }
   const deviceBody = await deviceResponse.json();
   assert.equal(deviceResponse.status(), 201, "GameNet device API response: " + JSON.stringify(deviceBody));
   const deviceCard = page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" });
