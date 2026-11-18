@@ -214,6 +214,62 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_backup_restore_rejects_non_owner_before_reading_large_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(server, "DATA_DIR", root), mock.patch.object(server, "DB_PATH", root / "test.sqlite3"):
+                status, setup = self.request("POST", "/api/setup", {
+                    "businessName": "Restore authorization test",
+                    "username": "restore-owner",
+                    "password": "restore-owner-strong-password"
+                })
+                self.assertEqual(status, 200)
+                owner_token = setup["token"]
+                status, cashier = self.request("POST", "/api/users", {
+                    "username": "restore-cashier",
+                    "password": "restore-cashier-strong-password",
+                    "role": "cashier"
+                }, owner_token)
+                self.assertEqual(status, 201)
+                status, login = self.request("POST", "/api/login", {
+                    "username": "restore-cashier",
+                    "password": "restore-cashier-strong-password"
+                })
+                self.assertEqual(status, 200)
+
+                connection = socket.create_connection(self.httpd.server_address, timeout=3)
+                try:
+                    connection.sendall(
+                        b"POST /api/backup/restore HTTP/1.1\\r\\n"
+                        b"Host: localhost\\r\\n"
+                        b"Content-Type: application/json\\r\\n"
+                        + ("Content-Length: %d\\r\\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                        + ("Authorization: Bearer %s\\r\\n" % login["token"]).encode("ascii")
+                        + b"\\r\\n"
+                    )
+                    response = bytearray()
+                    while b"\\r\\n\\r\\n" not in response:
+                        chunk = connection.recv(4096)
+                        self.assertTrue(chunk, "server closed before sending the authorization response")
+                        response.extend(chunk)
+                    header_end = response.index(b"\\r\\n\\r\\n") + 4
+                    headers = response[:header_end].decode("iso-8859-1")
+                    self.assertIn(" 403 ", headers.splitlines()[0])
+                    body_length = next(
+                        int(line.split(":", 1)[1].strip())
+                        for line in headers.splitlines()
+                        if line.lower().startswith("content-length:")
+                    )
+                    body = bytearray(response[header_end:])
+                    while len(body) < body_length:
+                        chunk = connection.recv(4096)
+                        self.assertTrue(chunk, "server closed before sending the complete authorization response")
+                        body.extend(chunk)
+                    self.assertIn("فقط مالک", json.loads(body[:body_length])["error"])
+                    self.assertEqual(connection.recv(1), b"", "non-owner backup connection must close immediately")
+                finally:
+                    connection.close()
+
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
         tenant_ids = ("tenant-public-a", "tenant-public-b")
         db = server.connect()
