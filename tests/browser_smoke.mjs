@@ -604,7 +604,11 @@ try {
       fetch("/api/accounting/accounts", { method: "POST", headers: managerHeaders,
         body: JSON.stringify({ code: "8799", name: "E2E manager-created account", accountType: "asset" }) }),
       fetch("/api/product-addons", { method: "POST", headers: managerHeaders,
-        body: JSON.stringify({ productId, name: "E2E manager add-on", price: 500 }) })
+        body: JSON.stringify({ productId, name: "E2E manager add-on", price: 500 }) }),
+      fetch("/api/users/" + viewerId + "/password", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ password: "manager-reset-attempt-2026" }) }),
+      fetch("/api/licenses/activate", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ code: "INVALID-E2E-LICENSE" }) })
     ]);
     const managerResults = await Promise.all(managerRequests.map(async response => ({ status: response.status, body: await response.json() })));
     const cashierLogin = await loginAs("browser-cashier-2");
@@ -618,15 +622,19 @@ try {
       fetch("/api/product-addons", { method: "POST", headers: cashierHeaders,
         body: JSON.stringify({ productId, name: "Unauthorized cashier add-on", price: 500 }) }),
       fetch("/api/purchase-invoices/" + invoiceId + "/payments", { method: "POST", headers: cashierHeaders,
-        body: JSON.stringify({ amount: 1000, paymentMethod: "cash", id: "e2e-cashier-supplier-payment" }) })
+        body: JSON.stringify({ amount: 1000, paymentMethod: "cash", id: "e2e-cashier-supplier-payment" }) }),
+      fetch("/api/users/" + viewerId + "/password", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ password: "cashier-reset-attempt-2026" }) }),
+      fetch("/api/licenses/activate", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ code: "INVALID-E2E-LICENSE" }) })
     ]);
     const cashierResults = await Promise.all(cashierRequests.map(async response => ({ status: response.status, body: await response.json() })));
     return { managerResults, cashierResults };
   }, { productId: productBody.id, invoiceId: purchaseBody.id, viewerId: createdUserId });
-  assert.deepEqual(roleMatrix.managerResults?.map(result => result.status), [403, 403, 201, 201],
-    "manager must be blocked from user administration but allowed module management: " + JSON.stringify(roleMatrix));
-  assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 201],
-    "cashier must be blocked from administration while allowed supplier payments: " + JSON.stringify(roleMatrix));
+  assert.deepEqual(roleMatrix.managerResults?.map(result => result.status), [403, 403, 201, 201, 403, 403],
+    "manager must be blocked from owner-only user/password/license administration but allowed module management: " + JSON.stringify(roleMatrix));
+  assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 201, 403, 403],
+    "cashier must be blocked from administration and owner-only password/license actions while allowed supplier payments: " + JSON.stringify(roleMatrix));
   const deactivation = await page.evaluate(async userId => {
     const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/users/" + userId, {
