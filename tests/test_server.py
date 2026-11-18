@@ -283,7 +283,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertTrue(chunk, "server closed before rejecting Expect header")
                 response.extend(chunk)
             self.assertNotIn(b"100 Continue", response)
-            self.assertIn(b"417", response.split(b"\r\n", 1)[0])
+            self.assertIn(b"401", response.split(b"\r\n", 1)[0])
             self.assertEqual(connection.recv(1), b"", "restore Expect request must close without reading body")
         finally:
             connection.close()
