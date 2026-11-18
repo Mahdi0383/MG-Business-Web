@@ -1991,6 +1991,31 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test")["quantity"],10)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test-2")["quantity"],5)
+        # Cashiers cannot view supplier liabilities and must not be able to settle them.
+        status, cashier_user = self.request("POST", "/api/users", {
+            "username":"purchase-cashier","password":"purchase-cashier-password-2026","role":"cashier"
+        }, token)
+        self.assertEqual(status,201)
+        status, cashier_login = self.request("POST", "/api/login", {
+            "username":"purchase-cashier","password":"purchase-cashier-password-2026"
+        })
+        self.assertEqual(status,200)
+        cashier_token=cashier_login["token"]
+        for restricted_path in ("/api/suppliers", "/api/purchase-invoices"):
+            with self.subTest(cashier_read=restricted_path):
+                restricted_status,_=self.request("GET",restricted_path,token=cashier_token)
+                self.assertEqual(restricted_status,403)
+        cashier_payment_status,cashier_payment_result=self.request(
+            "POST","/api/purchase-invoices/purchase-invoice-1/payments",
+            {"id":"cashier-must-not-pay","amount":100000,"paymentMethod":"card"},cashier_token)
+        self.assertEqual(cashier_payment_status,403)
+        self.assertIn("error",cashier_payment_result)
+        db=server.connect()
+        try:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM supplier_payments WHERE id='cashier-must-not-pay'").fetchone()[0],0)
+        finally:
+            db.close()
+
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "id":"supplier-payment-01","amount":100000,"paymentMethod":"card"
         }, token)
