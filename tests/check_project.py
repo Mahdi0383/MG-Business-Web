@@ -240,4 +240,12 @@ if 'if path.startswith("/api/orders/") and path.endswith("/fulfillment"):' not i
     raise SystemExit("Audited kitchen order fulfillment API is missing")
 if 'renderKitchenQueue' not in app or 'data-order-fulfillment' not in app:
     raise SystemExit("Cafe kitchen queue UI is missing")
+if "class BoundedThreadingHTTPServer" not in server or "BoundedThreadingHTTPServer((HOST, PORT), Handler)" not in server:
+    raise SystemExit("HTTP server must enforce a bounded worker pool")
+if "MG_MAX_HTTP_WORKERS" not in server or "request.settimeout(REQUEST_TIMEOUT_SECONDS)" not in server:
+    raise SystemExit("HTTP connection concurrency and read timeout limits are missing")
+if "503 Service Unavailable" not in server:
+    raise SystemExit("Saturated HTTP server must reject excess connections cleanly")
+if "BoundedHttpServerTests" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
+    raise SystemExit("HTTP worker saturation regression test is missing")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
