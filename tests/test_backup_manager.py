@@ -366,6 +366,36 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             self.assertEqual(len(list(root.glob("live.sqlite3-wal.restore-*.tmp"))), 1)
 
+    def test_restore_removes_decrypted_temp_if_validation_connection_cannot_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.sqlite3"
+            db = sqlite3.connect(source)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.commit()
+            db.close()
+
+            key = generate_encryption_key()
+            snapshot = create_snapshot(source, root / "backups", encryption_key=key)
+            target = root / "restored.sqlite3"
+            real_connect = sqlite3.connect
+
+            def fail_decrypted_validation(database, *args, **kwargs):
+                if ".decrypt-" in str(database):
+                    raise sqlite3.OperationalError("simulated validation open failure")
+                return real_connect(database, *args, **kwargs)
+
+            with mock.patch("backup_manager.sqlite3.connect", side_effect=fail_decrypted_validation):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "simulated validation open failure"):
+                    restore_snapshot(snapshot, target, encryption_key=key)
+
+            self.assertFalse(target.exists())
+            self.assertFalse(list(root.glob("restored.sqlite3.decrypt-*.tmp")))
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
