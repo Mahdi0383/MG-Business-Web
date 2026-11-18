@@ -357,6 +357,15 @@ try {
     return { status: response.status, body: await response.json() };
   }, startSessionBody.id);
   assert.equal(customerFinanceAudit.status, 200, "accounting journal must be readable after customer settlement");
+  assert.ok(Array.isArray(customerFinanceAudit.body.items), "accounting journal must return an item collection");
+  for (const entry of customerFinanceAudit.body.items) {
+    assert.equal(entry.debit, entry.credit,
+      "every posted journal entry must balance: " + JSON.stringify({ id: entry.id, sourceType: entry.sourceType, sourceId: entry.sourceId, debit: entry.debit, credit: entry.credit }));
+    assert.ok(Number.isSafeInteger(entry.debit) && entry.debit >= 0,
+      "journal debit total must be a non-negative safe integer: " + JSON.stringify(entry));
+    assert.ok(Number.isSafeInteger(entry.credit) && entry.credit >= 0,
+      "journal credit total must be a non-negative safe integer: " + JSON.stringify(entry));
+  }
   const gameSessionJournal = customerFinanceAudit.body.items.find(item =>
     item.sourceType === "transaction" && item.sourceId === "game-" + startSessionBody.id
   );
