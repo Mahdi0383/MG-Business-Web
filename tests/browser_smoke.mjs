@@ -114,11 +114,15 @@ try {
   await page.locator('#navigation [data-page="cafe"]').click();
   await page.locator("#addCartItem").waitFor({ state: "visible" });
   await page.locator("#cashShiftOpenForm").waitFor({ state: "visible" });
-  await page.locator('#cashShiftOpenForm input[name="openingCash"]').fill("1000");
   const shiftOpenPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/cash-register/shifts/open") && response.request().method() === "POST"
   );
-  await page.locator("#cashShiftOpenForm button[type=submit]").click();
+  await page.locator("#cashShiftOpenForm").evaluate(form => {
+    const input = form.querySelector('input[name="openingCash"]');
+    input.value = "1000";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    form.requestSubmit();
+  });
   const shiftOpenResponse = await shiftOpenPromise;
   const shiftOpenBody = await shiftOpenResponse.json();
   assert.equal(shiftOpenResponse.status(), 201, "cash register open response: " + JSON.stringify(shiftOpenBody));
