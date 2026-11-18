@@ -29,6 +29,56 @@ def make_license(modules, license_id):
     return "MG1." + encoded + "." + signature
 
 
+
+class BackupSchedulerTests(unittest.TestCase):
+    def test_failed_scheduled_backups_retry_with_bounded_backoff(self):
+        class StopAfterWaits:
+            def __init__(self, count):
+                self.count = count
+                self.waits = []
+
+            def is_set(self):
+                return False
+
+            def wait(self, delay):
+                self.waits.append(delay)
+                return len(self.waits) >= self.count
+
+        stop_event = StopAfterWaits(3)
+        with mock.patch.object(
+            server, "create_snapshot",
+            side_effect=[OSError("disk temporarily unavailable"),
+                         OSError("disk still unavailable"), Path("/tmp/recovered.sqlite3")],
+        ) as create, mock.patch.object(server, "BACKUP_INTERVAL_SECONDS", 86400):
+            server.backup_scheduler(stop_event)
+
+        self.assertEqual(create.call_count, 3)
+        self.assertEqual(stop_event.waits, [60, 120, 86400])
+
+    def test_successful_backup_resets_retry_backoff(self):
+        class StopAfterWaits:
+            def __init__(self):
+                self.waits = []
+
+            def is_set(self):
+                return False
+
+            def wait(self, delay):
+                self.waits.append(delay)
+                return len(self.waits) >= 3
+
+        stop_event = StopAfterWaits()
+        with mock.patch.object(
+            server, "create_snapshot",
+            side_effect=[OSError("temporary failure"), Path("/tmp/recovered.sqlite3"),
+                         OSError("later failure")],
+        ) as create, mock.patch.object(server, "BACKUP_INTERVAL_SECONDS", 7200):
+            server.backup_scheduler(stop_event)
+
+        self.assertEqual(create.call_count, 3)
+        self.assertEqual(stop_event.waits, [60, 7200, 60])
+
+
 class BoundedHttpServerTests(unittest.TestCase):
     def test_over_capacity_connection_receives_503_and_is_closed(self):
         httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
