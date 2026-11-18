@@ -945,6 +945,19 @@ class Handler(SimpleHTTPRequestHandler):
             return False
         return super().handle_expect_100()
 
+    def parse_request(self):
+        # BaseHTTPRequestHandler only calls handle_expect_100 when both the
+        # request and configured response protocol are HTTP/1.1+. The service
+        # intentionally defaults to HTTP/1.0, so reject restore expectations
+        # here as well to avoid a client/server wait-for-body deadlock.
+        if not super().parse_request():
+            return False
+        if self.route() == "/api/backup/restore" and self.headers.get("Expect") is not None:
+            self.close_connection = True
+            self.send_error(417, "Expect is not supported for backup restore")
+            return False
+        return True
+
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
