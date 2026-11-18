@@ -74,9 +74,10 @@ First ensure DNS resolves to this host and TCP 80 is reachable. Obtain the certi
 sudo certbot certonly --standalone -d your-real-domain
 ```
 
-Copy the example Nginx configuration, replace every occurrence of `business.example.com`, enable it, and validate:
+Install the shared Nginx limit zones first, then copy the virtual-host example, replace every occurrence of `business.example.com`, enable it, and validate. The `conf.d` file is loaded from Nginx's `http` context; keep the zone declarations there rather than inside a `server` block:
 
 ```sh
+sudo cp /opt/mg-business/deploy/nginx/mg-business-limits.conf.example /etc/nginx/conf.d/mg-business-limits.conf
 sudo cp /opt/mg-business/deploy/nginx/mg-business.conf.example /etc/nginx/sites-available/mg-business
 sudoedit /etc/nginx/sites-available/mg-business
 sudo ln -s /etc/nginx/sites-available/mg-business /etc/nginx/sites-enabled/mg-business
