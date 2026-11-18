@@ -114,6 +114,19 @@ def validate_config(env: dict[str, str], root: Path) -> list[str]:
     except ValueError:
         errors.append("Backup interval and retention must be integers.")
 
+    try:
+        max_workers = int(env.get("MG_MAX_HTTP_WORKERS", "64"))
+        if not 4 <= max_workers <= 512:
+            errors.append("MG_MAX_HTTP_WORKERS must be between 4 and 512.")
+    except ValueError:
+        errors.append("MG_MAX_HTTP_WORKERS must be an integer.")
+    try:
+        request_timeout = int(env.get("MG_REQUEST_TIMEOUT_SECONDS", "15"))
+        if not 5 <= request_timeout <= 120:
+            errors.append("MG_REQUEST_TIMEOUT_SECONDS must be between 5 and 120.")
+    except ValueError:
+        errors.append("MG_REQUEST_TIMEOUT_SECONDS must be an integer.")
+
     return errors
 
 
