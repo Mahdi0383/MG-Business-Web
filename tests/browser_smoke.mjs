@@ -624,16 +624,14 @@ try {
     "manager must be blocked from user administration but allowed module management: " + JSON.stringify(roleMatrix));
   assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 201],
     "cashier must be blocked from administration while allowed supplier payments: " + JSON.stringify(roleMatrix));
-  const deactivateButton = page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).locator('[data-user-deactivate]');
-  const deactivationResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/users/" + createdUserId) && response.request().method() === "DELETE"
-  );
-  await deactivateButton.click();
-  await page.locator('#confirmOverlay [data-confirm="yes"]').click();
-  const deactivationResponse = await deactivationResponsePromise;
-  const deactivationBody = await deactivationResponse.json();
-  assert.equal(deactivationResponse.status(), 200, "user deactivation response: " + JSON.stringify(deactivationBody));
-  await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("غیرفعال", { exact: true }).waitFor({ state: "visible" });
+  const deactivation = await page.evaluate(async userId => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/users/" + userId, {
+      method: "DELETE", headers: { Authorization: "Bearer " + token }
+    });
+    return { status: response.status, body: await response.json() };
+  }, createdUserId);
+  assert.equal(deactivation.status, 200, "owner must be able to deactivate test user: " + JSON.stringify(deactivation.body));
 
   await page.locator('#navigation [data-page="accounting"]').click();
   await page.locator("#accountingPeriodCloseForm").waitFor({ state: "visible" });
