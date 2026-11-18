@@ -575,6 +575,55 @@ try {
   await page.locator("#authForm input[name=\"password\"]").fill("browser-owner-password-2026");
   await page.locator("#authForm button[type=\"submit\"]").click();
   await page.locator("#authGate").waitFor({ state: "hidden" });
+  const roleMatrix = await page.evaluate(async ({ productId, invoiceId, viewerId }) => {
+    const ownerToken = sessionStorage.getItem("mg-business.session");
+    const ownerHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + ownerToken };
+    const createUser = async (username, role) => {
+      const response = await fetch("/api/users", { method: "POST", headers: ownerHeaders,
+        body: JSON.stringify({ username, password: "browser-role-password-2026", role }) });
+      return { status: response.status, body: await response.json() };
+    };
+    const managerCreated = await createUser("browser-manager", "manager");
+    const cashierCreated = await createUser("browser-cashier-2", "cashier");
+    if (managerCreated.status !== 201 || cashierCreated.status !== 201)
+      return { setup: [managerCreated, cashierCreated] };
+    const loginAs = async username => {
+      const response = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: "browser-role-password-2026" }) });
+      return { response, body: await response.json() };
+    };
+    const managerLogin = await loginAs("browser-manager");
+    if (!managerLogin.response.ok) return { managerLogin: managerLogin.body };
+    const managerHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + managerLogin.body.token };
+    const managerRequests = await Promise.all([
+      fetch("/api/users", { method: "POST", headers: managerHeaders, body: JSON.stringify({}) }),
+      fetch("/api/users/" + viewerId + "/role", { method: "POST", headers: managerHeaders, body: JSON.stringify({ role: "cashier" }) }),
+      fetch("/api/accounting/accounts", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ code: "8799", name: "E2E manager-created account", accountType: "asset" }) }),
+      fetch("/api/product-addons", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ productId, name: "E2E manager add-on", price: 500 }) })
+    ]);
+    const managerResults = await Promise.all(managerRequests.map(async response => ({ status: response.status, body: await response.json() })));
+    const cashierLogin = await loginAs("browser-cashier-2");
+    if (!cashierLogin.response.ok) return { managerResults, cashierLogin: cashierLogin.body };
+    const cashierHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + cashierLogin.body.token };
+    const cashierRequests = await Promise.all([
+      fetch("/api/users", { method: "POST", headers: cashierHeaders, body: JSON.stringify({}) }),
+      fetch("/api/users/" + viewerId + "/role", { method: "POST", headers: cashierHeaders, body: JSON.stringify({ role: "cashier" }) }),
+      fetch("/api/accounting/accounts", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ code: "8798", name: "Unauthorized cashier account", accountType: "asset" }) }),
+      fetch("/api/product-addons", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ productId, name: "Unauthorized cashier add-on", price: 500 }) }),
+      fetch("/api/purchase-invoices/" + invoiceId + "/payments", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ amount: 1000, paymentMethod: "cash", id: "e2e-cashier-supplier-payment" }) })
+    ]);
+    const cashierResults = await Promise.all(cashierRequests.map(async response => ({ status: response.status, body: await response.json() })));
+    return { managerResults, cashierResults };
+  }, { productId: ids.productId, invoiceId: purchaseBody.id, viewerId: createdUserId });
+  assert.deepEqual(roleMatrix.managerResults?.map(result => result.status), [403, 403, 201, 201],
+    "manager must be blocked from user administration but allowed module management: " + JSON.stringify(roleMatrix));
+  assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 201],
+    "cashier must be blocked from administration while allowed supplier payments: " + JSON.stringify(roleMatrix));
   const deactivateButton = page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).locator('[data-user-deactivate]');
   const deactivationResponsePromise = page.waitForResponse(response =>
     response.url().endsWith("/api/users/" + createdUserId) && response.request().method() === "DELETE"
