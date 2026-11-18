@@ -25,6 +25,15 @@ if not 3600 <= BACKUP_INTERVAL_SECONDS <= 168 * 3600 or not 1 <= BACKUP_RETENTIO
     raise RuntimeError("Backup interval must be 1-168 hours and retention 1-365 snapshots.")
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
+try:
+    MAX_HTTP_WORKERS = int(os.environ.get("MG_MAX_HTTP_WORKERS", "64"))
+    REQUEST_TIMEOUT_SECONDS = int(os.environ.get("MG_REQUEST_TIMEOUT_SECONDS", "15"))
+except ValueError as exc:
+    raise RuntimeError("HTTP worker and request timeout settings must be integers.") from exc
+if not 4 <= MAX_HTTP_WORKERS <= 512:
+    raise RuntimeError("MG_MAX_HTTP_WORKERS must be between 4 and 512.")
+if not 5 <= REQUEST_TIMEOUT_SECONDS <= 120:
+    raise RuntimeError("MG_REQUEST_TIMEOUT_SECONDS must be between 5 and 120.")
 SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 2 * 1024 * 1024
@@ -3526,6 +3535,40 @@ class Handler(SimpleHTTPRequestHandler):
         rendered = message % args if args else message
         print(rendered, flush=True)
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Thread-per-connection server with a hard worker ceiling and socket timeout."""
+    daemon_threads = True
+    request_queue_size = 128
+
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
+        self._worker_slots = threading.BoundedSemaphore(MAX_HTTP_WORKERS)
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+
+    def process_request(self, request, client_address):
+        if not self._worker_slots.acquire(blocking=False):
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Connection: close\r\nContent-Length: 0\r\n\r\n"
+                )
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            request.settimeout(REQUEST_TIMEOUT_SECONDS)
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
+
 def backup_scheduler(stop_event=None):
     retry_delay = 60
     while stop_event is None or not stop_event.is_set():
@@ -3548,7 +3591,7 @@ def main():
     connect().close()
     threading.Thread(target=backup_scheduler, name="mg-backup-scheduler", daemon=True).start()
     print("MG Business listening on http://%s:%s (database: %s)" % (HOST, PORT, DB_PATH), flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    BoundedThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 if __name__ == "__main__":
     main()
