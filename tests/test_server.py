@@ -2864,8 +2864,21 @@ class ApiIntegrationTests(unittest.TestCase):
                 chunk = connection.recv(4096)
                 self.assertTrue(chunk, "server closed before returning authorization error")
                 response.extend(chunk)
-            status_line = response.split(b"\r\n", 1)[0]
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].split(b"\r\n")
+            status_line = headers[0]
             self.assertIn(b" 401 ", status_line)
+            content_length = next(
+                int(line.split(b":", 1)[1].strip())
+                for line in headers
+                if line.lower().startswith(b"content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < content_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing authorization error")
+                body.extend(chunk)
+            self.assertEqual(len(body), content_length)
             self.assertEqual(connection.recv(1), b"", "ambiguous authorization must not keep connection alive")
         finally:
             connection.close()
