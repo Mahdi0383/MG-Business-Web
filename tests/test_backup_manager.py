@@ -119,10 +119,21 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, restored, encryption_key=generate_encryption_key())
+
+            # Authentication failure must happen before the current database is
+            # safety-backed-up or replaced. Preserve the exact live data.
+            damaged = bytearray(snapshot.read_bytes())
+            damaged[-20] ^= 0x01
+            snapshot.write_bytes(damaged)
+            with self.assertRaises(ValueError):
+                restore_snapshot(snapshot, restored, encryption_key=key)
             db = sqlite3.connect(restored)
             self.assertEqual(db.execute("SELECT value FROM existing_data").fetchone()[0],
                              "keep until verified restore")
             db.close()
+            self.assertEqual(len(list(backup_dir.glob("*.sqlite3.enc"))), 1)
+            snapshot.write_bytes(raw)
+
             restore_snapshot(snapshot, restored, encryption_key=key)
             safety_backups = list((root / "backups").glob("*.sqlite3.enc"))
             self.assertEqual(len(safety_backups), 2)
