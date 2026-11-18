@@ -1027,11 +1027,15 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError:
                 continue
         if any(peer_address in network for network in trusted):
-            forwarded = self.headers.get("X-Real-IP", "").strip()
-            try:
-                return str(ipaddress.ip_address(forwarded))
-            except ValueError:
-                pass
+            # A trusted proxy must provide exactly one canonical client address.
+            # Duplicate X-Real-IP fields are ambiguous and may be interpreted
+            # differently by the proxy, HTTP parser, and application.
+            forwarded_headers = self.headers.get_all("X-Real-IP", [])
+            if len(forwarded_headers) == 1:
+                try:
+                    return str(ipaddress.ip_address(forwarded_headers[0].strip()))
+                except ValueError:
+                    pass
         return str(peer_address)
 
     def authenticate(self, db):
