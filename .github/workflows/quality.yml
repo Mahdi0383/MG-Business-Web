@@ -32,7 +32,7 @@ jobs:
       - name: Check repository structure and DOM references
         run: python tests/check_project.py
       - name: Compile deployment checks
-        run: python -m py_compile deployment_preflight.py tests/test_deployment_preflight.py
+        run: python -m py_compile deployment_preflight.py tests/test_deployment_preflight.py tests/test_nginx_config.py
       - name: Validate deployment configuration
         run: python -m unittest tests/test_deployment_preflight.py -v
       - name: Run domain unit tests
