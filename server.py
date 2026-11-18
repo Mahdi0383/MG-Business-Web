@@ -6,7 +6,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from backup_manager import create_snapshot, decode_encryption_key
-from module_catalog import MODULE_KEYS, resolve_module_dependencies
+from module_catalog import MODULE_KEYS, module_dependencies_satisfied, resolve_module_dependencies
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
@@ -797,9 +797,14 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
                    (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
 
 def module_enabled(db, tenant_id, module_key):
-    row = db.execute("SELECT enabled,expires_at FROM tenant_modules WHERE tenant_id=? AND module_key=?",
-                     (tenant_id,module_key)).fetchone()
-    return bool(row and row["enabled"] and (row["expires_at"] is None or row["expires_at"] > int(time.time())))
+    now = int(time.time())
+    rows = db.execute(
+        "SELECT module_key FROM tenant_modules WHERE tenant_id=? AND enabled=1 "
+        "AND (expires_at IS NULL OR expires_at>?)",
+        (tenant_id, now),
+    ).fetchall()
+    enabled_modules = {row["module_key"] for row in rows}
+    return module_dependencies_satisfied(module_key, enabled_modules)
 
 def require_any_module(db, tenant_id, *module_keys):
     return any(module_enabled(db,tenant_id,key) for key in module_keys)
