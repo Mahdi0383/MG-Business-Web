@@ -378,11 +378,11 @@ class HttpProtocolHardeningTests(unittest.TestCase):
         client = socket.create_connection(httpd.server_address, timeout=2)
         try:
             client.sendall(
-                b"POST /api/backup/restore HTTP/1.1\\r\\n"
-                b"Host: localhost\\r\\n"
-                b"Content-Length: 100\\r\\n"
-                b"Expect: 100-continue\\r\\n"
-                b"Connection: close\\r\\n\\r\\n"
+                b"POST /api/backup/restore HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Length: 100\r\n"
+                b"Expect: 100-continue\r\n"
+                b"Connection: close\r\n\r\n"
             )
             response = bytearray()
             while True:
