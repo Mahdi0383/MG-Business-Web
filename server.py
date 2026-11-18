@@ -1859,8 +1859,11 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/backup/restore":
             auth_db = connect()
             try:
-                if not self.authenticate(auth_db):
+                restore_user = self.authenticate(auth_db)
+                if not restore_user:
                     return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+                if restore_user["role"] != "owner":
+                    return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
             finally:
                 auth_db.close()
         try: data = self.read_json()
