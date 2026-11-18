@@ -622,7 +622,7 @@ try {
     ]);
     const cashierResults = await Promise.all(cashierRequests.map(async response => ({ status: response.status, body: await response.json() })));
     return { managerResults, cashierResults };
-  }, { productId: ids.productId, invoiceId: purchaseBody.id, viewerId: createdUserId });
+  }, { productId: productBody.id, invoiceId: purchaseBody.id, viewerId: createdUserId });
   assert.deepEqual(roleMatrix.managerResults?.map(result => result.status), [403, 403, 201, 201],
     "manager must be blocked from user administration but allowed module management: " + JSON.stringify(roleMatrix));
   assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 201],
