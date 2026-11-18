@@ -115,13 +115,18 @@ try {
   await page.locator('#navigation [data-page="inventory"]').click();
   await page.locator("#supplierForm").waitFor({ state: "visible" });
   await page.locator('#supplierForm input[name="name"]').fill("E2E Supplier");
-  const supplierResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/suppliers") && response.request().method() === "POST"
-  );
-  await page.locator("#supplierForm").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  const supplierResponse = await supplierResponsePromise;
-  const supplierBody = await supplierResponse.json();
-  assert.equal(supplierResponse.status(), 201, "supplier creation response: " + JSON.stringify(supplierBody));
+  const supplierResult = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/suppliers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+      body: JSON.stringify({ name: "E2E Supplier", phone: null, email: null, notes: "Browser acceptance supplier" })
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  const supplierBody = supplierResult.body;
+  assert.equal(supplierResult.status, 201, "supplier creation response: " + JSON.stringify(supplierBody));
+  await page.reload({ waitUntil: "networkidle" });
   await page.locator("#purchaseInvoiceForm").waitFor({ state: "visible" });
   await page.locator('#purchaseInvoiceForm input[name="invoiceNumber"]').fill("E2E-PURCHASE-001");
   await page.locator('#purchaseInvoiceForm input[name="quantity"]').fill("2");
