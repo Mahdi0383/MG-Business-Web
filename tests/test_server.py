@@ -1868,6 +1868,23 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(card_retry["duplicate"])
         self.assertEqual(card_retry["paymentMethod"],"card")
+        # GameNet settlement transactions are domain-owned too: generic
+        # accounting void must not detach a paid session from its journal.
+        status, generic_game_void=self.request(
+            "DELETE","/api/transactions/game-session-card",token=token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            self.assertEqual(db.execute(
+                "SELECT status FROM game_sessions WHERE id='session-card'").fetchone()["status"],"ended")
+            self.assertEqual(db.execute(
+                "SELECT status FROM transactions WHERE id='game-session-card'").fetchone()["status"],"posted")
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='game-session-card'"
+            ).fetchone()[0],0)
+        finally:
+            db.close()
+
         # A voided settlement transaction must not be accepted as a successful retry.
         db=server.connect()
         try:
