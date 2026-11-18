@@ -1467,6 +1467,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/reports/sales-by-product":
                 if not module_enabled(db,user["tenant_id"],"reports"):
                     return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"فقط مالک یا مدیر می‌تواند گزارش فروش تفصیلی را مشاهده کند."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
