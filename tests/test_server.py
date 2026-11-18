@@ -2548,6 +2548,24 @@ class ApiIntegrationTests(unittest.TestCase):
             status, order = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,201)
             self.assertEqual(order["total"],250)
+            # Public QR orders use the same order-owned transaction namespace;
+            # generic accounting void must preserve their inventory and order workflow.
+            status, generic_public_void = self.request(
+                "DELETE","/api/transactions/order-public-public-addon-order-01",token=token)
+            self.assertEqual(status,409)
+            db=server.connect()
+            try:
+                self.assertEqual(db.execute(
+                    "SELECT status FROM orders WHERE id='public-public-addon-order-01'"
+                ).fetchone()["status"],"paid")
+                self.assertEqual(db.execute(
+                    "SELECT status FROM transactions WHERE id='order-public-public-addon-order-01'"
+                ).fetchone()["status"],"posted")
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='order-public-public-addon-order-01'"
+                ).fetchone()[0],0)
+            finally:
+                db.close()
             db=server.connect()
             try:
                 public_fulfillment=db.execute("SELECT fulfillment_status FROM orders WHERE id=?",
