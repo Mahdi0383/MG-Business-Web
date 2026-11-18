@@ -24,6 +24,10 @@ class ProductionDeploymentAssetTests(unittest.TestCase):
         self.assertIn("location = /api/backup/restore {\n        client_max_body_size 50m;", config)
         self.assertEqual(config.count("client_max_body_size 50m;"), 1)
 
+    def test_nginx_buffers_client_bodies_before_forwarding_to_app_workers(self):
+        config = (ROOT / "deploy/nginx/mg-business.conf.example").read_text(encoding="utf-8")
+        self.assertEqual(config.count("proxy_request_buffering on;"), 3)
+
     def test_systemd_service_has_restrictive_runtime_sandbox(self):
         unit = (ROOT / "deploy/systemd/mg-business.service").read_text(encoding="utf-8")
         for directive in (
