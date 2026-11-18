@@ -156,17 +156,28 @@ class BackupSchedulerTests(unittest.TestCase):
 
 
 class BoundedHttpServerTests(unittest.TestCase):
-    def test_over_capacity_connection_receives_503_and_is_closed(self):
+    def test_over_capacity_response_is_bounded_well_formed_and_closed(self):
         httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         client, peer = socket.socketpair()
         try:
             # A zero-capacity semaphore deterministically models a saturated worker pool.
             httpd._worker_slots = threading.BoundedSemaphore(0)
-            httpd.process_request(client, ("127.0.0.1", 12345))
+            with mock.patch.object(client, "settimeout", wraps=client.settimeout) as settimeout, \
+                 mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
+                httpd.process_request(client, ("127.0.0.1", 12345))
+
+            settimeout.assert_called_once_with(server.REQUEST_TIMEOUT_SECONDS)
+            shutdown.assert_called_once_with(client)
             response = peer.recv(1024)
-            self.assertIn(b"503 Service Unavailable", response)
-            self.assertIn(b"Connection: close", response)
+            self.assertEqual(
+                response,
+                b"HTTP/1.1 503 Service Unavailable\\r\\n"
+                b"Connection: close\\r\\n"
+                b"Content-Length: 0\\r\\n\\r\\n",
+            )
             self.assertEqual(peer.recv(1), b"")
+            # A rejected request never acquired a worker slot.
+            self.assertEqual(httpd._worker_slots._value, 0)
         finally:
             peer.close()
             httpd.server_close()
