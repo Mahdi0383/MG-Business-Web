@@ -30,6 +30,40 @@ def make_license(modules, license_id):
 
 
 
+class DatabaseSchemaCompatibilityTests(unittest.TestCase):
+    def test_newer_database_schema_is_rejected_before_schema_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "future.sqlite3"
+            connection = __import__("sqlite3").connect(db_path)
+            connection.execute(
+                "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)",
+                (server.SCHEMA_VERSION + 1, int(time.time())),
+            )
+            connection.commit()
+            connection.close()
+
+            with mock.patch.object(server, "DATA_DIR", Path(directory)), \
+                 mock.patch.object(server, "DB_PATH", db_path):
+                with self.assertRaisesRegex(RuntimeError, "newer than this application supports"):
+                    server.connect()
+
+            check = __import__("sqlite3").connect(db_path)
+            try:
+                tables = {row[0] for row in check.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )}
+                self.assertEqual(tables, {"schema_migrations"})
+                self.assertEqual(
+                    check.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0],
+                    server.SCHEMA_VERSION + 1,
+                )
+            finally:
+                check.close()
+
+
 class BackupSchedulerTests(unittest.TestCase):
     def test_failed_scheduled_backups_retry_with_bounded_backoff(self):
         class StopAfterWaits:
