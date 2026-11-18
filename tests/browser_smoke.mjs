@@ -333,17 +333,23 @@ try {
   assert.equal(endSessionResponse.status(), 200, "GameNet session settlement response: " + JSON.stringify(endSessionBody));
   assert.equal(endSessionBody.paymentMethod, "credit");
   assert.ok(endSessionBody.amountDue > 0, "credit GameNet session should create a positive customer receivable");
-  const customerPaymentResult = await page.evaluate(async ({ customerId, amount }) => {
-    const token = sessionStorage.getItem("mg-business.session");
-    const payload = { id: "browser-customer-payment-001", amount, paymentMethod: "cash" };
-    const response = await fetch("/api/customers/" + customerId + "/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-      body: JSON.stringify(payload)
-    });
-    return { status: response.status, body: await response.json(), payload };
-  }, { customerId: customerBody.id, amount: endSessionBody.amountDue });
-  assert.equal(customerPaymentResult.status, 201, "customer payment response: " + JSON.stringify(customerPaymentResult.body));
+  await page.locator('#navigation [data-page="customers"]').click();
+  const customerPaymentForm = page.locator("#customerPaymentForm");
+  await customerPaymentForm.waitFor({ state: "visible" });
+  await customerPaymentForm.locator('select[name="customerId"]').selectOption(customerBody.id);
+  await customerPaymentForm.locator('input[name="amount"]').fill(String(endSessionBody.amountDue));
+  const customerPaymentResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/customers/" + customerBody.id + "/payments") &&
+    response.request().method() === "POST"
+  );
+  await customerPaymentForm.locator('button[type="submit"]').click();
+  const customerPaymentResponse = await customerPaymentResponsePromise;
+  const customerPaymentResult = {
+    status: customerPaymentResponse.status(),
+    body: await customerPaymentResponse.json(),
+    payload: customerPaymentResponse.request().postDataJSON()
+  };
+  assert.equal(customerPaymentResult.status, 201, "customer payment UI response: " + JSON.stringify(customerPaymentResult.body));
   assert.equal(customerPaymentResult.body.remainingBalance, 0, "customer payment should fully settle GameNet receivable");
   const customerPaymentReplay = await page.evaluate(async ({ customerId, payload }) => {
     const token = sessionStorage.getItem("mg-business.session");
