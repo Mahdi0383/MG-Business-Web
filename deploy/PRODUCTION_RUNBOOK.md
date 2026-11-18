@@ -10,7 +10,7 @@ This runbook deploys MG Business Web on a Debian/Ubuntu Linux host behind Nginx.
 - A dedicated, backed-up location for encrypted backups.
 - A separately stored copy of the backup encryption key.
 
-Install the operating-system packages:
+Install the operating-system packages. The `python3-cryptography` package is required by the system Python used by the service for AES-256-GCM backup encryption; do not omit it when provisioning the host:
 
 ```sh
 sudo apt update
