@@ -3368,6 +3368,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/suppliers", {"name": "Cashier supplier"}),
                 ("POST", "/api/purchase-invoices", {"supplierId": "missing", "invoiceNumber": "C-1",
                     "invoiceDate": "2026-11-17", "items": [{"productId": "missing", "quantity": 1, "unitCost": 100}]}),
+                ("POST", "/api/purchase-invoices/missing-invoice/payments", {"amount": 1, "paymentMethod": "cash"}),
                 ("POST", "/api/inventory/movements", {"productId": "missing", "quantityDelta": 1,
                     "movementType": "purchase", "unitCost": 100}),
                 ("POST", "/api/users", {"username": "cashier-created-user",
@@ -3420,7 +3421,20 @@ class ApiIntegrationTests(unittest.TestCase):
 
             status, stock = self.request("GET", "/api/inventory", token=created_tokens["cashier"])
             self.assertEqual(status, 200)
-            self.assertEqual(next(item for item in stock["items"] if item["productId"] == product["id"])["quantity"], 5)
+            cashier_stock_item=next(item for item in stock["items"] if item["productId"] == product["id"])
+            self.assertEqual(cashier_stock_item["quantity"], 5)
+            self.assertNotIn("costPrice",cashier_stock_item)
+
+            for path in (
+                "/api/inventory/movements",
+                "/api/suppliers",
+                "/api/suppliers/" + supplier["id"] + "/ledger",
+                "/api/purchase-invoices"
+            ):
+                with self.subTest(role="cashier-read", path=path):
+                    status, result = self.request("GET",path,token=created_tokens["cashier"])
+                    self.assertEqual(status,403)
+                    self.assertIn("error",result)
 
             db = server.connect()
             try:
