@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 import time
 from datetime import date, timedelta
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import server
@@ -44,6 +44,35 @@ class BoundedHttpServerTests(unittest.TestCase):
         finally:
             peer.close()
             httpd.server_close()
+
+    def test_accepted_connection_gets_timeout_and_releases_worker_slot(self):
+        class TimeoutProbeHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = str(self.connection.gettimeout()).encode("ascii")
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), TimeoutProbeHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%d/" % httpd.server_address[1]
+            with urllib.request.urlopen(url, timeout=5) as response:
+                observed_timeout = float(response.read().decode("ascii"))
+            self.assertEqual(observed_timeout, server.REQUEST_TIMEOUT_SECONDS)
+            deadline = time.time() + 2
+            while httpd._worker_slots._value != server.MAX_HTTP_WORKERS and time.time() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
 
 
 class ApiIntegrationTests(unittest.TestCase):
