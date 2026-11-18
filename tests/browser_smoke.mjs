@@ -135,6 +135,23 @@ try {
   const purchaseBody = await purchaseResponse.json();
   assert.equal(purchaseResponse.status(), 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
   assert.equal(purchaseBody.total, 29000, "purchase invoice discount must be allocated exactly");
+  const purchaseReplay = await page.evaluate(async payload => {
+    const response = await fetch("/api/purchase-invoices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    return { status: response.status, body: await response.json() };
+  }, {
+    id: purchaseBody.id,
+    supplierId: supplierBody.id,
+    invoiceNumber: "E2E-PURCHASE-001",
+    invoiceDate: await page.locator('#purchaseInvoiceForm input[name="invoiceDate"]').inputValue(),
+    discount: 1000,
+    items: [{ productId: productBody.id, quantity: 2, unitCost: 15000 }]
+  });
+  assert.equal(purchaseReplay.status, 200, "replaying the same purchase invoice must be idempotent: " + JSON.stringify(purchaseReplay.body));
+  assert.equal(purchaseReplay.body.duplicate, true, "replayed purchase invoice must be identified as duplicate");
   const purchaseRow = page.locator(".module-table-row.movements").filter({ hasText: "E2E-PURCHASE-001" });
   await purchaseRow.waitFor({ state: "visible" });
   await purchaseRow.locator('.supplierPaymentForm input[name="amount"]').fill("9000");
