@@ -65,6 +65,48 @@ class DatabaseSchemaCompatibilityTests(unittest.TestCase):
                 check.close()
 
 
+    def test_failed_migration_rolls_back_schema_and_version_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "migration.sqlite3"
+            with mock.patch.object(server, "DATA_DIR", Path(directory)), \\
+                 mock.patch.object(server, "DB_PATH", db_path):
+                initialized = server.connect()
+                initialized.close()
+
+                raw = sqlite3.connect(db_path)
+                try:
+                    raw.execute("DELETE FROM schema_migrations WHERE version=17")
+                    raw.execute("DROP INDEX IF EXISTS idx_orders_fulfillment_queue")
+                    columns = {row[1] for row in raw.execute("PRAGMA table_info(orders)")}
+                    if "fulfillment_status" in columns:
+                        raw.execute("ALTER TABLE orders DROP COLUMN fulfillment_status")
+                    raw.execute("""
+                        CREATE TRIGGER reject_migration_17
+                        BEFORE INSERT ON schema_migrations
+                        WHEN NEW.version = 17
+                        BEGIN SELECT RAISE(ABORT, 'simulated migration failure'); END
+                    """)
+                    raw.commit()
+                finally:
+                    raw.close()
+
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "simulated migration failure"):
+                    server.connect()
+
+                check = sqlite3.connect(db_path)
+                try:
+                    versions = {row[0] for row in check.execute("SELECT version FROM schema_migrations")}
+                    columns = {row[1] for row in check.execute("PRAGMA table_info(orders)")}
+                    index = check.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_orders_fulfillment_queue'"
+                    ).fetchone()
+                    self.assertNotIn(17, versions)
+                    self.assertNotIn("fulfillment_status", columns)
+                    self.assertIsNone(index)
+                finally:
+                    check.close()
+
+
 class BackupSchedulerTests(unittest.TestCase):
     def test_failed_scheduled_backups_retry_with_bounded_backoff(self):
         class StopAfterWaits:
