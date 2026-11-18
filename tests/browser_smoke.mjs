@@ -556,16 +556,18 @@ try {
     });
     const login = await loginResponse.json();
     if (!loginResponse.ok) return { loginStatus: loginResponse.status, login };
-    const response = await fetch("/api/cash-register/shifts/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + login.token },
-      body: JSON.stringify({ openingCash: 0 })
-    });
-    return { loginStatus: loginResponse.status, status: response.status, body: await response.json() };
+    const headers = { "Content-Type": "application/json", Authorization: "Bearer " + login.token };
+    const requests = await Promise.all([
+      fetch("/api/cash-register/shifts/open", { method: "POST", headers, body: JSON.stringify({ openingCash: 0 }) }),
+      fetch("/api/accounting/accounts", { method: "POST", headers, body: JSON.stringify({ code: "1799", name: "Unauthorized viewer account", accountType: "asset" }) }),
+      fetch("/api/accounting/periods/close", { method: "POST", headers, body: JSON.stringify({ startDate: "2020-01-01", endDate: "2020-01-31" }) }),
+      fetch("/api/transactions", { method: "POST", headers, body: JSON.stringify({ id: "viewer-unauthorized-transaction", title: "Unauthorized viewer transaction", amount: 1000, kind: "income", category: "QA", createdAt: "2020-01-15T12:00:00Z" }) })
+    ]);
+    return { loginStatus: loginResponse.status, results: await Promise.all(requests.map(async response => ({ status: response.status, body: await response.json() }))) };
   });
   assert.equal(viewerAuthorization.loginStatus, 200, "viewer account must be able to authenticate");
-  assert.equal(viewerAuthorization.status, 403,
-    "viewer must be denied cash-register write operations: " + JSON.stringify(viewerAuthorization.body));
+  assert.deepEqual(viewerAuthorization.results.map(result => result.status), [403, 403, 403, 403],
+    "viewer must be denied cash-register, account setup, period-close and transaction writes: " + JSON.stringify(viewerAuthorization.results));
   await page.evaluate(() => sessionStorage.removeItem("mg-business.session"));
   await page.reload({ waitUntil: "networkidle" });
   await page.locator("#authForm").waitFor({ state: "visible" });
