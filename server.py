@@ -3362,7 +3362,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
             if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
                 if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند بدهی تأمین‌کننده را پرداخت کند."})
                 iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
                 payid=str(data.get("id") or secrets.token_urlsafe(18))
                 if type(amount) is not int or amount<=0 or amount>9007199254740991 or method not in ("cash","card","online"):
