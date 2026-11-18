@@ -3555,5 +3555,110 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+
+    def test_role_and_password_changes_revoke_existing_sessions(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "role-password-session-revocation.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Session Revocation",
+                "username": "session-owner",
+                "password": "session-owner-password-2026"
+            })
+            self.assertEqual(status, 200)
+            owner_token = setup["token"]
+
+            status, created = self.request("POST", "/api/users", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026",
+                "role": "viewer"
+            }, owner_token)
+            self.assertEqual(status, 201)
+            staff_id = created["id"]
+
+            status, first_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, second_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+
+            # Changing a role must invalidate every token issued under the old role.
+            status, changed_role = self.request("POST", "/api/users/" + staff_id + "/role",
+                {"role": "cashier"}, owner_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(changed_role["sessionsRevoked"])
+            for token in (first_login["token"], second_login["token"]):
+                with self.subTest(stage="role-change", token=token[:8]):
+                    status, _ = self.request("GET", "/api/me", token=token)
+                    self.assertEqual(status, 401)
+
+            status, fresh_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, second_fresh_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+
+            # An owner password reset invalidates all active sessions and the old password.
+            status, reset = self.request("POST", "/api/users/" + staff_id + "/password",
+                {"password": "session-staff-reset-password-2026"}, owner_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(reset["sessionsRevoked"])
+            for token in (fresh_login["token"], second_fresh_login["token"]):
+                with self.subTest(stage="owner-password-reset", token=token[:8]):
+                    status, _ = self.request("GET", "/api/me", token=token)
+                    self.assertEqual(status, 401)
+            status, old_password = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 401)
+            status, after_reset = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-reset-password-2026"
+            })
+            self.assertEqual(status, 200)
+
+            # Self-service password change must also revoke parallel sessions,
+            # while returning a valid replacement token to the changing client.
+            status, parallel_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-reset-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, changed_password = self.request("POST", "/api/account/password", {
+                "currentPassword": "session-staff-reset-password-2026",
+                "newPassword": "session-staff-self-change-password-2026"
+            }, after_reset["token"])
+            self.assertEqual(status, 200)
+            self.assertTrue(changed_password.get("token"))
+            status, me = self.request("GET", "/api/me", token=changed_password["token"])
+            self.assertEqual(status, 200)
+            self.assertEqual(me["user"]["username"], "session-staff")
+            status, revoked_parallel = self.request("GET", "/api/me", token=parallel_login["token"])
+            self.assertEqual(status, 401)
+            status, wrong_old_password = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-reset-password-2026"
+            })
+            self.assertEqual(status, 401)
+            status, new_password_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-self-change-password-2026"
+            })
+            self.assertEqual(status, 200)
+        finally:
+            server.DB_PATH = original_db_path
+
+
 if __name__ == "__main__":
     unittest.main()
