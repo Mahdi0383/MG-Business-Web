@@ -3,6 +3,7 @@ import sqlite3
 import stat
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from backup_manager import create_snapshot, generate_encryption_key, restore_snapshot, verify_snapshot
@@ -144,6 +145,12 @@ class BackupManagerTests(unittest.TestCase):
             damaged = bytearray(snapshot.read_bytes())
             damaged[-20] ^= 0x01
             snapshot.write_bytes(damaged)
+            # GCM may emit plaintext before its final authentication check. The
+            # verification path must always remove that temporary plaintext.
+            with mock.patch("backup_manager.tempfile.gettempdir", return_value=str(root)):
+                with self.assertRaises(ValueError):
+                    verify_snapshot(snapshot, encryption_key=key)
+            self.assertFalse(list(root.glob("mg-backup-verify-*.sqlite3")))
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, root / "target.sqlite3", encryption_key=key)
             self.assertFalse((root / "target.sqlite3").exists())
