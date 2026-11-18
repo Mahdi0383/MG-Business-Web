@@ -6,6 +6,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from backup_manager import create_snapshot, decode_encryption_key
+from schema_version import SCHEMA_VERSION
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
@@ -46,7 +47,6 @@ LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 17
 
 class DuplicateJSONKeyError(ValueError):
     """Raised when a JSON object repeats a member name."""
