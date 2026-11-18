@@ -299,11 +299,27 @@ def restore_snapshot(
             os.chmod(temp_path, 0o600)
         except OSError:
             pass
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(str(target) + suffix)
-            if sidecar.exists():
-                sidecar.unlink()
-        os.replace(temp_path, target)
+        # Preserve SQLite sidecars until the database replacement commits. If
+        # os.replace fails, restoring the sidecars keeps the original live DB
+        # recoverable instead of silently discarding pending WAL state.
+        preserved_sidecars: list[tuple[Path, Path]] = []
+        try:
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(target) + suffix)
+                if sidecar.exists():
+                    preserved = target.parent / (sidecar.name + ".restore-" + secrets.token_hex(6) + ".tmp")
+                    os.replace(sidecar, preserved)
+                    preserved_sidecars.append((sidecar, preserved))
+            os.replace(temp_path, target)
+        except Exception:
+            for sidecar, preserved in reversed(preserved_sidecars):
+                if preserved.exists():
+                    os.replace(preserved, sidecar)
+            raise
+        else:
+            for _, preserved in preserved_sidecars:
+                if preserved.exists():
+                    preserved.unlink()
         try:
             os.chmod(target, 0o600)
         except OSError:
