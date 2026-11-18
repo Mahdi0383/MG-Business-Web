@@ -311,15 +311,32 @@ def restore_snapshot(
                     os.replace(sidecar, preserved)
                     preserved_sidecars.append((sidecar, preserved))
             os.replace(temp_path, target)
-        except Exception:
+        except Exception as replacement_error:
+            rollback_errors = []
             for sidecar, preserved in reversed(preserved_sidecars):
                 if preserved.exists():
-                    os.replace(preserved, sidecar)
+                    try:
+                        os.replace(preserved, sidecar)
+                    except OSError as rollback_error:
+                        rollback_errors.append(
+                            f"{preserved} -> {sidecar}: {rollback_error}"
+                        )
+            if rollback_errors:
+                details = "; ".join(rollback_errors)
+                raise RuntimeError(
+                    "Restore failed and one or more SQLite sidecars could not be "
+                    f"returned to their original paths; recover them manually: {details}"
+                ) from replacement_error
             raise
         else:
+            # The database replacement is already committed. A stale sidecar
+            # backup is safer than reporting a failed restore after success;
+            # leave it for operator cleanup if the filesystem refuses unlink.
             for _, preserved in preserved_sidecars:
-                if preserved.exists():
-                    preserved.unlink()
+                try:
+                    preserved.unlink(missing_ok=True)
+                except OSError:
+                    pass
         try:
             os.chmod(target, 0o600)
         except OSError:
