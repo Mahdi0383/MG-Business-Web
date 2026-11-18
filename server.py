@@ -38,6 +38,8 @@ SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 2 * 1024 * 1024
 MAX_BACKUP_BODY = 50 * 1024 * 1024
+# Keep large authenticated restore payloads from multiplying memory use.
+BACKUP_RESTORE_SEMAPHORE = threading.BoundedSemaphore(1)
 MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
@@ -1871,22 +1873,32 @@ class Handler(SimpleHTTPRequestHandler):
         finally: db.close()
 
     def do_POST(self):
+        if self.route() != "/api/backup/restore":
+            return self._do_POST()
+        # Authenticate before reserving the single large-restore slot or reading
+        # its body. This caps concurrent 50 MiB JSON payloads independently of
+        # the general HTTP worker pool.
+        auth_db = connect()
+        try:
+            restore_user = self.authenticate(auth_db)
+            if not restore_user:
+                self.close_connection = True
+                return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if restore_user["role"] != "owner":
+                self.close_connection = True
+                return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
+        finally:
+            auth_db.close()
+        if not BACKUP_RESTORE_SEMAPHORE.acquire(blocking=False):
+            self.close_connection = True
+            return self.send_json(503, {"error": "بازیابی نسخه پشتیبان دیگری در حال اجراست؛ بعداً دوباره تلاش کنید."})
+        try:
+            return self._do_POST()
+        finally:
+            BACKUP_RESTORE_SEMAPHORE.release()
+
+    def _do_POST(self):
         path = self.route()
-        # Backup restore accepts a much larger body than ordinary API routes.
-        # Authenticate before reading it so anonymous clients cannot reserve
-        # workers and memory with an unauthenticated 50 MiB upload.
-        if path == "/api/backup/restore":
-            auth_db = connect()
-            try:
-                restore_user = self.authenticate(auth_db)
-                if not restore_user:
-                    self.close_connection = True
-                    return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
-                if restore_user["role"] != "owner":
-                    self.close_connection = True
-                    return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
-            finally:
-                auth_db.close()
         try: data = self.read_json()
         except ValueError as exc: return self.send_json(400, {"error": str(exc)})
         db = connect()
