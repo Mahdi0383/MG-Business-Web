@@ -1035,7 +1035,12 @@ class Handler(SimpleHTTPRequestHandler):
         return str(peer_address)
 
     def authenticate(self, db):
-        header = self.headers.get("Authorization", "")
+        authorization_headers = self.headers.get_all("Authorization", [])
+        # Multiple credentials are ambiguous across intermediaries; never
+        # authenticate using whichever duplicate a parser happens to prefer.
+        if len(authorization_headers) != 1:
+            return None
+        header = authorization_headers[0]
         if not header.startswith("Bearer "): return None
         token = header[7:].strip()
         if len(token) < 32: return None
