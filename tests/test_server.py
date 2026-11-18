@@ -240,19 +240,19 @@ class ApiIntegrationTests(unittest.TestCase):
                 connection = socket.create_connection(self.httpd.server_address, timeout=3)
                 try:
                     connection.sendall(
-                        b"POST /api/backup/restore HTTP/1.1\\r\\n"
-                        b"Host: localhost\\r\\n"
-                        b"Content-Type: application/json\\r\\n"
-                        + ("Content-Length: %d\\r\\n" % server.MAX_BACKUP_BODY).encode("ascii")
-                        + ("Authorization: Bearer %s\\r\\n" % login["token"]).encode("ascii")
-                        + b"\\r\\n"
+                        b"POST /api/backup/restore HTTP/1.1\r\n"
+                        b"Host: localhost\r\n"
+                        b"Content-Type: application/json\r\n"
+                        + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                        + ("Authorization: Bearer %s\r\n" % login["token"]).encode("ascii")
+                        + b"\r\n"
                     )
                     response = bytearray()
-                    while b"\\r\\n\\r\\n" not in response:
+                    while b"\r\n\r\n" not in response:
                         chunk = connection.recv(4096)
                         self.assertTrue(chunk, "server closed before sending the authorization response")
                         response.extend(chunk)
-                    header_end = response.index(b"\\r\\n\\r\\n") + 4
+                    header_end = response.index(b"\r\n\r\n") + 4
                     headers = response[:header_end].decode("iso-8859-1")
                     self.assertIn(" 403 ", headers.splitlines()[0])
                     body_length = next(
