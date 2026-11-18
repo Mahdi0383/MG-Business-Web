@@ -2234,6 +2234,20 @@ class ApiIntegrationTests(unittest.TestCase):
         altered["tenant"]["id"] = "different-workspace"
         status, result = self.request("POST", "/api/backup/restore", altered, token)
         self.assertEqual(status, 400)
+        # Even when the outer tenant ID matches, reject any embedded row that
+        # attempts to smuggle another tenant's data into this workspace.
+        foreign_row_snapshot = json.loads(json.dumps(snapshot))
+        foreign_row_snapshot["tables"]["products"][0]["tenant_id"] = "foreign-workspace"
+        status, foreign_row_result = self.request(
+            "POST", "/api/backup/restore", foreign_row_snapshot, token
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("فضای کاری دیگر", foreign_row_result["error"])
+        status, after_foreign_row_rejection = self.request(
+            "GET", "/api/gamenet/sessions", token=token
+        )
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(len(after_foreign_row_rejection["items"]), 2)
         missing_chart = json.loads(json.dumps(snapshot))
         missing_chart["tables"]["accounts"] = [
             row for row in missing_chart["tables"]["accounts"] if row["code"] != "5100"
