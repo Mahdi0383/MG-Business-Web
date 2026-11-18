@@ -364,6 +364,23 @@ try {
   assert.equal(customersAfterPayment.status, 200);
   assert.equal(customersAfterPayment.body.items.find(item => item.id === customerBody.id)?.balance, 0,
     "customer subledger must reconcile to zero after payment");
+  const overpaymentAttempt = await page.evaluate(async customerId => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers/" + customerId + "/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ id: "browser-customer-overpayment-001", amount: 1, paymentMethod: "cash" })
+    });
+    return { status: response.status, body: await response.json() };
+  }, customerBody.id);
+  assert.equal(overpaymentAttempt.status, 409, "customer overpayment must be rejected");
+  const customersAfterOverpayment = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers", { headers: { Authorization: "Bearer " + token } });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(customersAfterOverpayment.body.items.find(item => item.id === customerBody.id)?.balance, 0,
+    "rejected customer overpayment must not alter the subledger");
 
   await page.locator('#navigation [data-page="accounting"]').click();
   const accountingToday = await page.evaluate(() => {
