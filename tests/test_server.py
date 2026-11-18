@@ -3395,6 +3395,22 @@ class ApiIntegrationTests(unittest.TestCase):
             }, created_tokens["manager"])
             self.assertEqual(status, 201)
 
+            status, opened_shift = self.request("POST", "/api/cash-register/shifts/open", {
+                "openingCash": 5000, "note": "role privacy test"
+            }, created_tokens["manager"])
+            self.assertEqual(status, 201)
+            status, cashier_shifts = self.request("GET", "/api/cash-register/shifts",
+                token=created_tokens["cashier"])
+            self.assertEqual(status, 200)
+            self.assertEqual(cashier_shifts["items"], [])
+            self.assertNotIn("openingCash", cashier_shifts["active"])
+            self.assertNotIn("expectedCash", cashier_shifts["active"])
+            status, manager_shifts = self.request("GET", "/api/cash-register/shifts",
+                token=created_tokens["manager"])
+            self.assertEqual(status, 200)
+            self.assertEqual(manager_shifts["active"]["openingCash"], 5000)
+            self.assertIn("expectedCash", manager_shifts["active"])
+
             status, denied_user = self.request("POST", "/api/users", {
                 "username": "manager-created-user",
                 "password": "manager-created-password-2026", "role": "viewer"
