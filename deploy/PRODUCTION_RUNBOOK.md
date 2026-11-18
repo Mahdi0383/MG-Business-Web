@@ -123,19 +123,31 @@ Complete first-run setup in the browser. Create the owner account with a unique 
 
 Production backups are encrypted with AES-256-GCM. Schedule and retention are configured by `MG_BACKUP_INTERVAL_HOURS` and `MG_BACKUP_RETENTION`. Monitor free disk space and backup timestamps; a successful HTTP health check does not prove a recent backup exists.
 
-List backup files and verify a selected snapshot without replacing the live database:
+List backup files and verify a selected snapshot without replacing the live database. The service environment file is root-readable only, so run the CLI through this root-shell helper; it loads the same configured paths and encryption key as the service, then drops privileges before executing Python:
 
 ```sh
+mg_backup_cli() {
+  sudo bash -c '
+    set -a
+    . /etc/mg-business/mg-business.env
+    set +a
+    exec runuser -u mg-business -- env \
+      MG_DB_PATH="$MG_DB_PATH" \
+      MG_BACKUP_DIR="$MG_BACKUP_DIR" \
+      MG_BACKUP_ENCRYPTION_KEY="$MG_BACKUP_ENCRYPTION_KEY" \
+      /usr/bin/python3 /opt/mg-business/backup_manager.py "$@"
+  ' mg-backup-cli "$@"
+}
 sudo -u mg-business ls -lh /var/backups/mg-business
-sudo -u mg-business /usr/bin/python3 /opt/mg-business/backup_manager.py --verify /var/backups/mg-business/FILE.sqlite3.enc
+mg_backup_cli --verify /var/backups/mg-business/FILE.sqlite3.enc
 ```
 
 Perform restore drills on a separate staging host using a copy of the encrypted backup and the separately escrowed key. Never experiment with restore commands against the only production database. For an approved production restore:
 
 1. Announce downtime and stop the service.
 2. Copy the current database and backup directory to a separate protected location.
-3. Set `MG_BACKUP_ENCRYPTION_KEY` in the root shell environment.
-4. Run the restore tool against the chosen verified snapshot.
+3. Confirm the helper above loads the intended production environment file and that the escrowed encryption key is available there.
+4. Run `mg_backup_cli --restore /path/to/verified-snapshot.sqlite3.enc` while the service is stopped. The helper uses the configured `MG_DB_PATH` and `MG_BACKUP_DIR`, and executes the tool as the unprivileged service account.
 5. Start the service and verify `/api/ready`, owner login, orders, balances, and active/closed operational records.
 6. Record the restore duration and observed recovery point.
 
