@@ -1536,6 +1536,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if active:
                     active["expectedCash"]=cash_register_expected_cash(
                         db,user["tenant_id"],active["openedAt"],active["openingCash"],active["journalCursor"])
+                if user["role"] == "cashier":
+                    items=[]
+                    if active and active["openedBy"] != user["username"]:
+                        for field in ("openingCash","expectedCash","journalCursor"):
+                            active.pop(field,None)
                 return self.send_json(200,{"items":items,"active":active})
             if path == "/api/accounting/periods":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
