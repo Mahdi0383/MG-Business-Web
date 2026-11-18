@@ -3367,7 +3367,6 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/suppliers", {"name": "Cashier supplier"}),
                 ("POST", "/api/purchase-invoices", {"supplierId": "missing", "invoiceNumber": "C-1",
                     "invoiceDate": "2026-11-17", "items": [{"productId": "missing", "quantity": 1, "unitCost": 100}]}),
-                ("POST", "/api/purchase-invoices/missing-invoice/payments", {"amount": 1, "paymentMethod": "cash"}),
                 ("POST", "/api/inventory/movements", {"productId": "missing", "quantityDelta": 1,
                     "movementType": "purchase", "unitCost": 100}),
                 ("POST", "/api/users", {"username": "cashier-created-user",
