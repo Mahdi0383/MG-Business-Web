@@ -136,9 +136,13 @@ try {
   assert.equal(purchaseResponse.status(), 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
   assert.equal(purchaseBody.total, 29000, "purchase invoice discount must be allocated exactly");
   const purchaseReplay = await page.evaluate(async payload => {
+    const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/purchase-invoices", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token
+      },
       body: JSON.stringify(payload)
     });
     return { status: response.status, body: await response.json() };
