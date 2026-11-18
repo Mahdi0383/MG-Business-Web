@@ -1,6 +1,11 @@
 import unittest
 
-from module_catalog import MODULE_DEFINITIONS, MODULE_KEYS, resolve_module_dependencies
+from module_catalog import (
+    MODULE_DEFINITIONS,
+    MODULE_KEYS,
+    module_dependencies_satisfied,
+    resolve_module_dependencies,
+)
 
 
 class ModuleCatalogTests(unittest.TestCase):
@@ -14,10 +19,7 @@ class ModuleCatalogTests(unittest.TestCase):
     def test_every_operational_module_requires_accounting(self):
         for key in ("cafe", "customers", "gamenet", "inventory", "reports"):
             with self.subTest(module=key):
-                self.assertEqual(
-                    resolve_module_dependencies([key]),
-                    ["accounting", key],
-                )
+                self.assertEqual(resolve_module_dependencies([key]), ["accounting", key])
 
     def test_accounting_and_settings_remain_standalone_core_modules(self):
         self.assertEqual(resolve_module_dependencies(["accounting"]), ["accounting"])
@@ -36,6 +38,14 @@ class ModuleCatalogTests(unittest.TestCase):
     def test_registry_is_immutable(self):
         with self.assertRaises(TypeError):
             MODULE_DEFINITIONS["hotel"] = {"status": "available"}
+
+    def test_runtime_entitlement_requires_accounting_dependency(self):
+        self.assertFalse(module_dependencies_satisfied("cafe", {"cafe"}))
+        self.assertTrue(module_dependencies_satisfied("cafe", {"cafe", "accounting"}))
+        self.assertFalse(module_dependencies_satisfied("gamenet", {"gamenet", "accounting"} - {"accounting"}))
+
+    def test_runtime_entitlement_rejects_unknown_module(self):
+        self.assertFalse(module_dependencies_satisfied("hotel", {"hotel", "accounting"}))
 
 
 if __name__ == "__main__":
