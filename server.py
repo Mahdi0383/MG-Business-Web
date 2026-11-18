@@ -6,6 +6,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from backup_manager import create_snapshot, decode_encryption_key
+from schema_version import SCHEMA_VERSION
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
@@ -25,17 +26,41 @@ if not 3600 <= BACKUP_INTERVAL_SECONDS <= 168 * 3600 or not 1 <= BACKUP_RETENTIO
     raise RuntimeError("Backup interval must be 1-168 hours and retention 1-365 snapshots.")
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
+try:
+    MAX_HTTP_WORKERS = int(os.environ.get("MG_MAX_HTTP_WORKERS", "64"))
+    REQUEST_TIMEOUT_SECONDS = int(os.environ.get("MG_REQUEST_TIMEOUT_SECONDS", "15"))
+except ValueError as exc:
+    raise RuntimeError("HTTP worker and request timeout settings must be integers.") from exc
+if not 4 <= MAX_HTTP_WORKERS <= 512:
+    raise RuntimeError("MG_MAX_HTTP_WORKERS must be between 4 and 512.")
+if not 5 <= REQUEST_TIMEOUT_SECONDS <= 120:
+    raise RuntimeError("MG_REQUEST_TIMEOUT_SECONDS must be between 5 and 120.")
 SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 2 * 1024 * 1024
 MAX_BACKUP_BODY = 50 * 1024 * 1024
+# Keep large authenticated restore payloads from multiplying memory use.
+BACKUP_RESTORE_SEMAPHORE = threading.BoundedSemaphore(1)
 MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 17
+
+class DuplicateJSONKeyError(ValueError):
+    """Raised when a JSON object repeats a member name."""
+
+
+def reject_duplicate_json_keys(pairs):
+    """Reject duplicate object keys instead of silently accepting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJSONKeyError("کلید تکراری در JSON درخواست مجاز نیست.")
+        result[key] = value
+    return result
+
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -471,6 +496,21 @@ def connect():
     except OSError:
         pass
     db.row_factory = sqlite3.Row
+    # Never let an older application silently open a database migrated by a
+    # newer release. Check before SCHEMA executes any CREATE/INDEX statements.
+    has_migrations = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+    ).fetchone()
+    if has_migrations:
+        current_schema = db.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+        ).fetchone()[0]
+        if current_schema > SCHEMA_VERSION:
+            db.close()
+            raise RuntimeError(
+                f"Database schema version {current_schema} is newer than this "
+                f"application supports (maximum {SCHEMA_VERSION}); upgrade the application."
+            )
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("PRAGMA journal_mode=WAL")
@@ -551,7 +591,7 @@ def connect():
         if "request_fingerprint" not in order_columns:
             db.execute("ALTER TABLE orders ADD COLUMN request_fingerprint TEXT")
         legacy_public_orders = db.execute("""SELECT o.id,o.tenant_id,c.full_name,c.phone
-            FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
+            FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id AND c.tenant_id=o.tenant_id
             WHERE o.id LIKE 'public-%' AND o.request_fingerprint IS NULL""").fetchall()
         for legacy_order in legacy_public_orders:
             if not legacy_order["full_name"] or not legacy_order["phone"]:
@@ -896,6 +936,28 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_error(403, "Directory listing is disabled")
         return None
 
+    def handle_expect_100(self):
+        # The stdlib handler otherwise sends 100 Continue before do_POST can
+        # authenticate a large restore upload or reserve its bounded slot.
+        if self.route() == "/api/backup/restore":
+            self.close_connection = True
+            self.send_error(417, "100-continue is not supported for backup restore")
+            return False
+        return super().handle_expect_100()
+
+    def parse_request(self):
+        # BaseHTTPRequestHandler only calls handle_expect_100 when both the
+        # request and configured response protocol are HTTP/1.1+. The service
+        # intentionally defaults to HTTP/1.0, so reject restore expectations
+        # here as well to avoid a client/server wait-for-body deadlock.
+        if not super().parse_request():
+            return False
+        if self.route() == "/api/backup/restore" and self.headers.get("Expect") is not None:
+            self.close_connection = True
+            self.send_error(417, "Expect is not supported for backup restore")
+            return False
+        return True
+
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -920,13 +982,42 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def read_json(self):
-        try: length = int(self.headers.get("Content-Length", "0"))
-        except ValueError: raise ValueError("طول درخواست نامعتبر است.")
-        body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
-        if length <= 0 or length > body_limit: raise ValueError("حجم درخواست نامعتبر است.")
+        # Reject ambiguous HTTP message framing. BaseHTTPRequestHandler does not
+        # decode chunked bodies, and accepting both Transfer-Encoding and
+        # Content-Length can desynchronize persistent connections.
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if len(content_lengths) != 1 or self.headers.get("Transfer-Encoding") is not None:
+            self.close_connection = True
+            raise ValueError("قالب طول بدنه درخواست نامعتبر است.")
+        raw_length = content_lengths[0].strip()
+        if not raw_length.isascii() or not raw_length.isdecimal():
+            self.close_connection = True
+            raise ValueError("طول درخواست نامعتبر است.")
         try:
-            value = json.loads(self.rfile.read(length))
-        except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
+            length = int(raw_length)
+        except ValueError:
+            self.close_connection = True
+            raise ValueError("طول درخواست نامعتبر است.")
+        content_encodings = self.headers.get_all("Content-Encoding", [])
+        if (len(content_encodings) > 1
+                or (content_encodings and content_encodings[0].strip().lower() != "identity")):
+            self.close_connection = True
+            raise ValueError("فشرده‌سازی بدنه درخواست پشتیبانی نمی‌شود.")
+        body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
+        if length <= 0 or length > body_limit:
+            self.close_connection = True
+            raise ValueError("حجم درخواست نامعتبر است.")
+        try:
+            raw_body = self.rfile.read(length)
+            if len(raw_body) != length:
+                self.close_connection = True
+                raise ValueError("بدنه درخواست ناقص است.")
+            value = json.loads(raw_body, object_pairs_hook=reject_duplicate_json_keys)
+        except DuplicateJSONKeyError:
+            self.close_connection = True
+            raise
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ValueError("JSON درخواست معتبر نیست.")
         if not isinstance(value, dict): raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
         return value
 
@@ -949,15 +1040,24 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError:
                 continue
         if any(peer_address in network for network in trusted):
-            forwarded = self.headers.get("X-Real-IP", "").strip()
-            try:
-                return str(ipaddress.ip_address(forwarded))
-            except ValueError:
-                pass
+            # A trusted proxy must provide exactly one canonical client address.
+            # Duplicate X-Real-IP fields are ambiguous and may be interpreted
+            # differently by the proxy, HTTP parser, and application.
+            forwarded_headers = self.headers.get_all("X-Real-IP", [])
+            if len(forwarded_headers) == 1:
+                try:
+                    return str(ipaddress.ip_address(forwarded_headers[0].strip()))
+                except ValueError:
+                    pass
         return str(peer_address)
 
     def authenticate(self, db):
-        header = self.headers.get("Authorization", "")
+        authorization_headers = self.headers.get_all("Authorization", [])
+        # Multiple credentials are ambiguous across intermediaries; never
+        # authenticate using whichever duplicate a parser happens to prefer.
+        if len(authorization_headers) != 1:
+            return None
+        header = authorization_headers[0]
         if not header.startswith("Bearer "): return None
         token = header[7:].strip()
         if len(token) < 32: return None
@@ -1108,7 +1208,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"دسترسی مشاهده گزارش ممیزی ندارید."})
                 rows=db.execute("""SELECT a.id,u.username AS actorUsername,a.action,
                     a.entity_type AS entityType,a.entity_id AS entityId,a.details_json AS detailsJson,
-                    a.created_at AS createdAt FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id
+                    a.created_at AS createdAt FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id AND u.tenant_id=a.tenant_id
                     WHERE a.tenant_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 500""",
                     (user["tenant_id"],)).fetchall()
                 items=[]
@@ -1127,6 +1227,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/transactions":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده تراکنش‌های مالی ندارید."})
                 rows = db.execute("""SELECT id,title,amount,kind,category,occurred_at AS createdAt
                     FROM transactions WHERE tenant_id=? AND status='posted' ORDER BY created_at DESC LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
@@ -1136,13 +1238,17 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
                     FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                items = [dict(row) for row in rows]
+                if user["role"] == "cashier":
+                    for item in items:
+                        item.pop("costPrice", None)
+                return self.send_json(200, {"items": items})
             if path == "/api/product-addons":
                 if not require_any_module(db,user["tenant_id"],"cafe","inventory"):
                     return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
                 rows=db.execute("""SELECT a.id,a.product_id AS productId,p.name AS productName,
                     a.name,a.price,a.active,a.created_at AS createdAt
-                    FROM product_addons a JOIN products p ON p.id=a.product_id
+                    FROM product_addons a JOIN products p ON p.id=a.product_id AND p.tenant_id=a.tenant_id
                     WHERE a.tenant_id=? AND a.active=1 AND p.active=1 ORDER BY p.name,a.name LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
@@ -1155,24 +1261,34 @@ class Handler(SimpleHTTPRequestHandler):
                     ON m.product_id=p.id AND m.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? AND p.active=1
                     GROUP BY p.id ORDER BY p.name LIMIT 5000""", (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                items=[dict(row) for row in rows]
+                if user["role"] == "cashier":
+                    for item in items:
+                        item.pop("costPrice",None)
+                return self.send_json(200, {"items": items})
             if path == "/api/inventory/movements":
                 if not require_any_module(db,user["tenant_id"],"inventory","cafe"):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403, {"error":"دسترسی مشاهده بهای گردش انبار ندارید."})
                 rows = db.execute("""SELECT m.id,m.product_id AS productId,p.name AS productName,
                     m.movement_type AS movementType,m.quantity_delta AS quantityDelta,
                     m.unit_cost AS unitCost,m.note,m.created_at AS createdAt
-                    FROM inventory_movements m JOIN products p ON p.id=m.product_id
+                    FROM inventory_movements m JOIN products p ON p.id=m.product_id AND p.tenant_id=m.tenant_id
                     WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/suppliers":
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403,{"error":"دسترسی مشاهده اطلاعات تأمین‌کنندگان ندارید."})
                 rows=db.execute("SELECT id,name,phone,email,notes,active,created_at AS createdAt FROM suppliers WHERE tenant_id=? ORDER BY name LIMIT 5000",(user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(r) for r in rows]})
             if path.startswith("/api/suppliers/") and path.endswith("/ledger"):
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403,{"error":"دسترسی مشاهده مانده تأمین‌کننده ندارید."})
                 supplier_id=path.split("/")[-2]
                 supplier=db.execute("SELECT id,name,phone,email FROM suppliers WHERE id=? AND tenant_id=?",
                                     (supplier_id,user["tenant_id"])).fetchone()
@@ -1198,6 +1314,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/purchase-invoices":
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
+                if user["role"] == "cashier":
+                    return self.send_json(403,{"error":"دسترسی مشاهده بدهی و فاکتورهای خرید ندارید."})
                 rows=db.execute("""SELECT i.id,i.invoice_number AS invoiceNumber,i.invoice_date AS invoiceDate,i.subtotal,i.discount,i.total,
                     i.paid_amount AS paidAmount,i.status,s.id AS supplierId,s.name AS supplierName
                     FROM purchase_invoices i JOIN suppliers s ON s.id=i.supplier_id WHERE i.tenant_id=?
@@ -1249,7 +1367,7 @@ class Handler(SimpleHTTPRequestHandler):
                 order_id=path.rsplit("/",1)[-1]
                 order=db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.fulfillment_status AS fulfillmentStatus,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
-                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
                     WHERE o.id=? AND o.tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
                 if not order:
                     return self.send_json(404,{"error":"سفارش پیدا نشد."})
@@ -1281,7 +1399,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if upper is not None: conditions.append("o.created_at<?"); values.append(upper)
                 rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.fulfillment_status AS fulfillmentStatus,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
-                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
                     WHERE """+" AND ".join(conditions)+""" ORDER BY o.created_at DESC LIMIT 1000""", values).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows],
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
@@ -1309,7 +1427,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows=db.execute("""SELECT g.id,g.device_id AS deviceId,d.name AS deviceName,
                     g.started_at AS startedAt,g.ended_at AS endedAt,g.players_count AS playersCount,
                     g.rate_per_hour AS ratePerHour,g.is_free AS isFree
-                    FROM game_session_segments g JOIN game_devices d ON d.id=g.device_id
+                    FROM game_session_segments g JOIN game_devices d ON d.id=g.device_id AND d.tenant_id=g.tenant_id
                     WHERE g.tenant_id=? AND g.session_id=? ORDER BY g.started_at,g.id""",
                     (user["tenant_id"],session_id)).fetchall()
                 return self.send_json(200, {"items":[dict(row) for row in rows]})
@@ -1321,8 +1439,8 @@ class Handler(SimpleHTTPRequestHandler):
                     s.ended_at AS endedAt,s.status,s.players_count AS playersCount,
                     s.rate_per_hour AS ratePerHour,s.is_free AS isFree,s.amount_due AS amountDue,
                     s.payment_method AS paymentMethod
-                    FROM game_sessions s JOIN game_devices d ON d.id=s.device_id
-                    LEFT JOIN customers c ON c.id=s.customer_id
+                    FROM game_sessions s JOIN game_devices d ON d.id=s.device_id AND d.tenant_id=s.tenant_id
+                    LEFT JOIN customers c ON c.id=s.customer_id AND c.tenant_id=s.tenant_id
                     WHERE s.tenant_id=? ORDER BY s.started_at DESC LIMIT 500""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/gamenet/reservations":
@@ -1332,8 +1450,8 @@ class Handler(SimpleHTTPRequestHandler):
                     r.customer_id AS customerId,c.full_name AS customerName,r.starts_at AS startsAt,
                     r.ends_at AS endsAt,r.status,r.players_count AS playersCount,r.notes,
                     r.created_at AS createdAt FROM gamenet_reservations r
-                    JOIN game_devices d ON d.id=r.device_id
-                    LEFT JOIN customers c ON c.id=r.customer_id
+                    JOIN game_devices d ON d.id=r.device_id AND d.tenant_id=r.tenant_id
+                    LEFT JOIN customers c ON c.id=r.customer_id AND c.tenant_id=r.tenant_id
                     WHERE r.tenant_id=? ORDER BY r.starts_at DESC LIMIT 1000""",(user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
             if path == "/api/accounting/accounts":
@@ -1362,6 +1480,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/reports/sales-by-product":
                 if not module_enabled(db,user["tenant_id"],"reports"):
                     return self.send_json(403, {"error": "ماژول گزارش‌ها در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"فقط مالک یا مدیر می‌تواند گزارش فروش تفصیلی را مشاهده کند."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1382,6 +1502,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/cash-flow":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده گزارش جریان نقدی ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1420,8 +1542,8 @@ class Handler(SimpleHTTPRequestHandler):
                     s.status,s.closed_at AS closedAt,s.expected_cash AS expectedCash,s.journal_cursor AS journalCursor,
                     s.counted_cash AS countedCash,s.difference,s.open_note AS openNote,
                     s.close_note AS closeNote,op.username AS openedBy,cp.username AS closedBy
-                    FROM cash_register_shifts s JOIN users op ON op.id=s.opened_by
-                    LEFT JOIN users cp ON cp.id=s.closed_by
+                    FROM cash_register_shifts s JOIN users op ON op.id=s.opened_by AND op.tenant_id=s.tenant_id
+                    LEFT JOIN users cp ON cp.id=s.closed_by AND cp.tenant_id=s.tenant_id
                     WHERE s.tenant_id=? ORDER BY s.opened_at DESC LIMIT 100""",
                     (user["tenant_id"],)).fetchall()
                 items=[dict(row) for row in rows]
@@ -1429,19 +1551,28 @@ class Handler(SimpleHTTPRequestHandler):
                 if active:
                     active["expectedCash"]=cash_register_expected_cash(
                         db,user["tenant_id"],active["openedAt"],active["openingCash"],active["journalCursor"])
+                if user["role"] == "cashier":
+                    items=[]
+                    if active and active["openedBy"] != user["username"]:
+                        for field in ("openingCash","expectedCash","journalCursor"):
+                            active.pop(field,None)
                 return self.send_json(200,{"items":items,"active":active})
             if path == "/api/accounting/periods":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"دسترسی مشاهده دوره‌های مالی ندارید."})
                 rows=db.execute("""SELECT p.id,p.start_date AS startDate,p.end_date AS endDate,
                     p.closed_at AS closedAt,u.username AS closedBy
-                    FROM accounting_periods p JOIN users u ON u.id=p.closed_by
+                    FROM accounting_periods p JOIN users u ON u.id=p.closed_by AND u.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? ORDER BY p.end_date DESC,p.closed_at DESC""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
             if path == "/api/accounting/account-ledger":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده دفتر معین ندارید."})
                 params=parse_qs(urlparse(self.path).query,keep_blank_values=True)
                 if set(params)-{"accountId","fromDate","toDate","limit","offset"} or any(len(v)!=1 for v in params.values()):
                     return self.send_json(400,{"error":"پارامترهای دفتر معین نامعتبر هستند."})
@@ -1544,6 +1675,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده اسناد حسابداری ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1567,6 +1700,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/profit-loss":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده صورت سود و زیان ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1595,6 +1730,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/trial-balance":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده تراز آزمایشی ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query, allow_from=False)
                 except ValueError as exc:
@@ -1615,6 +1752,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/balance-sheet":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده ترازنامه ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query, allow_from=False)
                 except ValueError as exc:
@@ -1822,6 +1961,18 @@ class Handler(SimpleHTTPRequestHandler):
             if not row or row["status"] != "posted":
                 db.rollback()
                 return self.send_json(404, {"error": "تراکنش ثبت‌شده پیدا نشد."})
+            # Domain-owned transactions must be reversed through their owning
+            # workflow so inventory, customer balances, session state and
+            # accounting journals remain consistent.
+            linked_order = (tx_id.startswith("order-") and db.execute(
+                "SELECT 1 FROM orders WHERE id=? AND tenant_id=?",
+                (tx_id[len("order-"):],user["tenant_id"])).fetchone())
+            linked_session = (tx_id.startswith("game-") and db.execute(
+                "SELECT 1 FROM game_sessions WHERE id=? AND tenant_id=?",
+                (tx_id[len("game-"):],user["tenant_id"])).fetchone())
+            if linked_order or linked_session:
+                db.rollback()
+                return self.send_json(409, {"error": "این تراکنش به سفارش یا نشست بازی متصل است؛ از گردش برگشت همان بخش استفاده کنید."})
             now = int(time.time())
             db.execute("UPDATE transactions SET status='voided',voided_at=?,voided_by=? WHERE id=? AND tenant_id=?",
                        (now,user["id"],tx_id,user["tenant_id"]))
@@ -1843,6 +1994,31 @@ class Handler(SimpleHTTPRequestHandler):
         finally: db.close()
 
     def do_POST(self):
+        if self.route() != "/api/backup/restore":
+            return self._do_POST()
+        # Authenticate before reserving the single large-restore slot or reading
+        # its body. This caps concurrent 50 MiB JSON payloads independently of
+        # the general HTTP worker pool.
+        auth_db = connect()
+        try:
+            restore_user = self.authenticate(auth_db)
+            if not restore_user:
+                self.close_connection = True
+                return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            if restore_user["role"] != "owner":
+                self.close_connection = True
+                return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
+        finally:
+            auth_db.close()
+        if not BACKUP_RESTORE_SEMAPHORE.acquire(blocking=False):
+            self.close_connection = True
+            return self.send_json(503, {"error": "بازیابی نسخه پشتیبان دیگری در حال اجراست؛ بعداً دوباره تلاش کنید."})
+        try:
+            return self._do_POST()
+        finally:
+            BACKUP_RESTORE_SEMAPHORE.release()
+
+    def _do_POST(self):
         path = self.route()
         try: data = self.read_json()
         except ValueError as exc: return self.send_json(400, {"error": str(exc)})
@@ -3213,7 +3389,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
             if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
                 if not module_enabled(db,user["tenant_id"],"inventory"): return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
-                if user["role"] not in ("owner","manager","cashier"): return self.send_json(403,{"error":"دسترسی پرداخت ندارید."})
+                if user["role"] not in ("owner","manager"): return self.send_json(403,{"error":"فقط مالک یا مدیر می‌تواند بدهی تأمین‌کننده را پرداخت کند."})
                 iid=path.split("/")[-2]; amount=data.get("amount"); method=data.get("paymentMethod","cash")
                 payid=str(data.get("id") or secrets.token_urlsafe(18))
                 if type(amount) is not int or amount<=0 or amount>9007199254740991 or method not in ("cash","card","online"):
@@ -3526,6 +3702,46 @@ class Handler(SimpleHTTPRequestHandler):
         rendered = message % args if args else message
         print(rendered, flush=True)
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Thread-per-connection server with a hard worker ceiling and socket timeout."""
+    daemon_threads = True
+    request_queue_size = 128
+
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
+        self._worker_slots = threading.BoundedSemaphore(MAX_HTTP_WORKERS)
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+
+    def process_request(self, request, client_address):
+        if not self._worker_slots.acquire(blocking=False):
+            try:
+                # Even overload responses must not let a non-reading peer pin
+                # the accept loop while the server attempts to send the 503.
+                request.settimeout(REQUEST_TIMEOUT_SECONDS)
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Connection: close\r\nContent-Length: 0\r\n\r\n"
+                )
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            request.settimeout(REQUEST_TIMEOUT_SECONDS)
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            # ThreadingMixIn does not close the socket if thread creation
+            # fails; close it here so failed accepts cannot leak descriptors.
+            self.shutdown_request(request)
+            raise
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
+
 def backup_scheduler(stop_event=None):
     retry_delay = 60
     while stop_event is None or not stop_event.is_set():
@@ -3548,7 +3764,7 @@ def main():
     connect().close()
     threading.Thread(target=backup_scheduler, name="mg-backup-scheduler", daemon=True).start()
     print("MG Business listening on http://%s:%s (database: %s)" % (HOST, PORT, DB_PATH), flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    BoundedThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 if __name__ == "__main__":
     main()

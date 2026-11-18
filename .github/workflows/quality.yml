@@ -28,13 +28,43 @@ jobs:
           node --check service-worker.js
           node --check tests/browser_smoke.mjs
       - name: Compile Python sources
-        run: python -m py_compile server.py license_tool.py backup_manager.py tests/test_server.py tests/test_backup_manager.py tests/check_project.py
+        run: python -m py_compile server.py license_tool.py backup_manager.py schema_version.py tests/test_server.py tests/test_backup_manager.py tests/check_project.py
       - name: Check repository structure and DOM references
         run: python tests/check_project.py
       - name: Compile deployment checks
-        run: python -m py_compile deployment_preflight.py tests/test_deployment_preflight.py
+        run: python -m py_compile deployment_preflight.py tests/test_deployment_preflight.py tests/test_nginx_config.py
       - name: Validate deployment configuration
         run: python -m unittest tests/test_deployment_preflight.py -v
+      - name: Validate Nginx configuration syntax
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx
+          test_dir="$(mktemp -d)"
+          mkdir -p "$test_dir/certs"
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout "$test_dir/certs/privkey.pem" \
+            -out "$test_dir/certs/fullchain.pem" \
+            -subj "/CN=business.example.com"
+          sed "s#/etc/letsencrypt/live/business.example.com#$test_dir/certs#g" \
+            deploy/nginx/mg-business.conf.example > "$test_dir/mg-business.conf"
+          cat > "$test_dir/nginx.conf" <<EOF
+          pid $test_dir/nginx.pid;
+          error_log stderr;
+          events { worker_connections 64; }
+          http {
+              default_type application/octet-stream;
+              include $PWD/deploy/nginx/mg-business-limits.conf.example;
+              include $test_dir/mg-business.conf;
+          }
+          EOF
+          sudo nginx -t -c "$test_dir/nginx.conf"
+      - name: Verify systemd service unit
+        run: |
+          command -v systemd-analyze
+          sudo install -D -m 0755 deploy/systemd/start.sh /opt/mg-business/deploy/systemd/start.sh
+          sudo install -d -m 0750 /etc/mg-business
+          sudo touch /etc/mg-business/mg-business.env
+          sudo systemd-analyze verify deploy/systemd/mg-business.service
       - name: Run domain unit tests
         run: node --test tests/core.test.js
       - name: Run backend integration tests
@@ -42,6 +72,7 @@ jobs:
 
   browser-e2e:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,8 +83,13 @@ jobs:
           python-version: "3.x"
       - name: Install Playwright
         run: npm install --no-save playwright@1.56.1
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Cache Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.56.1-chromium-headless-shell
+      - name: Install Chromium headless shell
+        run: npx playwright install --only-shell chromium
       - name: Run browser end-to-end smoke test
         env:
           MG_HOST: 127.0.0.1

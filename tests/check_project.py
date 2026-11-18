@@ -17,7 +17,7 @@ html = (root / "index.html").read_text(encoding="utf-8")
 parser.feed(html)
 js = (root / "app.js").read_text(encoding="utf-8")
 referenced = set(re.findall(r"\$\(['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]\)", js))
-dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel", "gameSegmentHistoryPanel", "customerLoyaltyPanel", "accountLedgerResult"}
+dynamic = {"moduleAdd", "authForm", "ledgerSearch", "cafeCart", "cartSubtotal", "submitOrder", "cafeProduct", "cafeQuantity", "purchaseLines", "customerLedgerPanel", "supplierLedgerPanel", "cafeAddonChoices", "orderDetailsPanel", "gameSegmentHistoryPanel", "customerLoyaltyPanel", "accountLedgerResult", "accountingDateFilter"}
 missing = sorted(referenced - parser.ids - dynamic)
 if missing:
     raise SystemExit("missing DOM ids: " + ", ".join(missing))
@@ -200,7 +200,7 @@ if "تاریخ شروع نمی‌تواند بعد از تاریخ پایان ب
     raise SystemExit("Report date filters must reject reversed date ranges before requesting data")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
-if 'CREATE TABLE IF NOT EXISTS accounting_periods' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'CREATE TABLE IF NOT EXISTS accounting_periods' not in server or 'from schema_version import SCHEMA_VERSION' not in server or 'SCHEMA_VERSION = 17' not in (root / "schema_version.py").read_text(encoding="utf-8"):
     raise SystemExit("Accounting period lock schema migration is missing")
 if 'assert_accounting_period_open' not in server or 'Accounting period is closed' not in server:
     raise SystemExit("Journal posting and reversal must reject dates inside closed accounting periods")
@@ -214,7 +214,7 @@ if 'if backup_version >= 2:' not in server or 'accounting_periods' not in server
     raise SystemExit("Legacy backup restore must preserve accounting period locks")
 if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
     raise SystemExit("Accounting period close form is missing")
-if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'from schema_version import SCHEMA_VERSION' not in server or 'SCHEMA_VERSION = 17' not in (root / "schema_version.py").read_text(encoding="utf-8"):
     raise SystemExit("Cash register shift schema migration is missing")
 if 'cash_register_expected_cash' not in server or 'a.code=\'1000\'' not in server:
     raise SystemExit("Cash register reconciliation must use posted cash-account journal movements")
@@ -234,10 +234,21 @@ if "renderKitchenQueue" not in app or "data-order-fulfillment" not in app:
     raise SystemExit("Cafe kitchen queue UI and staged order actions are missing")
 if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
     raise SystemExit("Cash register opening and reconciliation UI is missing")
-if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'from schema_version import SCHEMA_VERSION' not in server or 'SCHEMA_VERSION = 17' not in (root / "schema_version.py").read_text(encoding="utf-8"):
     raise SystemExit("Cafe kitchen fulfillment migration is missing")
 if 'if path.startswith("/api/orders/") and path.endswith("/fulfillment"):' not in server or 'cafe.order.fulfillment.updated' not in server:
     raise SystemExit("Audited kitchen order fulfillment API is missing")
 if 'renderKitchenQueue' not in app or 'data-order-fulfillment' not in app:
     raise SystemExit("Cafe kitchen queue UI is missing")
+if "class BoundedThreadingHTTPServer" not in server or "BoundedThreadingHTTPServer((HOST, PORT), Handler)" not in server:
+    raise SystemExit("HTTP server must enforce a bounded worker pool")
+if "MG_MAX_HTTP_WORKERS" not in server or "request.settimeout(REQUEST_TIMEOUT_SECONDS)" not in server:
+    raise SystemExit("HTTP connection concurrency and read timeout limits are missing")
+if "503 Service Unavailable" not in server:
+    raise SystemExit("Saturated HTTP server must reject excess connections cleanly")
+if "BoundedHttpServerTests" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
+    raise SystemExit("HTTP worker saturation regression test is missing")
+preflight = (root / "deployment_preflight.py").read_text(encoding="utf-8")
+if "MG_MAX_HTTP_WORKERS" not in preflight or "MG_REQUEST_TIMEOUT_SECONDS" not in preflight:
+    raise SystemExit("Deployment preflight must validate HTTP concurrency and timeout settings")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
