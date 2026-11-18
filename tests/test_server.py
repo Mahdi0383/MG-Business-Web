@@ -182,6 +182,28 @@ class BoundedHttpServerTests(unittest.TestCase):
             peer.close()
             httpd.server_close()
 
+    def test_overload_send_failure_still_closes_socket_without_consuming_capacity(self):
+        class BrokenPeer:
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def sendall(self, payload):
+                raise BrokenPipeError("peer disconnected")
+
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client = BrokenPeer()
+        try:
+            httpd._worker_slots = threading.BoundedSemaphore(0)
+            with mock.patch.object(httpd, "shutdown_request") as shutdown:
+                # A disconnected peer must not escape the overload cleanup path.
+                httpd.process_request(client, ("127.0.0.1", 12345))
+
+            self.assertEqual(client.timeout, server.REQUEST_TIMEOUT_SECONDS)
+            shutdown.assert_called_once_with(client)
+            self.assertEqual(httpd._worker_slots._value, 0)
+        finally:
+            httpd.server_close()
+
     def test_slow_incomplete_request_is_closed_after_socket_timeout(self):
         class NoopHandler(BaseHTTPRequestHandler):
             def do_GET(self):
