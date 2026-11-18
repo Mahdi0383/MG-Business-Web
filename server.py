@@ -1853,6 +1853,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = self.route()
+        # Backup restore accepts a much larger body than ordinary API routes.
+        # Authenticate before reading it so anonymous clients cannot reserve
+        # workers and memory with an unauthenticated 50 MiB upload.
+        if path == "/api/backup/restore":
+            auth_db = connect()
+            try:
+                if not self.authenticate(auth_db):
+                    return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
+            finally:
+                auth_db.close()
         try: data = self.read_json()
         except ValueError as exc: return self.send_json(400, {"error": str(exc)})
         db = connect()
