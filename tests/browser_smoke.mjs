@@ -451,16 +451,41 @@ try {
   await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
   await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
+  const accountingRequestEvents = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (reportPaths.includes(url.pathname)) accountingRequestEvents.push(url.href);
+  });
+  await page.locator("#accountingDateFilter").evaluate(form => {
+    form.addEventListener("submit", event => {
+      queueMicrotask(() => {
+        window.__mgAccountingFilterSubmit = {
+          defaultPrevented: event.defaultPrevented,
+          fromDate: form.querySelector('[name="fromDate"]')?.value,
+          toDate: form.querySelector('[name="toDate"]')?.value
+        };
+      });
+    }, { once: true });
+  });
   const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
     const url = new URL(response.url());
     return url.pathname === path &&
       url.searchParams.get("fromDate") === accountingToday &&
       url.searchParams.get("toDate") === accountingToday;
-  }));
+  }, { timeout: 10000 }));
   await page.locator('#accountingDateFilter button[type="submit"]').click();
   const reportSettled = await Promise.allSettled(reportResponses);
   const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
-  if (missingReports.length) throw new Error("Accounting report requests were not observed: " + JSON.stringify(missingReports));
+  if (missingReports.length) {
+    const filterState = await page.evaluate(() => window.__mgAccountingFilterSubmit || null);
+    const formValues = await page.locator("#accountingDateFilter").evaluate(form => ({
+      fromDate: form.querySelector('[name="fromDate"]')?.value,
+      toDate: form.querySelector('[name="toDate"]')?.value
+    }));
+    throw new Error("Accounting report requests were not observed: " + JSON.stringify({
+      missingReports, accountingRequestEvents, filterState, formValues
+    }));
+  }
   const reportResults = reportSettled.map(result => result.value);
   for (let index = 0; index < reportPaths.length; index++) {
     const reportUrl = new URL(reportResults[index].url());
