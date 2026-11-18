@@ -1590,6 +1590,22 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/products", token=token)
         self.assertEqual(result["items"][0]["active"], 0)
 
+        # Generic accounting void must not bypass the order-return workflow.
+        status, generic_order_void = self.request(
+            "DELETE", "/api/transactions/order-order-test-1", token=token)
+        self.assertEqual(status, 409)
+        db = server.connect()
+        try:
+            self.assertEqual(db.execute(
+                "SELECT status FROM orders WHERE id='order-test-1'").fetchone()["status"], "paid")
+            self.assertEqual(db.execute(
+                "SELECT status FROM transactions WHERE id='order-order-test-1'").fetchone()["status"], "posted")
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='order-order-test-1'"
+            ).fetchone()[0], 0)
+        finally:
+            db.close()
+
         status, result = self.request("DELETE", "/api/orders/order-test-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/orders", token=token)
