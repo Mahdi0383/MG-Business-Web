@@ -119,6 +119,36 @@ class BoundedHttpServerTests(unittest.TestCase):
             httpd.server_close()
 
 
+class StaticPathSecurityTests(unittest.TestCase):
+    def test_symlink_cannot_publish_files_outside_web_root(self):
+        with tempfile.TemporaryDirectory() as root_dir, tempfile.TemporaryDirectory() as outside_dir:
+            root = Path(root_dir)
+            outside = Path(outside_dir) / "private.txt"
+            outside.write_text("private", encoding="utf-8")
+            (root / "assets").mkdir()
+            (root / "assets" / "external").symlink_to(outside_dir, target_is_directory=True)
+            handler = object.__new__(server.Handler)
+            handler.directory = str(root)
+            with mock.patch.object(server, "ROOT", root):
+                translated = Path(handler.translate_path("/assets/external/private.txt"))
+                self.assertEqual(translated, root / "__blocked_resource__")
+
+    def test_hidden_and_operational_files_are_not_public_resources(self):
+        with tempfile.TemporaryDirectory() as root_dir:
+            root = Path(root_dir)
+            (root / "assets").mkdir()
+            (root / "assets" / "app.js").write_text("ok", encoding="utf-8")
+            (root / ".secrets").mkdir()
+            (root / ".secrets" / "token.txt").write_text("secret", encoding="utf-8")
+            (root / "settings.env").write_text("secret", encoding="utf-8")
+            handler = object.__new__(server.Handler)
+            handler.directory = str(root)
+            with mock.patch.object(server, "ROOT", root):
+                self.assertEqual(Path(handler.translate_path("/assets/app.js")), root / "assets" / "app.js")
+                self.assertEqual(Path(handler.translate_path("/.secrets/token.txt")), root / "__blocked_resource__")
+                self.assertEqual(Path(handler.translate_path("/settings.env")), root / "__blocked_resource__")
+
+
 class ApiIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
