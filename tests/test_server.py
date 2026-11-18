@@ -216,18 +216,18 @@ class BoundedHttpServerTests(unittest.TestCase):
         first = second = None
         try:
             first = socket.create_connection(httpd.server_address, timeout=2)
-            first.sendall(b"GET /first HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n")
+            first.sendall(b"GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n")
             self.assertTrue(started.wait(2), "first request did not occupy the worker slot")
 
             second = socket.create_connection(httpd.server_address, timeout=2)
-            second.sendall(b"GET /second HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n")
+            second.sendall(b"GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n")
             rejected = bytearray()
             while True:
                 chunk = second.recv(1024)
                 if not chunk:
                     break
                 rejected.extend(chunk)
-            self.assertTrue(rejected.startswith(b"HTTP/1.1 503 Service Unavailable\\r\\n"))
+            self.assertTrue(rejected.startswith(b"HTTP/1.1 503 Service Unavailable\r\n"))
             self.assertEqual(peak_active, 1, "the server must never exceed its worker ceiling")
             self.assertEqual(httpd._worker_slots._value, 0)
 
@@ -238,7 +238,7 @@ class BoundedHttpServerTests(unittest.TestCase):
                 if not chunk:
                     break
                 accepted.extend(chunk)
-            self.assertTrue(accepted.startswith(b"HTTP/1.0 200 OK\\r\\n"))
+            self.assertTrue(accepted.startswith(b"HTTP/1.0 200 OK\r\n"))
             self.assertTrue(accepted.endswith(b"ok"))
             deadline = time.time() + 2
             while httpd._worker_slots._value != 1 and time.time() < deadline:
