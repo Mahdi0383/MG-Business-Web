@@ -3478,7 +3478,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/transactions", {
                     "id": "unauthorized-transaction", "title": "Unauthorized",
                     "amount": 1, "kind": "income", "category": "test"
-                })
+                }),
+                ("DELETE", "/api/transactions/owner-only-void-attempt", {})
             ]
             for method, path, payload in attempts:
                 with self.subTest(path=path):
