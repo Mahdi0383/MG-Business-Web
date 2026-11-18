@@ -553,18 +553,18 @@ class ApiIntegrationTests(unittest.TestCase):
         try:
             body = b'{"username":"first","username":"second","password":"not-a-real-password"}'
             connection.sendall(
-                b"POST /api/login HTTP/1.1\\r\\n"
-                b"Host: localhost\\r\\n"
-                b"Content-Type: application/json\\r\\n"
-                + ("Content-Length: %d\\r\\n" % len(body)).encode("ascii")
-                + b"Connection: close\\r\\n\\r\\n" + body
+                b"POST /api/login HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                + ("Content-Length: %d\r\n" % len(body)).encode("ascii")
+                + b"Connection: close\r\n\r\n" + body
             )
             response = bytearray()
-            while b"\\r\\n\\r\\n" not in response:
+            while b"\r\n\r\n" not in response:
                 chunk = connection.recv(4096)
                 self.assertTrue(chunk, "server closed before returning duplicate-key error")
                 response.extend(chunk)
-            header_end = response.index(b"\\r\\n\\r\\n") + 4
+            header_end = response.index(b"\r\n\r\n") + 4
             headers = response[:header_end].decode("iso-8859-1")
             self.assertIn(" 400 ", headers.splitlines()[0])
             body_length = next(
