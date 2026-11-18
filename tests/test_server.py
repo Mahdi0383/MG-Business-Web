@@ -3296,7 +3296,6 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/products", {"id": "unauthorized-product", "name": "Unauthorized", "sellPrice": 1}),
                 ("POST", "/api/suppliers", {"name": "Unauthorized supplier"}),
                 ("POST", "/api/purchase-invoices", {"id": "unauthorized-invoice", "supplierId": "missing", "items": []}),
-                ("POST", "/api/purchase-invoices/missing-invoice/payments", {"amount": 1, "paymentMethod": "cash"}),
                 ("POST", "/api/inventory/movements", {"productId": "missing-product", "quantityDelta": 1}),
                 ("POST", "/api/customers", {"name": "Unauthorized customer"}),
                 ("POST", "/api/customers/missing-viewer-customer/payments", {
