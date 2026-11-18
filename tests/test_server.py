@@ -1484,6 +1484,14 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_payment["duplicate"])
         self.assertEqual(duplicate_payment["remainingBalance"],35000)
+        status, changed_customer_amount = self.request("POST", "/api/customers/customer-1/payments", {
+            "id":"customer-payment-01","amount":49000,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,409)
+        status, changed_customer_method = self.request("POST", "/api/customers/customer-1/payments", {
+            "id":"customer-payment-01","amount":50000,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,409)
         # A customer-payment retry must not succeed if its accounting journal was damaged.
         db=server.connect()
         try:
@@ -2052,6 +2060,14 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_supplier_payment["duplicate"])
         self.assertEqual(duplicate_supplier_payment["remainingBalance"],319999)
+        status, changed_supplier_amount = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "id":"supplier-payment-01","amount":99999,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,409)
+        status, changed_supplier_method = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "id":"supplier-payment-01","amount":100000,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,409)
         # An idempotent retry must not report success if its accounting journal was damaged.
         db=server.connect()
         try:
