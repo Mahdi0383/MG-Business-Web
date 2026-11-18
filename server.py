@@ -48,12 +48,16 @@ PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
 SCHEMA_VERSION = 17
 
+class DuplicateJSONKeyError(ValueError):
+    """Raised when a JSON object repeats a member name."""
+
+
 def reject_duplicate_json_keys(pairs):
     """Reject duplicate object keys instead of silently accepting the last value."""
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("کلید تکراری در JSON درخواست مجاز نیست.")
+            raise DuplicateJSONKeyError("کلید تکراری در JSON درخواست مجاز نیست.")
         result[key] = value
     return result
 
@@ -996,7 +1000,11 @@ class Handler(SimpleHTTPRequestHandler):
                 self.close_connection = True
                 raise ValueError("بدنه درخواست ناقص است.")
             value = json.loads(raw_body, object_pairs_hook=reject_duplicate_json_keys)
-        except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
+        except DuplicateJSONKeyError:
+            self.close_connection = True
+            raise
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ValueError("JSON درخواست معتبر نیست.")
         if not isinstance(value, dict): raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
         return value
 
