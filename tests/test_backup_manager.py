@@ -386,5 +386,33 @@ class BackupManagerTests(unittest.TestCase):
                 restore_snapshot(invalid, Path(directory) / "target.sqlite3", Path(directory) / "backups")
 
 
+    def test_encrypted_non_mg_database_is_rejected_without_leaving_plaintext(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "untrusted.sqlite3"
+            backup_dir = root / "backups"
+            db = sqlite3.connect(source)
+            db.execute("CREATE TABLE unrelated_private_data(value TEXT NOT NULL)")
+            db.execute("INSERT INTO unrelated_private_data VALUES('must not remain decrypted')")
+            db.commit()
+            db.close()
+
+            key = generate_encryption_key()
+            snapshot = create_snapshot(source, backup_dir, encryption_key=key)
+            target = root / "target.sqlite3"
+
+            # Both verification and restore must remove authenticated plaintext
+            # even when the decrypted SQLite file fails MG schema validation.
+            with mock.patch("backup_manager.tempfile.gettempdir", return_value=str(root)):
+                with self.assertRaisesRegex(sqlite3.DatabaseError, "valid MG Business"):
+                    verify_snapshot(snapshot, key)
+            self.assertFalse(list(root.glob("mg-backup-verify-*.sqlite3")))
+
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "valid MG Business"):
+                restore_snapshot(snapshot, target, encryption_key=key)
+            self.assertFalse(target.exists())
+            self.assertFalse(list(root.glob("target.sqlite3.decrypt-*.tmp")))
+
+
 if __name__ == "__main__":
     unittest.main()
