@@ -58,6 +58,13 @@ jobs:
           }
           EOF
           sudo nginx -t -c "$test_dir/nginx.conf"
+      - name: Verify systemd service unit
+        run: |
+          command -v systemd-analyze
+          sudo install -D -m 0755 deploy/systemd/start.sh /opt/mg-business/deploy/systemd/start.sh
+          sudo install -d -m 0750 /etc/mg-business
+          sudo touch /etc/mg-business/mg-business.env
+          sudo systemd-analyze verify deploy/systemd/mg-business.service
       - name: Run domain unit tests
         run: node --test tests/core.test.js
       - name: Run backend integration tests
