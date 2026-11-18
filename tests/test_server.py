@@ -3436,6 +3436,17 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(cashier_stock_item["quantity"], 5)
             self.assertNotIn("costPrice",cashier_stock_item)
 
+            status, products = self.request("GET", "/api/products", token=created_tokens["cashier"])
+            self.assertEqual(status, 200)
+            cashier_product=next(item for item in products["items"] if item["id"] == product["id"])
+            self.assertEqual(cashier_product["sellPrice"], product["sellPrice"])
+            self.assertNotIn("costPrice",cashier_product)
+
+            status, manager_products = self.request("GET", "/api/products", token=created_tokens["manager"])
+            self.assertEqual(status, 200)
+            manager_product=next(item for item in manager_products["items"] if item["id"] == product["id"])
+            self.assertEqual(manager_product["costPrice"], 1000)
+
             for path in (
                 "/api/inventory/movements",
                 "/api/suppliers",
