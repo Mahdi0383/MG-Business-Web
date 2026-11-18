@@ -251,6 +251,28 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_backup_restore_does_not_send_100_continue_before_authorization(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"POST /api/backup/restore HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Expect: 100-continue\r\n"
+                + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                + b"\r\n"
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before rejecting Expect header")
+                response.extend(chunk)
+            self.assertNotIn(b"100 Continue", response)
+            self.assertIn(b"417", response.split(b"\r\n", 1)[0])
+            self.assertEqual(connection.recv(1), b"", "restore Expect request must close without reading body")
+        finally:
+            connection.close()
+
     def test_backup_restore_rejects_concurrent_large_upload_before_reading_body(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
