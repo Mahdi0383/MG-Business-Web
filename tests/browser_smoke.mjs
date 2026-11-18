@@ -700,8 +700,8 @@ try {
   }, { productId: productBody.id, invoiceId: purchaseBody.id, viewerId: createdUserId });
   assert.deepEqual(roleMatrix.managerResults?.map(result => result.status), [403, 403, 201, 201, 403, 403],
     "manager must be blocked from owner-only user/password/license administration but allowed module management: " + JSON.stringify(roleMatrix));
-  assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 201, 403, 403],
-    "cashier must be blocked from administration and owner-only password/license actions while allowed supplier payments: " + JSON.stringify(roleMatrix));
+  assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 403, 403, 403],
+    "cashier must be blocked from administration and owner-only password/license actions including supplier payments: " + JSON.stringify(roleMatrix));
   const deactivation = await page.evaluate(async userId => {
     const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/users/" + userId, {
