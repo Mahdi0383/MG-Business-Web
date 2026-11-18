@@ -1948,6 +1948,18 @@ class Handler(SimpleHTTPRequestHandler):
             if not row or row["status"] != "posted":
                 db.rollback()
                 return self.send_json(404, {"error": "تراکنش ثبت‌شده پیدا نشد."})
+            # Domain-owned transactions must be reversed through their owning
+            # workflow so inventory, customer balances, session state and
+            # accounting journals remain consistent.
+            linked_order = (tx_id.startswith("order-") and db.execute(
+                "SELECT 1 FROM orders WHERE id=? AND tenant_id=?",
+                (tx_id[len("order-"):],user["tenant_id"])).fetchone())
+            linked_session = (tx_id.startswith("game-") and db.execute(
+                "SELECT 1 FROM game_sessions WHERE id=? AND tenant_id=?",
+                (tx_id[len("game-"):],user["tenant_id"])).fetchone())
+            if linked_order or linked_session:
+                db.rollback()
+                return self.send_json(409, {"error": "این تراکنش به سفارش یا نشست بازی متصل است؛ از گردش برگشت همان بخش استفاده کنید."})
             now = int(time.time())
             db.execute("UPDATE transactions SET status='voided',voided_at=?,voided_by=? WHERE id=? AND tenant_id=?",
                        (now,user["id"],tx_id,user["tenant_id"]))
