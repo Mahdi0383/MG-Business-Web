@@ -692,12 +692,12 @@ class ApiIntegrationTests(unittest.TestCase):
         connection = socket.create_connection(self.httpd.server_address, timeout=3)
         try:
             connection.sendall(
-                b"POST /api/backup/restore HTTP/1.1\\r\\n"
-                b"Host: localhost\\r\\n"
-                b"Content-Type: application/json\\r\\n"
-                b"Expect: 100-continue\\r\\n"
-                + ("Content-Length: %d\\r\\n" % server.MAX_BACKUP_BODY).encode("ascii")
-                + b"\\r\\n"
+                b"POST /api/backup/restore HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Expect: 100-continue\r\n"
+                + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                + b"\r\n"
             )
             response = bytearray()
             while True:
