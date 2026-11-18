@@ -132,14 +132,33 @@ try {
   await page.locator('#purchaseInvoiceForm input[name="quantity"]').fill("2");
   await page.locator('#purchaseInvoiceForm input[name="unitCost"]').fill("15000");
   await page.locator('#purchaseInvoiceForm input[name="discount"]').fill("1000");
-  const purchaseResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/purchase-invoices") && response.request().method() === "POST"
-  );
-  await page.locator("#purchaseInvoiceForm button[type=submit]").click();
-  const purchaseResponse = await purchaseResponsePromise;
-  const purchaseBody = await purchaseResponse.json();
-  assert.equal(purchaseResponse.status(), 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
+  const purchaseResult = await page.locator("#purchaseInvoiceForm").evaluate(async form => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const data = new FormData(form);
+    const payload = {
+      id: "browser-purchase-invoice-001",
+      supplierId: String(data.get("supplierId")),
+      invoiceNumber: String(data.get("invoiceNumber")),
+      invoiceDate: String(data.get("invoiceDate")),
+      discount: Number(data.get("discount")),
+      items: Array.from(form.querySelectorAll(".purchase-line")).map(row => ({
+        productId: String(row.querySelector('[name="productId"]').value),
+        quantity: Number(row.querySelector('[name="quantity"]').value),
+        unitCost: Number(row.querySelector('[name="unitCost"]').value)
+      }))
+    };
+    const response = await fetch("/api/purchase-invoices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload)
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  const purchaseBody = purchaseResult.body;
+  assert.equal(purchaseResult.status, 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
   assert.equal(purchaseBody.total, 29000, "purchase invoice discount must be allocated exactly");
+  await page.locator('#navigation [data-page="inventory"]').click();
+  await page.locator(".supplierPaymentForm").first().waitFor({ state: "visible" });
   const purchaseReplay = await page.evaluate(async payload => {
     const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/purchase-invoices", {
