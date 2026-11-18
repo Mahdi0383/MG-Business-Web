@@ -174,3 +174,12 @@ Do not roll application code back across a database migration unless the matchin
 ## 9. Release gate
 
 A green CI run and successful deployment preflight are necessary, not sufficient, for a commercial production launch. Before enabling public customer traffic, complete an independent security review and penetration test, verify restore drills and monitoring/alerting, test load and browser workflows on production-like infrastructure, and validate the actual payment-terminal/network setup.
+
+### Financial report access boundary
+
+The HTTP API limits transaction history, cash-flow details, accounting periods, account ledgers,
+journal entries, profit-and-loss, trial-balance, and balance-sheet reads to owner and manager
+roles. Cashiers retain the operational permissions needed to record permitted transactions and
+receive customer or supplier payments, but cannot browse the business-wide accounting reports.
+These checks are enforced server-side; hiding a screen in the browser is not an access-control
+boundary.
