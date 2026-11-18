@@ -2720,6 +2720,25 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertEqual(json.loads(restored_item["addons_json"])[0]["price"],25)
             finally:
                 db.close()
+
+            # Simulate a damaged cross-tenant relation: the addon and inventory
+            # movement belong to this tenant, but their product row is reassigned.
+            db = server.connect()
+            try:
+                foreign_tenant = "addon-foreign-tenant"
+                db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)",
+                           (foreign_tenant,"Foreign Addon Tenant",int(time.time())))
+                db.execute("UPDATE products SET tenant_id=? WHERE id=?",
+                           (foreign_tenant,"addon-product"))
+                db.commit()
+            finally:
+                db.close()
+            status, isolated_addons = self.request("GET", "/api/product-addons", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(isolated_addons["items"], [])
+            status, isolated_inventory = self.request("GET", "/api/inventory", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(isolated_inventory["items"], [])
         finally:
             server.DB_PATH = original_db_path
 
