@@ -182,6 +182,78 @@ class BoundedHttpServerTests(unittest.TestCase):
             peer.close()
             httpd.server_close()
 
+    def test_live_worker_limit_rejects_excess_connection_until_slot_releases(self):
+        started = threading.Event()
+        release = threading.Event()
+        active_lock = threading.Lock()
+        active_count = 0
+        peak_active = 0
+
+        class BlockingHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                nonlocal active_count, peak_active
+                with active_lock:
+                    active_count += 1
+                    peak_active = max(peak_active, active_count)
+                started.set()
+                try:
+                    release.wait(3)
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                finally:
+                    with active_lock:
+                        active_count -= 1
+
+            def log_message(self, *args):
+                pass
+
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), BlockingHandler)
+        httpd._worker_slots = threading.BoundedSemaphore(1)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        first = second = None
+        try:
+            first = socket.create_connection(httpd.server_address, timeout=2)
+            first.sendall(b"GET /first HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n")
+            self.assertTrue(started.wait(2), "first request did not occupy the worker slot")
+
+            second = socket.create_connection(httpd.server_address, timeout=2)
+            second.sendall(b"GET /second HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n")
+            rejected = bytearray()
+            while True:
+                chunk = second.recv(1024)
+                if not chunk:
+                    break
+                rejected.extend(chunk)
+            self.assertTrue(rejected.startswith(b"HTTP/1.1 503 Service Unavailable\\r\\n"))
+            self.assertEqual(peak_active, 1, "the server must never exceed its worker ceiling")
+            self.assertEqual(httpd._worker_slots._value, 0)
+
+            release.set()
+            accepted = bytearray()
+            while True:
+                chunk = first.recv(1024)
+                if not chunk:
+                    break
+                accepted.extend(chunk)
+            self.assertTrue(accepted.startswith(b"HTTP/1.0 200 OK\\r\\n"))
+            self.assertTrue(accepted.endswith(b"ok"))
+            deadline = time.time() + 2
+            while httpd._worker_slots._value != 1 and time.time() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(httpd._worker_slots._value, 1)
+        finally:
+            release.set()
+            if first is not None:
+                first.close()
+            if second is not None:
+                second.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
     def test_overload_send_failure_still_closes_socket_without_consuming_capacity(self):
         class BrokenPeer:
             def settimeout(self, timeout):
