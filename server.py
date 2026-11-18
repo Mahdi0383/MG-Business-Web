@@ -971,7 +971,9 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             self.close_connection = True
             raise ValueError("طول درخواست نامعتبر است.")
-        if self.headers.get("Content-Encoding", "identity").strip().lower() != "identity":
+        content_encodings = self.headers.get_all("Content-Encoding", [])
+        if (len(content_encodings) > 1
+                or (content_encodings and content_encodings[0].strip().lower() != "identity")):
             self.close_connection = True
             raise ValueError("فشرده‌سازی بدنه درخواست پشتیبانی نمی‌شود.")
         body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
