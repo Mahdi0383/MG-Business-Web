@@ -424,9 +424,12 @@ try {
   await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
   await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
-  const reportResponses = reportPaths.map(path => page.waitForResponse(response =>
-    new URL(response.url()).pathname === path
-  ));
+  const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === path &&
+      url.searchParams.get("fromDate") === accountingToday &&
+      url.searchParams.get("toDate") === accountingToday;
+  }));
   await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
   const reportSettled = await Promise.allSettled(reportResponses);
   const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
