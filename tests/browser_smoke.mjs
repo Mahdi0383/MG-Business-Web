@@ -203,12 +203,8 @@ try {
   const shiftOpenPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/cash-register/shifts/open") && response.request().method() === "POST"
   );
-  await page.locator("#cashShiftOpenForm").evaluate(form => {
-    const input = form.querySelector('input[name="openingCash"]');
-    input.value = "1000";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    form.requestSubmit();
-  });
+  await page.locator('#cashShiftOpenForm input[name="openingCash"]').fill("1000");
+  await page.locator("#cashShiftOpenForm button[type=submit]").click();
   const shiftOpenResponse = await shiftOpenPromise;
   const shiftOpenBody = await shiftOpenResponse.json();
   assert.equal(shiftOpenResponse.status(), 201, "cash register open response: " + JSON.stringify(shiftOpenBody));
