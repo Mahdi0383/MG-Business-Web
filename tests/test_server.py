@@ -3464,6 +3464,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 "/api/accounting/periods",
                 "/api/accounting/journal",
                 "/api/accounting/profit-loss",
+                "/api/reports/sales-by-product",
                 "/api/accounting/trial-balance",
                 "/api/accounting/balance-sheet"
             ):
@@ -3499,6 +3500,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 "/api/accounting/account-ledger?accountId=irrelevant",
                 "/api/accounting/journal",
                 "/api/accounting/profit-loss",
+                "/api/reports/sales-by-product",
                 "/api/accounting/trial-balance",
                 "/api/accounting/balance-sheet"
             ):
