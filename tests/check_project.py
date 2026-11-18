@@ -248,4 +248,7 @@ if "503 Service Unavailable" not in server:
     raise SystemExit("Saturated HTTP server must reject excess connections cleanly")
 if "BoundedHttpServerTests" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("HTTP worker saturation regression test is missing")
+preflight = (root / "deployment_preflight.py").read_text(encoding="utf-8")
+if "MG_MAX_HTTP_WORKERS" not in preflight or "MG_REQUEST_TIMEOUT_SECONDS" not in preflight:
+    raise SystemExit("Deployment preflight must validate HTTP concurrency and timeout settings")
 print(f"Project smoke checks passed: {len(parser.ids)} unique DOM ids, {len(referenced)} JS references.")
