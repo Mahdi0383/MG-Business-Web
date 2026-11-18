@@ -4,6 +4,7 @@ import hmac
 import json
 import http.client
 import os
+import socket
 import tempfile
 import threading
 import unittest
@@ -26,6 +27,23 @@ def make_license(modules, license_id):
     secret = os.environ["MG_LICENSE_SECRET"]
     signature = base64.urlsafe_b64encode(hmac.new(secret.encode(),signed,hashlib.sha256).digest()).decode().rstrip("=")
     return "MG1." + encoded + "." + signature
+
+
+class BoundedHttpServerTests(unittest.TestCase):
+    def test_over_capacity_connection_receives_503_and_is_closed(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client, peer = socket.socketpair()
+        try:
+            # A zero-capacity semaphore deterministically models a saturated worker pool.
+            httpd._worker_slots = threading.BoundedSemaphore(0)
+            httpd.process_request(client, ("127.0.0.1", 12345))
+            response = peer.recv(1024)
+            self.assertIn(b"503 Service Unavailable", response)
+            self.assertIn(b"Connection: close", response)
+            self.assertEqual(peer.recv(1), b"")
+        finally:
+            peer.close()
+            httpd.server_close()
 
 
 class ApiIntegrationTests(unittest.TestCase):
