@@ -246,9 +246,12 @@ class BoundedHttpServerTests(unittest.TestCase):
         client, peer = socket.socketpair()
         initial_slots = httpd._worker_slots._value
         try:
-            with mock.patch("threading.Thread.start", side_effect=RuntimeError("simulated thread start failure")):
+            with mock.patch("threading.Thread.start", side_effect=RuntimeError("simulated thread start failure")), \
+                 mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
                 with self.assertRaisesRegex(RuntimeError, "simulated thread start failure"):
                     httpd.process_request(client, ("127.0.0.1", 12345))
+            shutdown.assert_called_once_with(client)
+            self.assertEqual(peer.recv(1), b"")
             self.assertEqual(httpd._worker_slots._value, initial_slots)
         finally:
             client.close()
