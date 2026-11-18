@@ -315,8 +315,7 @@ class BackupManagerTests(unittest.TestCase):
                     raise OSError("simulated shm move failure")
                 return real_replace(source, destination)
 
-            with mock.patch("backup_manager.create_snapshot"), \\
-                    mock.patch("backup_manager.os.replace", side_effect=fail_second_sidecar):
+            with mock.patch("backup_manager.create_snapshot"), mock.patch("backup_manager.os.replace", side_effect=fail_second_sidecar):
                 with self.assertRaisesRegex(OSError, "simulated shm move failure"):
                     restore_snapshot(snapshot, database, backup_dir)
 
