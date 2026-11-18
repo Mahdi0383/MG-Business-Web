@@ -61,6 +61,8 @@ if "data-supplier-ledger-export" not in app or "text/csv;charset=utf-8" not in a
     raise SystemExit("Supplier account statement CSV export is missing")
 if "[=+@-]" not in app or "const safe=" not in app:
     raise SystemExit("Supplier CSV export must neutralize spreadsheet formula injection")
+if "statement.totalPurchases" not in app or "statement.totalPayments" not in app or "statement.balance" not in app:
+    raise SystemExit("Supplier CSV export must include reconciled statement totals")
 if 'if path == "/api/gamenet/reservations":' not in server or "gamenet_reservations" not in server:
     raise SystemExit("GameNet reservation API and backup support are missing")
 if "stableRequestId" not in app:
