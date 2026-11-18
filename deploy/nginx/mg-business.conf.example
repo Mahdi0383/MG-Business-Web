@@ -4,13 +4,15 @@ server {
     listen 80;
     listen [::]:80;
     server_name business.example.com;
-    return 301 https://$host$request_uri;
+    return 301 https://business.example.com$request_uri;
 }
 
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name business.example.com;
+    # Reject unexpected Host headers instead of serving the tenant on arbitrary domains.
+    if ($host != business.example.com) { return 444; }
 
     ssl_certificate /etc/letsencrypt/live/business.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/business.example.com/privkey.pem;
