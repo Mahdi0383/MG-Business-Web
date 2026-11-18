@@ -132,15 +132,15 @@ try {
   await page.locator('#purchaseInvoiceForm input[name="quantity"]').fill("2");
   await page.locator('#purchaseInvoiceForm input[name="unitCost"]').fill("15000");
   await page.locator('#purchaseInvoiceForm input[name="discount"]').fill("1000");
-  const purchaseResult = await page.locator("#purchaseInvoiceForm").evaluate(async form => {
+  const purchaseResult = await page.locator("#purchaseInvoiceForm").evaluate(async (form, ids) => {
     const token = sessionStorage.getItem("mg-business.session");
     const payload = {
       id: "browser-purchase-invoice-001",
-      supplierId: ${supplierBody.id},
+      supplierId: ids.supplierId,
       invoiceNumber: "E2E-PURCHASE-001",
       invoiceDate: form.querySelector('[name="invoiceDate"]').value,
       discount: 1000,
-      items: [{ productId: ${productBody.id}, quantity: 2, unitCost: 15000 }]
+      items: [{ productId: ids.productId, quantity: 2, unitCost: 15000 }]
     };
     const response = await fetch("/api/purchase-invoices", {
       method: "POST",
@@ -148,7 +148,7 @@ try {
       body: JSON.stringify(payload)
     });
     return { status: response.status, body: await response.json() };
-  });
+  }, { supplierId: supplierBody.id, productId: productBody.id });
   const purchaseBody = purchaseResult.body;
   assert.equal(purchaseResult.status, 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
   assert.equal(purchaseBody.total, 29000, "purchase invoice discount must be allocated exactly");
