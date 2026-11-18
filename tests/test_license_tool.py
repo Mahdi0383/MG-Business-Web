@@ -28,6 +28,13 @@ class LicenseToolTests(unittest.TestCase):
         payload = json.loads(base64.urlsafe_b64decode(payload_part + "=" * (-len(payload_part) % 4)))
         self.assertEqual(payload["modules"], ["accounting", "reports"])
 
+    def test_issuer_adds_accounting_for_cafe_license(self):
+        result = self.run_tool("cafe")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload_part = result.stdout.strip().split(".")[1]
+        payload = json.loads(base64.urlsafe_b64decode(payload_part + "=" * (-len(payload_part) % 4)))
+        self.assertEqual(payload["modules"], ["accounting", "cafe"])
+
     def test_issuer_rejects_planned_unimplemented_vertical(self):
         result = self.run_tool("hotel")
         self.assertNotEqual(result.returncode, 0)
