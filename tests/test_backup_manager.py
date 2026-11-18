@@ -269,7 +269,8 @@ class BackupManagerTests(unittest.TestCase):
                     raise OSError("simulated atomic database replacement failure")
                 return real_replace(source, destination)
 
-            with mock.patch("backup_manager.os.replace", side_effect=fail_database_commit):
+            with mock.patch("backup_manager.create_snapshot"), \
+                    mock.patch("backup_manager.os.replace", side_effect=fail_database_commit):
                 with self.assertRaisesRegex(OSError, "simulated atomic database replacement failure"):
                     restore_snapshot(snapshot, database, backup_dir)
 
