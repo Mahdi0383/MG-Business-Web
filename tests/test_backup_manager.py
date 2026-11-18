@@ -282,6 +282,91 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             self.assertFalse(list(root.glob("live.sqlite3.restore-*.tmp")))
 
+    def test_restore_rolls_back_first_sidecar_if_second_sidecar_move_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            snapshot_source = root / "snapshot-source.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            create_valid_database(database, "live-before-restore")
+            create_valid_database(snapshot_source, "snapshot-value")
+            snapshot = create_snapshot(snapshot_source, backup_dir)
+            wal = Path(str(database) + "-wal")
+            shm = Path(str(database) + "-shm")
+            wal.write_bytes(b"wal-state")
+            shm.write_bytes(b"shm-state")
+            real_replace = os.replace
+
+            def fail_second_sidecar(source, destination):
+                if Path(source) == shm:
+                    raise OSError("simulated shm move failure")
+                return real_replace(source, destination)
+
+            with mock.patch("backup_manager.create_snapshot"), \\
+                    mock.patch("backup_manager.os.replace", side_effect=fail_second_sidecar):
+                with self.assertRaisesRegex(OSError, "simulated shm move failure"):
+                    restore_snapshot(snapshot, database, backup_dir)
+
+            self.assertEqual(wal.read_bytes(), b"wal-state")
+            self.assertEqual(shm.read_bytes(), b"shm-state")
+            self.assertFalse(list(root.glob("live.sqlite3-wal.restore-*.tmp")))
+            self.assertFalse(list(root.glob("live.sqlite3-shm.restore-*.tmp")))
+
+    def test_restore_succeeds_if_committed_sidecar_cleanup_is_denied(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            snapshot_source = root / "snapshot-source.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            create_valid_database(database, "old-live-value")
+            create_valid_database(snapshot_source, "restored-value")
+            snapshot = create_snapshot(snapshot_source, backup_dir)
+            wal = Path(str(database) + "-wal")
+            wal.write_bytes(b"old-wal-state")
+            original_unlink = Path.unlink
+
+            def deny_preserved_sidecar_cleanup(path, *args, **kwargs):
+                if ".restore-" in path.name and path.name.endswith(".tmp"):
+                    raise PermissionError("simulated cleanup permission failure")
+                return original_unlink(path, *args, **kwargs)
+
+            with mock.patch("backup_manager.Path.unlink", autospec=True,
+                            side_effect=deny_preserved_sidecar_cleanup):
+                restored = restore_snapshot(snapshot, database, backup_dir)
+
+            self.assertEqual(restored, database.resolve())
+            db = sqlite3.connect(database)
+            self.assertEqual(db.execute("SELECT value FROM business_records").fetchone()[0],
+                             "restored-value")
+            db.close()
+            self.assertEqual(len(list(root.glob("live.sqlite3-wal.restore-*.tmp"))), 1)
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
