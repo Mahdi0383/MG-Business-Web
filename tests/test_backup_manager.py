@@ -232,6 +232,55 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             self.assertEqual(len(list(backup_dir.glob("*.sqlite3.enc"))), 2)
 
+    def test_restore_replacement_failure_preserves_existing_sqlite_sidecars(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            snapshot_source = root / "snapshot-source.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            create_valid_database(database, "live-before-failed-restore")
+            create_valid_database(snapshot_source, "snapshot-value")
+            snapshot = create_snapshot(snapshot_source, backup_dir)
+            wal = Path(str(database) + "-wal")
+            shm = Path(str(database) + "-shm")
+            wal.write_bytes(b"pending-wal-state")
+            shm.write_bytes(b"shared-memory-state")
+
+            real_replace = os.replace
+
+            def fail_database_commit(source, destination):
+                source_path = Path(source)
+                destination_path = Path(destination)
+                if (source_path.name.startswith(database.name + ".restore-")
+                        and destination_path == database):
+                    raise OSError("simulated atomic database replacement failure")
+                return real_replace(source, destination)
+
+            with mock.patch("backup_manager.os.replace", side_effect=fail_database_commit):
+                with self.assertRaisesRegex(OSError, "simulated atomic database replacement failure"):
+                    restore_snapshot(snapshot, database, backup_dir)
+
+            self.assertEqual(wal.read_bytes(), b"pending-wal-state")
+            self.assertEqual(shm.read_bytes(), b"shared-memory-state")
+            db = sqlite3.connect(database)
+            self.assertEqual(db.execute("SELECT value FROM business_records").fetchone()[0],
+                             "live-before-failed-restore")
+            db.close()
+            self.assertFalse(list(root.glob("live.sqlite3.restore-*.tmp")))
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
