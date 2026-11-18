@@ -11,13 +11,22 @@ class ModuleCatalogTests(unittest.TestCase):
         )
         self.assertTrue(all(item["status"] == "available" for item in MODULE_DEFINITIONS.values()))
 
-    def test_reports_entitlement_includes_accounting_dependency(self):
-        self.assertEqual(resolve_module_dependencies(["reports"]), ["accounting", "reports"])
+    def test_every_operational_module_requires_accounting(self):
+        for key in ("cafe", "customers", "gamenet", "inventory", "reports"):
+            with self.subTest(module=key):
+                self.assertEqual(
+                    resolve_module_dependencies([key]),
+                    ["accounting", key],
+                )
+
+    def test_accounting_and_settings_remain_standalone_core_modules(self):
+        self.assertEqual(resolve_module_dependencies(["accounting"]), ["accounting"])
+        self.assertEqual(resolve_module_dependencies(["settings"]), ["settings"])
 
     def test_dependency_resolution_is_sorted_and_deduplicated(self):
         self.assertEqual(
-            resolve_module_dependencies(["reports", "accounting", "reports"]),
-            ["accounting", "reports"],
+            resolve_module_dependencies(["cafe", "accounting", "cafe"]),
+            ["accounting", "cafe"],
         )
 
     def test_unknown_or_unimplemented_module_is_rejected(self):
