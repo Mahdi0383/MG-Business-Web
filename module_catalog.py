@@ -37,3 +37,13 @@ def resolve_module_dependencies(module_keys: list[str] | tuple[str, ...]) -> lis
         resolved.add(key)
         pending.extend(definition["dependencies"])
     return sorted(resolved)
+
+
+def module_dependencies_satisfied(module_key: str, enabled_modules) -> bool:
+    """Check that a module and every declared dependency are currently enabled."""
+    try:
+        required = resolve_module_dependencies([module_key])
+    except ValueError:
+        return False
+    enabled = set(enabled_modules)
+    return all(key in enabled for key in required)
