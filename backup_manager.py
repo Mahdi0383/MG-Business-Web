@@ -11,6 +11,8 @@ import time
 import tempfile
 from pathlib import Path
 
+from schema_version import SCHEMA_VERSION
+
 MAGIC = b"MGBK1"
 NONCE_BYTES = 12
 TAG_BYTES = 16
@@ -199,6 +201,10 @@ def _validate_mg_database(connection: sqlite3.Connection) -> None:
     migration = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
     if not migration or migration[0] is None or migration[0] < 1:
         raise sqlite3.DatabaseError("Selected file has no applied MG Business schema migration.")
+    if migration[0] > SCHEMA_VERSION:
+        raise sqlite3.DatabaseError(
+            "Selected MG Business database schema is newer than this application supports."
+        )
 
 
 def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | None = None) -> bool:
