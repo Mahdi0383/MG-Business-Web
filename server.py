@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from backup_manager import create_snapshot, decode_encryption_key
 from schema_version import SCHEMA_VERSION
+from module_catalog import MODULE_KEYS, resolve_module_dependencies
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
@@ -41,7 +42,6 @@ MAX_BODY = 2 * 1024 * 1024
 MAX_BACKUP_BODY = 50 * 1024 * 1024
 # Keep large authenticated restore payloads from multiplying memory use.
 BACKUP_RESTORE_SEMAPHORE = threading.BoundedSemaphore(1)
-MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
@@ -876,10 +876,8 @@ def verify_license_code(code):
         raise ValueError("فهرست ماژول‌های لایسنس معتبر نیست.")
     if type(expires_at) is not int or expires_at <= int(time.time()):
         raise ValueError("اعتبار لایسنس پایان یافته یا تاریخ آن معتبر نیست.")
-    modules = set(modules)
-    if "reports" in modules:
-        modules.add("accounting")
-    return {"license_id":license_id,"modules":sorted(modules),"expires_at":expires_at,
+    modules = resolve_module_dependencies(modules)
+    return {"license_id":license_id,"modules":modules,"expires_at":expires_at,
             "plan":str(payload.get("plan","custom"))[:80]}
 
 def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, method):
