@@ -5,6 +5,7 @@ import json
 import http.client
 import os
 import socket
+import sqlite3
 import tempfile
 import threading
 import unittest
