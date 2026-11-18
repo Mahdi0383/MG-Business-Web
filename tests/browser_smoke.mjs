@@ -119,6 +119,7 @@ try {
   const shiftOpenResponse = await shiftOpenPromise;
   const shiftOpenBody = await shiftOpenResponse.json();
   assert.equal(shiftOpenResponse.status(), 201, "cash register open response: " + JSON.stringify(shiftOpenBody));
+  assert.equal(shiftOpenBody.openingCash, 1000, "cash shift must persist the entered opening balance: " + JSON.stringify(shiftOpenBody));
   await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
   await page.locator("#cafeProduct").selectOption(productBody.id);
   await page.locator("#addCartItem").click();
@@ -163,8 +164,12 @@ try {
   });
   assert.equal(shiftState.status, 200, "cash register status response: " + JSON.stringify(shiftState.body));
   assert.ok(shiftState.body.active, "cash shift should remain active after a cash order: " + JSON.stringify(shiftState.body));
+  assert.equal(shiftState.body.active.openingCash, 1000, "active cash shift must retain its opening balance: " + JSON.stringify(shiftState.body.active));
+  assert.equal(orderBody.total, 45000, "cash order total must match the seeded product price");
+  assert.equal(shiftState.body.active.expectedCash, shiftState.body.active.openingCash + orderBody.total,
+    "cash shift ledger balance must equal opening cash plus the cash order: " + JSON.stringify({shift:shiftState.body.active,order:orderBody}));
   await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
-  const shiftExpectedCash = 1000 + orderBody.total;
+  const shiftExpectedCash = shiftState.body.active.expectedCash;
   await page.locator('#cashShiftCloseForm input[name="countedCash"]').fill(String(shiftExpectedCash));
   const shiftClosePromise = page.waitForResponse(response =>
     response.url().includes("/api/cash-register/shifts/") && response.url().endsWith("/close") &&
