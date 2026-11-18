@@ -3417,6 +3417,19 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(reversed["voided"])
 
+            for path in (
+                "/api/transactions",
+                "/api/accounting/cash-flow",
+                "/api/accounting/periods",
+                "/api/accounting/journal",
+                "/api/accounting/profit-loss",
+                "/api/accounting/trial-balance",
+                "/api/accounting/balance-sheet"
+            ):
+                with self.subTest(role="manager-read", path=path):
+                    status, result = self.request("GET",path,token=created_tokens["manager"])
+                    self.assertEqual(status,200)
+
             status, stock = self.request("GET", "/api/inventory", token=created_tokens["cashier"])
             self.assertEqual(status, 200)
             cashier_stock_item=next(item for item in stock["items"] if item["productId"] == product["id"])
@@ -3427,7 +3440,15 @@ class ApiIntegrationTests(unittest.TestCase):
                 "/api/inventory/movements",
                 "/api/suppliers",
                 "/api/suppliers/" + supplier["id"] + "/ledger",
-                "/api/purchase-invoices"
+                "/api/purchase-invoices",
+                "/api/transactions",
+                "/api/accounting/cash-flow",
+                "/api/accounting/periods",
+                "/api/accounting/account-ledger?accountId=irrelevant",
+                "/api/accounting/journal",
+                "/api/accounting/profit-loss",
+                "/api/accounting/trial-balance",
+                "/api/accounting/balance-sheet"
             ):
                 with self.subTest(role="cashier-read", path=path):
                     status, result = self.request("GET",path,token=created_tokens["cashier"])
