@@ -21,7 +21,7 @@ class ProductionDeploymentAssetTests(unittest.TestCase):
     def test_nginx_limits_large_bodies_to_backup_restore_route(self):
         config = (ROOT / "deploy/nginx/mg-business.conf.example").read_text(encoding="utf-8")
         self.assertIn("client_max_body_size 2m;", config)
-        self.assertIn("location = /api/backup/restore {\\n        client_max_body_size 50m;", config)
+        self.assertIn("location = /api/backup/restore {\n        client_max_body_size 50m;", config)
         self.assertEqual(config.count("client_max_body_size 50m;"), 1)
 
     def test_systemd_service_has_restrictive_runtime_sandbox(self):
