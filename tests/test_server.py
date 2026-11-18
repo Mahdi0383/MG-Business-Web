@@ -3198,3 +3198,63 @@ class ApiIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModuleEntitlementRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+        self.db = sqlite3.connect(":memory:")
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("""
+            CREATE TABLE tenant_modules (
+                tenant_id TEXT NOT NULL,
+                module_key TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                expires_at INTEGER,
+                license_id TEXT,
+                updated_at INTEGER
+            )
+        """)
+        self.now = int(time.time())
+
+    def tearDown(self):
+        self.db.close()
+
+    def grant(self, module_key, enabled=1, expires_at=None):
+        self.db.execute(
+            "INSERT INTO tenant_modules(tenant_id,module_key,enabled,expires_at) VALUES(?,?,?,?)",
+            ("tenant-runtime-test", module_key, enabled, expires_at),
+        )
+
+    def enabled(self, module_key):
+        return server.module_enabled(self.db, "tenant-runtime-test", module_key)
+
+    def test_operational_module_is_denied_without_accounting(self):
+        self.grant("cafe")
+        self.assertFalse(self.enabled("cafe"))
+
+    def test_operational_module_is_allowed_with_active_accounting(self):
+        self.grant("cafe")
+        self.grant("accounting")
+        self.assertTrue(self.enabled("cafe"))
+
+    def test_expired_accounting_disables_dependent_module(self):
+        self.grant("cafe")
+        self.grant("accounting", expires_at=self.now - 1)
+        self.assertFalse(self.enabled("cafe"))
+
+    def test_disabled_accounting_disables_dependent_module(self):
+        self.grant("cafe")
+        self.grant("accounting", enabled=0)
+        self.assertFalse(self.enabled("cafe"))
+
+    def test_accounting_does_not_depend_on_other_modules(self):
+        self.grant("accounting")
+        self.assertTrue(self.enabled("accounting"))
+
+    def test_unknown_module_is_denied(self):
+        self.grant("hotel")
+        self.grant("accounting")
+        self.assertFalse(self.enabled("hotel"))
+
+
