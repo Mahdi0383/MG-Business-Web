@@ -69,5 +69,31 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertNotIn("proxy_pass http://0.0.0.0", nginx)
 
 
+    def test_restore_runbook_requires_verification_and_staging_drill(self):
+        runbook = read_deployment_file("deploy/PRODUCTION_RUNBOOK.md")
+        self.assertIn("backup_manager.py --verify", runbook)
+        self.assertIn("separate staging host", runbook)
+        self.assertIn("Never experiment with restore commands against the only production database.", runbook)
+        self.assertIn("stop the service", runbook)
+        self.assertIn("MG_BACKUP_ENCRYPTION_KEY", runbook)
+
+    def test_upgrade_runbook_requires_backup_before_fast_forward(self):
+        runbook = read_deployment_file("deploy/PRODUCTION_RUNBOOK.md")
+        verify_backup = runbook.index("Verify that the latest encrypted backup exists")
+        stop_service = runbook.index("Stop the service", verify_backup)
+        fetch_release = runbook.index("Fetch the release and fast-forward only", stop_service)
+        self.assertLess(verify_backup, stop_service)
+        self.assertLess(stop_service, fetch_release)
+        self.assertIn("Do not deploy an unreviewed working tree", runbook)
+        self.assertIn("Do not roll application code back across a database migration", runbook)
+
+    def test_release_gate_does_not_equate_green_ci_with_production_approval(self):
+        runbook = read_deployment_file("deploy/PRODUCTION_RUNBOOK.md")
+        self.assertIn("necessary, not sufficient", runbook)
+        self.assertIn("independent security review and penetration test", runbook)
+        self.assertIn("restore drills and monitoring/alerting", runbook)
+        self.assertIn("load and browser workflows", runbook)
+
+
 if __name__ == "__main__":
     unittest.main()
