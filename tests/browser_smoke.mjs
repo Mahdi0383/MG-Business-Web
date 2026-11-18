@@ -111,6 +111,52 @@ try {
   }, productBody.id);
   assert.equal(stockResult.status, 201, "inventory API response: " + JSON.stringify(stockResult.body));
 
+  // Exercise supplier purchasing, stock intake, partial settlement, and supplier ledger in the real UI.
+  await page.locator('#navigation [data-page="inventory"]').click();
+  await page.locator("#supplierForm").waitFor({ state: "visible" });
+  await page.locator('#supplierForm input[name="name"]').fill("E2E Supplier");
+  const supplierResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/suppliers") && response.request().method() === "POST"
+  );
+  await page.locator("#supplierForm button[type=submit]").click();
+  const supplierResponse = await supplierResponsePromise;
+  const supplierBody = await supplierResponse.json();
+  assert.equal(supplierResponse.status(), 201, "supplier creation response: " + JSON.stringify(supplierBody));
+  await page.locator("#purchaseInvoiceForm").waitFor({ state: "visible" });
+  await page.locator('#purchaseInvoiceForm input[name="invoiceNumber"]').fill("E2E-PURCHASE-001");
+  await page.locator('#purchaseInvoiceForm input[name="quantity"]').fill("2");
+  await page.locator('#purchaseInvoiceForm input[name="unitCost"]').fill("15000");
+  await page.locator('#purchaseInvoiceForm input[name="discount"]').fill("1000");
+  const purchaseResponsePromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/purchase-invoices") && response.request().method() === "POST"
+  );
+  await page.locator("#purchaseInvoiceForm button[type=submit]").click();
+  const purchaseResponse = await purchaseResponsePromise;
+  const purchaseBody = await purchaseResponse.json();
+  assert.equal(purchaseResponse.status(), 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
+  assert.equal(purchaseBody.total, 29000, "purchase invoice discount must be allocated exactly");
+  const purchaseRow = page.locator(".module-table-row.movements").filter({ hasText: "E2E-PURCHASE-001" });
+  await purchaseRow.waitFor({ state: "visible" });
+  await purchaseRow.locator('.supplierPaymentForm input[name="amount"]').fill("9000");
+  const supplierPaymentPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/purchase-invoices/" + purchaseBody.id + "/payments") &&
+    response.request().method() === "POST"
+  );
+  await purchaseRow.locator(".supplierPaymentForm button[type=submit]").click();
+  const supplierPaymentResponse = await supplierPaymentPromise;
+  const supplierPaymentBody = await supplierPaymentResponse.json();
+  assert.equal(supplierPaymentResponse.status(), 201, "supplier partial payment response: " + JSON.stringify(supplierPaymentBody));
+  assert.equal(supplierPaymentBody.remainingBalance, 20000, "partial supplier payment must preserve the unpaid balance");
+  const supplierStatement = page.locator('.supplierStatementForm[data-supplier-id="' + supplierBody.id + '"]');
+  const supplierLedgerPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/suppliers/" + supplierBody.id + "/ledger")
+  );
+  await supplierStatement.locator("button[type=submit]").click();
+  const supplierLedgerResponse = await supplierLedgerPromise;
+  const supplierLedgerBody = await supplierLedgerResponse.json();
+  assert.equal(supplierLedgerResponse.status(), 200, "supplier ledger response must succeed");
+  assert.equal(supplierLedgerBody.balance, 20000, "supplier ledger must reconcile to the remaining payable");
+
   await page.locator('#navigation [data-page="cafe"]').click();
   await page.locator("#addCartItem").waitFor({ state: "visible" });
   await page.locator("#cashShiftOpenForm").waitFor({ state: "visible" });
