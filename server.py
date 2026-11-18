@@ -3625,8 +3625,8 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
                 # the accept loop while the server attempts to send the 503.
                 request.settimeout(REQUEST_TIMEOUT_SECONDS)
                 request.sendall(
-                    b"HTTP/1.1 503 Service Unavailable\\r\\n"
-                    b"Connection: close\\r\\nContent-Length: 0\\r\\n\\r\\n"
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Connection: close\r\nContent-Length: 0\r\n\r\n"
                 )
             except OSError:
                 pass
