@@ -1861,8 +1861,10 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 restore_user = self.authenticate(auth_db)
                 if not restore_user:
+                    self.close_connection = True
                     return self.send_json(401, {"error": "برای ادامه وارد حساب شوید."})
                 if restore_user["role"] != "owner":
+                    self.close_connection = True
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
             finally:
                 auth_db.close()
