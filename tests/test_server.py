@@ -322,6 +322,34 @@ class BoundedHttpServerTests(unittest.TestCase):
                 httpd.server_close()
                 thread.join(timeout=3)
 
+    def test_slow_incomplete_request_body_is_closed_and_releases_worker_slot(self):
+        with mock.patch.object(server, "REQUEST_TIMEOUT_SECONDS", 0.2):
+            httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(httpd.server_address, timeout=2)
+            try:
+                # The headers are complete, but the declared JSON body never
+                # arrives. The socket timeout must terminate this worker too.
+                client.sendall(
+                    b"POST /api/setup HTTP/1.1\\r\\n"
+                    b"Host: localhost\\r\\n"
+                    b"Content-Length: 20\\r\\n"
+                    b"Content-Type: application/json\\r\\n\\r\\n"
+                    b"{"
+                )
+                client.settimeout(2)
+                self.assertEqual(client.recv(1), b"")
+                deadline = time.time() + 2
+                while httpd._worker_slots._value != server.MAX_HTTP_WORKERS and time.time() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+            finally:
+                client.close()
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
     def test_accepted_connection_gets_timeout_and_releases_worker_slot(self):
         class TimeoutProbeHandler(BaseHTTPRequestHandler):
             def do_GET(self):
