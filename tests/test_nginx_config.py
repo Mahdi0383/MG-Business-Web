@@ -23,6 +23,9 @@ class NginxDeploymentConfigTests(unittest.TestCase):
         self.assertIn("limit_req_status 429;", config)
         self.assertIn("proxy_pass http://127.0.0.1:8080;", config)
         self.assertIn("client_max_body_size 50m;", config)
+        self.assertIn("return 301 https://business.example.com$request_uri;", config)
+        self.assertIn("if ($host != business.example.com) { return 444; }", config)
+        self.assertNotIn("return 301 https://$host$request_uri;", config)
         self.assertNotIn("proxy_pass http://0.0.0.0", config)
 
     def test_runbook_installs_shared_zones_before_enabling_virtual_host(self):
