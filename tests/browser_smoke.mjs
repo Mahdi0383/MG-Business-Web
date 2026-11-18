@@ -358,7 +358,7 @@ try {
   });
   assert.equal(customerFinanceAudit.status, 200, "accounting journal must be readable after customer settlement");
   const gameSessionJournal = customerFinanceAudit.body.items.find(item =>
-    item.sourceType === "game_session" && item.sourceId === "SESSION_ID"
+    item.sourceType === "game_session" && item.sourceId === startSessionBody.id
   );
   const customerPaymentJournal = customerFinanceAudit.body.items.find(item =>
     item.sourceType === "customer_payment" && item.sourceId === customerPaymentResult.body.paymentId
