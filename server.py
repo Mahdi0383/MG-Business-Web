@@ -3621,21 +3621,27 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     def process_request(self, request, client_address):
         if not self._worker_slots.acquire(blocking=False):
             try:
+                # Even overload responses must not let a non-reading peer pin
+                # the accept loop while the server attempts to send the 503.
+                request.settimeout(REQUEST_TIMEOUT_SECONDS)
                 request.sendall(
-                    b"HTTP/1.1 503 Service Unavailable\r\n"
-                    b"Connection: close\r\nContent-Length: 0\r\n\r\n"
+                    b"HTTP/1.1 503 Service Unavailable\\r\\n"
+                    b"Connection: close\\r\\nContent-Length: 0\\r\\n\\r\\n"
                 )
             except OSError:
                 pass
-            self.shutdown_request(request)
+            finally:
+                self.shutdown_request(request)
             return
         try:
             request.settimeout(REQUEST_TIMEOUT_SECONDS)
             super().process_request(request, client_address)
         except Exception:
             self._worker_slots.release()
+            # ThreadingMixIn does not close the socket if thread creation
+            # fails; close it here so failed accepts cannot leak descriptors.
+            self.shutdown_request(request)
             raise
-
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
