@@ -126,7 +126,7 @@ try {
   });
   const supplierBody = supplierResult.body;
   assert.equal(supplierResult.status, 201, "supplier creation response: " + JSON.stringify(supplierBody));
-  await page.reload({ waitUntil: "networkidle" });
+  await page.locator('#navigation [data-page="inventory"]').click();
   await page.locator("#purchaseInvoiceForm").waitFor({ state: "visible" });
   await page.locator('#purchaseInvoiceForm input[name="invoiceNumber"]').fill("E2E-PURCHASE-001");
   await page.locator('#purchaseInvoiceForm input[name="quantity"]').fill("2");
