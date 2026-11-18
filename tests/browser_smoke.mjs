@@ -549,6 +549,30 @@ try {
   assert.equal(roleChangeBody.changed, true, "role change must report a real change");
   await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("فقط مشاهده", { exact: true }).waitFor({ state: "visible" });
   await page.locator("#modulePage").getByText("user.role.changed", { exact: false }).waitFor({ state: "visible" });
+  const viewerAuthorization = await page.evaluate(async () => {
+    const loginResponse = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "browser-cashier", password: "browser-cashier-password-2026" })
+    });
+    const login = await loginResponse.json();
+    if (!loginResponse.ok) return { loginStatus: loginResponse.status, login };
+    const response = await fetch("/api/cash-register/shifts/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + login.token },
+      body: JSON.stringify({ openingCash: 0 })
+    });
+    return { loginStatus: loginResponse.status, status: response.status, body: await response.json() };
+  });
+  assert.equal(viewerAuthorization.loginStatus, 200, "viewer account must be able to authenticate");
+  assert.equal(viewerAuthorization.status, 403,
+    "viewer must be denied cash-register write operations: " + JSON.stringify(viewerAuthorization.body));
+  await page.evaluate(() => sessionStorage.removeItem("mg-business.session"));
+  await page.reload({ waitUntil: "networkidle" });
+  await page.locator("#authForm").waitFor({ state: "visible" });
+  await page.locator("#authForm input[name=\"username\"]").fill("browser-owner");
+  await page.locator("#authForm input[name=\"password\"]").fill("browser-owner-password-2026");
+  await page.locator("#authForm button[type=\"submit\"]").click();
+  await page.locator("#authGate").waitFor({ state: "hidden" });
   const deactivateButton = page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).locator('[data-user-deactivate]');
   const deactivationResponsePromise = page.waitForResponse(response =>
     response.url().endsWith("/api/users/" + createdUserId) && response.request().method() === "DELETE"
