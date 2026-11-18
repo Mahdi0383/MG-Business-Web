@@ -81,7 +81,7 @@ class DeploymentContractTests(unittest.TestCase):
         runbook = read_deployment_file("deploy/PRODUCTION_RUNBOOK.md")
         verify_backup = runbook.index("Verify that the latest encrypted backup exists")
         stop_service = runbook.index("Stop the service", verify_backup)
-        fetch_release = runbook.index("Fetch the release and fast-forward only", stop_service)
+        fetch_release = runbook.index("Fetch the reviewed release and fast-forward only", stop_service)
         self.assertLess(verify_backup, stop_service)
         self.assertLess(stop_service, fetch_release)
         self.assertIn("Do not deploy an unreviewed working tree", runbook)
