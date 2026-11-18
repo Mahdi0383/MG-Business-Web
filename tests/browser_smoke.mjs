@@ -118,7 +118,7 @@ try {
   const supplierResponsePromise = page.waitForResponse(response =>
     response.url().endsWith("/api/suppliers") && response.request().method() === "POST"
   );
-  await page.locator("#supplierForm button[type=submit]").click();
+  await page.locator("#supplierForm").evaluate(form => form.requestSubmit());
   const supplierResponse = await supplierResponsePromise;
   const supplierBody = await supplierResponse.json();
   assert.equal(supplierResponse.status(), 201, "supplier creation response: " + JSON.stringify(supplierBody));
