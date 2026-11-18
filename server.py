@@ -907,6 +907,15 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_error(403, "Directory listing is disabled")
         return None
 
+    def handle_expect_100(self):
+        # The stdlib handler otherwise sends 100 Continue before do_POST can
+        # authenticate a large restore upload or reserve its bounded slot.
+        if self.route() == "/api/backup/restore":
+            self.close_connection = True
+            self.send_error(417, "100-continue is not supported for backup restore")
+            return False
+        return super().handle_expect_100()
+
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
