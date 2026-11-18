@@ -219,6 +219,38 @@ class ApiIntegrationTests(unittest.TestCase):
                 finally:
                     connection.close()
 
+    def test_post_rejects_extremely_long_content_length_without_uncaught_error(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"POST /api/login HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                + b"Content-Length: " + (b"9" * 5000) + b"\r\n\r\n"
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before returning invalid-length response")
+                response.extend(chunk)
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].decode("iso-8859-1")
+            self.assertIn(" 400 ", headers.splitlines()[0])
+            body_length = next(
+                int(line.split(":", 1)[1].strip())
+                for line in headers.splitlines()
+                if line.lower().startswith("content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < body_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing invalid-length response")
+                body.extend(chunk)
+            self.assertIn("طول درخواست", json.loads(body[:body_length])["error"])
+            self.assertEqual(connection.recv(1), b"", "invalid numeric length must close connection")
+        finally:
+            connection.close()
+
     def test_backup_restore_rejects_concurrent_large_upload_before_reading_body(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
