@@ -263,15 +263,15 @@ def restore_snapshot(
                 decrypted_path.unlink()
             raise
 
-    check = sqlite3.connect(str(restore_source), timeout=30)
+    check = None
     try:
+        check = sqlite3.connect(str(restore_source), timeout=30)
         _validate_mg_database(check)
-    except Exception:
+    finally:
+        if check is not None:
+            check.close()
         if decrypted_path.exists():
             decrypted_path.unlink()
-        raise
-    finally:
-        check.close()
 
     if target.exists():
         backup_dir = Path(safety_backup_dir).expanduser().resolve() if safety_backup_dir else target.parent / "backups"
