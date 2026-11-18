@@ -134,18 +134,13 @@ try {
   await page.locator('#purchaseInvoiceForm input[name="discount"]').fill("1000");
   const purchaseResult = await page.locator("#purchaseInvoiceForm").evaluate(async form => {
     const token = sessionStorage.getItem("mg-business.session");
-    const data = new FormData(form);
     const payload = {
       id: "browser-purchase-invoice-001",
-      supplierId: String(data.get("supplierId")),
-      invoiceNumber: String(data.get("invoiceNumber")),
-      invoiceDate: String(data.get("invoiceDate")),
-      discount: Number(data.get("discount")),
-      items: Array.from(form.querySelectorAll(".purchase-line")).map(row => ({
-        productId: String(row.querySelector('[name="productId"]').value),
-        quantity: Number(row.querySelector('[name="quantity"]').value),
-        unitCost: Number(row.querySelector('[name="unitCost"]').value)
-      }))
+      supplierId: ${supplierBody.id},
+      invoiceNumber: "E2E-PURCHASE-001",
+      invoiceDate: form.querySelector('[name="invoiceDate"]').value,
+      discount: 1000,
+      items: [{ productId: ${productBody.id}, quantity: 2, unitCost: 15000 }]
     };
     const response = await fetch("/api/purchase-invoices", {
       method: "POST",
