@@ -45,6 +45,35 @@ class BoundedHttpServerTests(unittest.TestCase):
             peer.close()
             httpd.server_close()
 
+    def test_slow_incomplete_request_is_closed_after_socket_timeout(self):
+        class NoopHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        with mock.patch.object(server, "REQUEST_TIMEOUT_SECONDS", 0.2):
+            httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), NoopHandler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(httpd.server_address, timeout=2)
+            try:
+                client.sendall(b"GET / HTTP/1.1\\r\\nHost:")
+                client.settimeout(2)
+                self.assertEqual(client.recv(1), b"")
+                deadline = time.time() + 2
+                while httpd._worker_slots._value != server.MAX_HTTP_WORKERS and time.time() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+            finally:
+                client.close()
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
     def test_accepted_connection_gets_timeout_and_releases_worker_slot(self):
         class TimeoutProbeHandler(BaseHTTPRequestHandler):
             def do_GET(self):
