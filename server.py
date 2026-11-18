@@ -1214,6 +1214,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/transactions":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده تراکنش‌های مالی ندارید."})
                 rows = db.execute("""SELECT id,title,amount,kind,category,occurred_at AS createdAt
                     FROM transactions WHERE tenant_id=? AND status='posted' ORDER BY created_at DESC LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
@@ -1481,6 +1483,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/cash-flow":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده گزارش جریان نقدی ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1532,6 +1536,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/periods":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403,{"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403,{"error":"دسترسی مشاهده دوره‌های مالی ندارید."})
                 rows=db.execute("""SELECT p.id,p.start_date AS startDate,p.end_date AS endDate,
                     p.closed_at AS closedAt,u.username AS closedBy
                     FROM accounting_periods p JOIN users u ON u.id=p.closed_by
@@ -1541,6 +1547,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/account-ledger":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error":"ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده دفتر معین ندارید."})
                 params=parse_qs(urlparse(self.path).query,keep_blank_values=True)
                 if set(params)-{"accountId","fromDate","toDate","limit","offset"} or any(len(v)!=1 for v in params.values()):
                     return self.send_json(400,{"error":"پارامترهای دفتر معین نامعتبر هستند."})
@@ -1643,6 +1651,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/journal":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده اسناد حسابداری ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1666,6 +1676,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/profit-loss":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده صورت سود و زیان ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query)
                 except ValueError as exc:
@@ -1694,6 +1706,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/trial-balance":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده تراز آزمایشی ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query, allow_from=False)
                 except ValueError as exc:
@@ -1714,6 +1728,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/accounting/balance-sheet":
                 if not module_enabled(db,user["tenant_id"],"accounting"):
                     return self.send_json(403, {"error": "ماژول حسابداری در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager"):
+                    return self.send_json(403, {"error":"دسترسی مشاهده ترازنامه ندارید."})
                 try:
                     dates = parse_report_dates(urlparse(self.path).query, allow_from=False)
                 except ValueError as exc:
