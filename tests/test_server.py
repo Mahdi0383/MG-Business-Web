@@ -219,6 +219,50 @@ class ApiIntegrationTests(unittest.TestCase):
                 finally:
                     connection.close()
 
+    def test_backup_restore_rejects_concurrent_large_upload_before_reading_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(server, "DATA_DIR", root), mock.patch.object(server, "DB_PATH", root / "test.sqlite3"):
+                status, setup = self.request("POST", "/api/setup", {
+                    "businessName": "Restore capacity test",
+                    "username": "restore-capacity-owner",
+                    "password": "restore-capacity-owner-strong-password"
+                })
+                self.assertEqual(status, 200)
+                with mock.patch.object(server, "BACKUP_RESTORE_SEMAPHORE", threading.BoundedSemaphore(0)):
+                    connection = socket.create_connection(self.httpd.server_address, timeout=3)
+                    try:
+                        connection.sendall(
+                            b"POST /api/backup/restore HTTP/1.1\r\n"
+                            b"Host: localhost\r\n"
+                            b"Content-Type: application/json\r\n"
+                            + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                            + ("Authorization: Bearer %s\r\n" % setup["token"]).encode("ascii")
+                            + b"\r\n"
+                        )
+                        response = bytearray()
+                        while b"\r\n\r\n" not in response:
+                            chunk = connection.recv(4096)
+                            self.assertTrue(chunk, "server closed before returning restore-capacity response")
+                            response.extend(chunk)
+                        header_end = response.index(b"\r\n\r\n") + 4
+                        headers = response[:header_end].decode("iso-8859-1")
+                        self.assertIn(" 503 ", headers.splitlines()[0])
+                        body_length = next(
+                            int(line.split(":", 1)[1].strip())
+                            for line in headers.splitlines()
+                            if line.lower().startswith("content-length:")
+                        )
+                        body = bytearray(response[header_end:])
+                        while len(body) < body_length:
+                            chunk = connection.recv(4096)
+                            self.assertTrue(chunk, "server closed before completing restore-capacity response")
+                            body.extend(chunk)
+                        self.assertIn("در حال اجراست", json.loads(body[:body_length])["error"])
+                        self.assertEqual(connection.recv(1), b"", "rejected restore upload must close connection")
+                    finally:
+                        connection.close()
+
     def test_backup_restore_authenticates_before_reading_large_body_and_closes_socket(self):
         connection = socket.create_connection(self.httpd.server_address, timeout=3)
         try:
