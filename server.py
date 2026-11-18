@@ -1195,7 +1195,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"دسترسی مشاهده گزارش ممیزی ندارید."})
                 rows=db.execute("""SELECT a.id,u.username AS actorUsername,a.action,
                     a.entity_type AS entityType,a.entity_id AS entityId,a.details_json AS detailsJson,
-                    a.created_at AS createdAt FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id
+                    a.created_at AS createdAt FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id AND u.tenant_id=a.tenant_id
                     WHERE a.tenant_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 500""",
                     (user["tenant_id"],)).fetchall()
                 items=[]
@@ -1235,7 +1235,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
                 rows=db.execute("""SELECT a.id,a.product_id AS productId,p.name AS productName,
                     a.name,a.price,a.active,a.created_at AS createdAt
-                    FROM product_addons a JOIN products p ON p.id=a.product_id
+                    FROM product_addons a JOIN products p ON p.id=a.product_id AND p.tenant_id=a.tenant_id
                     WHERE a.tenant_id=? AND a.active=1 AND p.active=1 ORDER BY p.name,a.name LIMIT 5000""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
@@ -1261,7 +1261,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = db.execute("""SELECT m.id,m.product_id AS productId,p.name AS productName,
                     m.movement_type AS movementType,m.quantity_delta AS quantityDelta,
                     m.unit_cost AS unitCost,m.note,m.created_at AS createdAt
-                    FROM inventory_movements m JOIN products p ON p.id=m.product_id
+                    FROM inventory_movements m JOIN products p ON p.id=m.product_id AND p.tenant_id=m.tenant_id
                     WHERE m.tenant_id=? ORDER BY m.created_at DESC LIMIT 1000""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/suppliers":
@@ -1529,8 +1529,8 @@ class Handler(SimpleHTTPRequestHandler):
                     s.status,s.closed_at AS closedAt,s.expected_cash AS expectedCash,s.journal_cursor AS journalCursor,
                     s.counted_cash AS countedCash,s.difference,s.open_note AS openNote,
                     s.close_note AS closeNote,op.username AS openedBy,cp.username AS closedBy
-                    FROM cash_register_shifts s JOIN users op ON op.id=s.opened_by
-                    LEFT JOIN users cp ON cp.id=s.closed_by
+                    FROM cash_register_shifts s JOIN users op ON op.id=s.opened_by AND op.tenant_id=s.tenant_id
+                    LEFT JOIN users cp ON cp.id=s.closed_by AND cp.tenant_id=s.tenant_id
                     WHERE s.tenant_id=? ORDER BY s.opened_at DESC LIMIT 100""",
                     (user["tenant_id"],)).fetchall()
                 items=[dict(row) for row in rows]
@@ -1551,7 +1551,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"دسترسی مشاهده دوره‌های مالی ندارید."})
                 rows=db.execute("""SELECT p.id,p.start_date AS startDate,p.end_date AS endDate,
                     p.closed_at AS closedAt,u.username AS closedBy
-                    FROM accounting_periods p JOIN users u ON u.id=p.closed_by
+                    FROM accounting_periods p JOIN users u ON u.id=p.closed_by AND u.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? ORDER BY p.end_date DESC,p.closed_at DESC""",
                     (user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
