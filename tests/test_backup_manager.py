@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -155,6 +157,69 @@ class BackupManagerTests(unittest.TestCase):
                 restore_snapshot(snapshot, root / "target.sqlite3", encryption_key=key)
             self.assertFalse((root / "target.sqlite3").exists())
             self.assertFalse(list(root.glob("target.sqlite3.decrypt-*.tmp")))
+
+
+    def test_backup_cli_create_verify_and_restore_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            backup_dir = root / "backups"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO business_records VALUES('before-cli-restore')")
+            db.commit()
+            db.close()
+
+            script = Path(__file__).resolve().parents[1] / "backup_manager.py"
+            key_result = subprocess.run(
+                [sys.executable, str(script), "--generate-key"],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            key = key_result.stdout.strip()
+            self.assertTrue(key)
+
+            environment = os.environ.copy()
+            environment.update({
+                "MG_DB_PATH": str(database),
+                "MG_BACKUP_DIR": str(backup_dir),
+                "MG_BACKUP_ENCRYPTION_KEY": key,
+                "MG_BACKUP_RETENTION": "5",
+            })
+            created = subprocess.run(
+                [sys.executable, str(script)],
+                check=True, capture_output=True, text=True, env=environment, timeout=30,
+            )
+            snapshot = Path(created.stdout.strip().split(":", 1)[1].strip())
+            self.assertTrue(snapshot.is_file())
+            self.assertTrue(snapshot.name.endswith(".sqlite3.enc"))
+
+            verified = subprocess.run(
+                [sys.executable, str(script), "--verify", str(snapshot)],
+                check=True, capture_output=True, text=True, env=environment, timeout=30,
+            )
+            self.assertIn("Verified MG database snapshot", verified.stdout)
+
+            db = sqlite3.connect(database)
+            db.execute("UPDATE business_records SET value='after-cli-snapshot'")
+            db.commit()
+            db.close()
+            restored = subprocess.run(
+                [sys.executable, str(script), "--restore", str(snapshot)],
+                check=True, capture_output=True, text=True, env=environment, timeout=30,
+            )
+            self.assertIn("Restored database", restored.stdout)
+            db = sqlite3.connect(database)
+            self.assertEqual(
+                db.execute("SELECT value FROM business_records").fetchone()[0],
+                "before-cli-restore",
+            )
+            db.close()
+            self.assertEqual(len(list(backup_dir.glob("*.sqlite3.enc"))), 2)
 
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
