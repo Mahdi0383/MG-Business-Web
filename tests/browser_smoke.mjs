@@ -323,6 +323,7 @@ try {
   const adjustSessionResponse = await adjustSessionPromise;
   assert.equal(adjustSessionResponse.status(), 200, "GameNet session adjustment must succeed");
   await activeDeviceCard.locator(".game-payment-method").selectOption("credit");
+  await page.waitForTimeout(1100); // Ensure at least one billable minute is elapsed for the credit receivable assertion.
   const endSessionPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/gamenet/sessions/" + startSessionBody.id + "/end") && response.request().method() === "POST"
   );
