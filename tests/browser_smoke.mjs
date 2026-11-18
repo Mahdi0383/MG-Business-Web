@@ -430,7 +430,7 @@ try {
       url.searchParams.get("fromDate") === accountingToday &&
       url.searchParams.get("toDate") === accountingToday;
   }));
-  await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
+  await page.locator('#accountingDateFilter button[type="submit"]').click();
   const reportSettled = await Promise.allSettled(reportResponses);
   const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
   if (missingReports.length) throw new Error("Accounting report requests were not observed: " + JSON.stringify(missingReports));
