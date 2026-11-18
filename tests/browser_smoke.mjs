@@ -448,8 +448,19 @@ try {
     const now = new Date();
     return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
   });
-  await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
-  await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
+  await page.locator("#accountingDateFilter").evaluate((form, date) => {
+    const from = form.querySelector('input[name="fromDate"]');
+    const to = form.querySelector('input[name="toDate"]');
+    from.value = date;
+    to.value = date;
+    from.dispatchEvent(new Event("input", { bubbles: true }));
+    from.dispatchEvent(new Event("change", { bubbles: true }));
+    to.dispatchEvent(new Event("input", { bubbles: true }));
+    to.dispatchEvent(new Event("change", { bubbles: true }));
+    if (from.value !== date || to.value !== date) {
+      throw new Error("Accounting date filter did not retain both selected dates");
+    }
+  }, accountingToday);
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
   const accountingRequestEvents = [];
   page.on("request", request => {
