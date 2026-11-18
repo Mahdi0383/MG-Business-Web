@@ -355,8 +355,8 @@ class BackupManagerTests(unittest.TestCase):
                     raise PermissionError("simulated cleanup permission failure")
                 return original_unlink(path, *args, **kwargs)
 
-            with mock.patch("backup_manager.Path.unlink", autospec=True,
-                            side_effect=deny_preserved_sidecar_cleanup):
+            with mock.patch("backup_manager.create_snapshot"), mock.patch(
+                    "backup_manager.Path.unlink", autospec=True, side_effect=deny_preserved_sidecar_cleanup):
                 restored = restore_snapshot(snapshot, database, backup_dir)
 
             self.assertEqual(restored, database.resolve())
