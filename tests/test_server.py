@@ -372,32 +372,35 @@ class BoundedHttpServerTests(unittest.TestCase):
 
 class HttpProtocolHardeningTests(unittest.TestCase):
     def test_backup_restore_rejects_expect_continue_without_interim_body_upload(self):
-        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-        thread.start()
-        client = socket.create_connection(httpd.server_address, timeout=2)
-        try:
-            client.sendall(
-                b"POST /api/backup/restore HTTP/1.1\r\n"
-                b"Host: localhost\r\n"
-                b"Content-Length: 100\r\n"
-                b"Expect: 100-continue\r\n"
-                b"Connection: close\r\n\r\n"
-            )
-            response = bytearray()
-            while True:
-                chunk = client.recv(4096)
-                if not chunk:
-                    break
-                response.extend(chunk)
-            self.assertTrue(response.startswith(b"HTTP/1.0 417 "), bytes(response[:200]))
-            self.assertNotIn(b"100 Continue", response)
-            self.assertNotIn(b"HTTP/1.1 100", response)
-        finally:
-            client.close()
-            httpd.shutdown()
-            httpd.server_close()
-            thread.join(timeout=3)
+        # BaseHTTPRequestHandler only invokes handle_expect_100 when its
+        # configured response protocol is HTTP/1.1 or newer.
+        with mock.patch.object(server.Handler, "protocol_version", "HTTP/1.1"):
+            httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(httpd.server_address, timeout=2)
+            try:
+                client.sendall(
+                    b"POST /api/backup/restore HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Content-Length: 100\r\n"
+                    b"Expect: 100-continue\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                response = bytearray()
+                while True:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+                self.assertTrue(response.startswith(b"HTTP/1.1 417 "), bytes(response[:200]))
+                self.assertNotIn(b"100 Continue", response)
+                self.assertNotIn(b"HTTP/1.1 100", response)
+            finally:
+                client.close()
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
 
 
 class StaticPathSecurityTests(unittest.TestCase):
