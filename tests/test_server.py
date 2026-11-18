@@ -705,7 +705,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertTrue(chunk, "server closed before rejecting Expect header")
                 response.extend(chunk)
             self.assertNotIn(b"100 Continue", response)
-            self.assertIn(b"401", response.split(b"\r\n", 1)[0])
+            self.assertIn(b"417", response.split(b"\r\n", 1)[0])
             header_end = response.index(b"\r\n\r\n") + 4
             headers = response[:header_end].decode("iso-8859-1")
             body_length = next(
