@@ -945,7 +945,9 @@ class Handler(SimpleHTTPRequestHandler):
             self.close_connection = True
             raise ValueError("فشرده‌سازی بدنه درخواست پشتیبانی نمی‌شود.")
         body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
-        if length <= 0 or length > body_limit: raise ValueError("حجم درخواست نامعتبر است.")
+        if length <= 0 or length > body_limit:
+            self.close_connection = True
+            raise ValueError("حجم درخواست نامعتبر است.")
         try:
             raw_body = self.rfile.read(length)
             if len(raw_body) != length:
