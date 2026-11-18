@@ -61,7 +61,7 @@ class BoundedHttpServerTests(unittest.TestCase):
             thread.start()
             client = socket.create_connection(httpd.server_address, timeout=2)
             try:
-                client.sendall(b"GET / HTTP/1.1\\r\\nHost:")
+                client.sendall(b"GET / HTTP/1.1\r\nHost:")
                 client.settimeout(2)
                 self.assertEqual(client.recv(1), b"")
                 deadline = time.time() + 2
