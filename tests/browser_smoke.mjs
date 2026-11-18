@@ -349,6 +349,27 @@ try {
   }, { customerId: customerBody.id, amount: endSessionBody.amountDue });
   assert.equal(customerPaymentResult.status, 201, "customer payment response: " + JSON.stringify(customerPaymentResult.body));
   assert.equal(customerPaymentResult.body.remainingBalance, 0, "customer payment should fully settle GameNet receivable");
+  const customerFinanceAudit = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/accounting/journal", {
+      headers: { Authorization: "Bearer " + token }
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(customerFinanceAudit.status, 200, "accounting journal must be readable after customer settlement");
+  const gameSessionJournal = customerFinanceAudit.body.items.find(item =>
+    item.sourceType === "game_session" && item.sourceId === "SESSION_ID"
+  );
+  const customerPaymentJournal = customerFinanceAudit.body.items.find(item =>
+    item.sourceType === "customer_payment" && item.sourceId === customerPaymentResult.body.paymentId
+  );
+  assert.ok(gameSessionJournal, "GameNet credit settlement must create an accounting journal entry");
+  assert.equal(gameSessionJournal.debit, endSessionBody.amountDue);
+  assert.equal(gameSessionJournal.credit, endSessionBody.amountDue);
+  assert.ok(customerPaymentJournal, "customer payment must create an accounting journal entry");
+  assert.equal(customerPaymentJournal.debit, customerPaymentResult.payload.amount);
+  assert.equal(customerPaymentJournal.credit, customerPaymentResult.payload.amount);
+
   const customerPaymentReplay = await page.evaluate(async ({ customerId, payload }) => {
     const token = sessionStorage.getItem("mg-business.session");
     const response = await fetch("/api/customers/" + customerId + "/payments", {
