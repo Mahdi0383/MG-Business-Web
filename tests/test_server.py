@@ -284,7 +284,20 @@ class ApiIntegrationTests(unittest.TestCase):
                 response.extend(chunk)
             self.assertNotIn(b"100 Continue", response)
             self.assertIn(b"401", response.split(b"\r\n", 1)[0])
-            self.assertEqual(connection.recv(1), b"", "restore Expect request must close without reading body")
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].decode("iso-8859-1")
+            body_length = next(
+                int(line.split(":", 1)[1].strip())
+                for line in headers.splitlines()
+                if line.lower().startswith("content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < body_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing unauthorized restore response")
+                body.extend(chunk)
+            self.assertIn("وارد حساب شوید", json.loads(body[:body_length].decode("utf-8"))["error"])
+            self.assertEqual(connection.recv(1), b"", "unauthorized restore must close without reading upload body")
         finally:
             connection.close()
 
