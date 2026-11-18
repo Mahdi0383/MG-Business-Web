@@ -2730,6 +2730,12 @@ class ApiIntegrationTests(unittest.TestCase):
                            (foreign_tenant,"Foreign Addon Tenant",int(time.time())))
                 db.execute("UPDATE products SET tenant_id=? WHERE id=?",
                            (foreign_tenant,"addon-product"))
+                db.execute("""INSERT INTO users(id,tenant_id,username,password_hash,role,active,created_at)
+                    VALUES(?,?,?,?,?,1,?)""",
+                    ("addon-foreign-user",foreign_tenant,"foreign-audit-actor","not-a-login-hash","manager",int(time.time())))
+                db.execute("""INSERT INTO audit_log(tenant_id,actor_id,action,entity_type,entity_id,details_json,created_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (tenant_id,"addon-foreign-user","tenant.join.probe","test","foreign-actor-probe","{}",int(time.time())))
                 db.commit()
             finally:
                 db.close()
@@ -2739,6 +2745,11 @@ class ApiIntegrationTests(unittest.TestCase):
             status, isolated_inventory = self.request("GET", "/api/inventory", token=token)
             self.assertEqual(status, 200)
             self.assertEqual(isolated_inventory["items"], [])
+            status, isolated_audit = self.request("GET", "/api/audit-log", token=token)
+            self.assertEqual(status, 200)
+            probe = next(item for item in isolated_audit["items"]
+                         if item["entityId"] == "foreign-actor-probe")
+            self.assertIsNone(probe["actorUsername"])
         finally:
             server.DB_PATH = original_db_path
 
