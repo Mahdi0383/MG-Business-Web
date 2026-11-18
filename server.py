@@ -48,6 +48,16 @@ PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
 SCHEMA_VERSION = 17
 
+def reject_duplicate_json_keys(pairs):
+    """Reject duplicate object keys instead of silently accepting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("کلید تکراری در JSON درخواست مجاز نیست.")
+        result[key] = value
+    return result
+
+
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
     if not isinstance(amounts, (list, tuple)) or any(type(x) is not int or x < 0 for x in amounts):
@@ -985,7 +995,7 @@ class Handler(SimpleHTTPRequestHandler):
             if len(raw_body) != length:
                 self.close_connection = True
                 raise ValueError("بدنه درخواست ناقص است.")
-            value = json.loads(raw_body)
+            value = json.loads(raw_body, object_pairs_hook=reject_duplicate_json_keys)
         except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
         if not isinstance(value, dict): raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
         return value
