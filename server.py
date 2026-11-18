@@ -942,7 +942,11 @@ class Handler(SimpleHTTPRequestHandler):
         if not raw_length.isascii() or not raw_length.isdecimal():
             self.close_connection = True
             raise ValueError("طول درخواست نامعتبر است.")
-        length = int(raw_length)
+        try:
+            length = int(raw_length)
+        except ValueError:
+            self.close_connection = True
+            raise ValueError("طول درخواست نامعتبر است.")
         if self.headers.get("Content-Encoding", "identity").strip().lower() != "identity":
             self.close_connection = True
             raise ValueError("فشرده‌سازی بدنه درخواست پشتیبانی نمی‌شود.")
