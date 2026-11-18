@@ -482,6 +482,21 @@ def connect():
     except OSError:
         pass
     db.row_factory = sqlite3.Row
+    # Never let an older application silently open a database migrated by a
+    # newer release. Check before SCHEMA executes any CREATE/INDEX statements.
+    has_migrations = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+    ).fetchone()
+    if has_migrations:
+        current_schema = db.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+        ).fetchone()[0]
+        if current_schema > SCHEMA_VERSION:
+            db.close()
+            raise RuntimeError(
+                f"Database schema version {current_schema} is newer than this "
+                f"application supports (maximum {SCHEMA_VERSION}); upgrade the application."
+            )
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("PRAGMA journal_mode=WAL")
