@@ -156,7 +156,7 @@ Perform restore drills on a separate staging host using a copy of the encrypted 
 1. Review the release notes and identify the exact target commit.
 2. Verify that the latest encrypted backup exists and passes `backup_manager.py --verify`.
 3. Stop the service and make an additional filesystem/database safety copy.
-4. Fetch the release and fast-forward only; do not deploy an unreviewed working tree.
+4. Fetch the reviewed release and fast-forward only. Do not deploy an unreviewed working tree.
 5. Run Python compilation, project smoke checks, backend tests, and browser E2E in CI before deployment.
 6. Start the service; startup applies database migrations. Check `/api/ready` and inspect logs.
 7. Run a small owner-approved transaction and verify the corresponding ledger/report before reopening normal operations.
