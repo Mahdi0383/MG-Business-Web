@@ -396,6 +396,46 @@ class BackupManagerTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertFalse(list(root.glob("restored.sqlite3.decrypt-*.tmp")))
 
+    def test_restore_rejects_database_schema_newer_than_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "future.sqlite3"
+            target = root / "live.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_database(path, version, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(?,1)", (version,))
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            from schema_version import SCHEMA_VERSION
+            create_database(source, SCHEMA_VERSION + 1, "future-schema")
+            create_database(target, SCHEMA_VERSION, "current-live-data")
+            snapshot = create_snapshot(source, backup_dir)
+
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "newer than this application supports"):
+                verify_snapshot(snapshot)
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "newer than this application supports"):
+                restore_snapshot(snapshot, target, backup_dir)
+
+            db = sqlite3.connect(target)
+            try:
+                self.assertEqual(
+                    db.execute("SELECT value FROM business_records").fetchone()[0],
+                    "current-live-data",
+                )
+            finally:
+                db.close()
+            self.assertEqual(list(backup_dir.glob("mg-business-*.sqlite3")), [snapshot])
+
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
