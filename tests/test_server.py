@@ -2845,18 +2845,18 @@ class ApiIntegrationTests(unittest.TestCase):
         connection = socket.create_connection(self.httpd.server_address, timeout=3)
         try:
             connection.sendall(
-                b"GET /api/me HTTP/1.1\r\\n"
-                b"Host: localhost\r\\n"
-                b"Authorization: Bearer " + b"a" * 40 + b"\r\\n"
-                b"Authorization: Bearer " + b"b" * 40 + b"\r\\n"
-                b"Connection: close\r\\n\r\\n"
+                b"GET /api/me HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Authorization: Bearer " + b"a" * 40 + b"\r\n"
+                b"Authorization: Bearer " + b"b" * 40 + b"\r\n"
+                b"Connection: close\r\n\r\n"
             )
             response = bytearray()
-            while b"\r\\n\r\\n" not in response:
+            while b"\r\n\r\n" not in response:
                 chunk = connection.recv(4096)
                 self.assertTrue(chunk, "server closed before returning authorization error")
                 response.extend(chunk)
-            status_line = response.split(b"\r\\n", 1)[0]
+            status_line = response.split(b"\r\n", 1)[0]
             self.assertIn(b" 401 ", status_line)
             self.assertEqual(connection.recv(1), b"", "ambiguous authorization must not keep connection alive")
         finally:
