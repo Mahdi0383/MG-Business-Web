@@ -577,22 +577,28 @@ class ApiIntegrationTests(unittest.TestCase):
                     connection.close()
 
     def test_post_rejects_duplicate_json_object_keys_and_closes_socket(self):
-        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        class Http11Handler(server.Handler):
+            protocol_version = "HTTP/1.1"
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Http11Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        connection = socket.create_connection(httpd.server_address, timeout=3)
         try:
             body = b'{"username":"first","username":"second","password":"not-a-real-password"}'
             connection.sendall(
-                b"POST /api/login HTTP/1.1\r\n"
-                b"Host: localhost\r\n"
-                b"Content-Type: application/json\r\n"
-                + ("Content-Length: %d\r\n" % len(body)).encode("ascii")
-                + b"Connection: close\r\n\r\n" + body
+                b"POST /api/login HTTP/1.1\\r\\n"
+                b"Host: localhost\\r\\n"
+                b"Content-Type: application/json\\r\\n"
+                + ("Content-Length: %d\\r\\n" % len(body)).encode("ascii")
+                + b"\\r\\n" + body
             )
             response = bytearray()
-            while b"\r\n\r\n" not in response:
+            while b"\\r\\n\\r\\n" not in response:
                 chunk = connection.recv(4096)
                 self.assertTrue(chunk, "server closed before returning duplicate-key error")
                 response.extend(chunk)
-            header_end = response.index(b"\r\n\r\n") + 4
+            header_end = response.index(b"\\r\\n\\r\\n") + 4
             headers = response[:header_end].decode("iso-8859-1")
             self.assertIn(" 400 ", headers.splitlines()[0])
             body_length = next(
@@ -606,9 +612,13 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertTrue(chunk, "server closed before completing duplicate-key error")
                 body_response.extend(chunk)
             self.assertIn("کلید تکراری", json.loads(body_response[:body_length])["error"])
-            self.assertEqual(connection.recv(1), b"", "ambiguous JSON keys must close the connection")
+            connection.settimeout(2)
+            self.assertEqual(connection.recv(1), b"", "ambiguous JSON keys must close the HTTP/1.1 connection")
         finally:
             connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
 
     def test_post_rejects_duplicate_content_encoding_headers(self):
         connection = socket.create_connection(self.httpd.server_address, timeout=3)
