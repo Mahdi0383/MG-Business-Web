@@ -104,6 +104,21 @@ class BoundedHttpServerTests(unittest.TestCase):
             thread.join(timeout=3)
 
 
+    def test_worker_slot_is_released_when_thread_start_fails(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client, peer = socket.socketpair()
+        initial_slots = httpd._worker_slots._value
+        try:
+            with mock.patch("threading.Thread.start", side_effect=RuntimeError("simulated thread start failure")):
+                with self.assertRaisesRegex(RuntimeError, "simulated thread start failure"):
+                    httpd.process_request(client, ("127.0.0.1", 12345))
+            self.assertEqual(httpd._worker_slots._value, initial_slots)
+        finally:
+            client.close()
+            peer.close()
+            httpd.server_close()
+
+
 class ApiIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
