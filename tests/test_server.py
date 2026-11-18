@@ -162,11 +162,11 @@ class BoundedHttpServerTests(unittest.TestCase):
         try:
             # A zero-capacity semaphore deterministically models a saturated worker pool.
             httpd._worker_slots = threading.BoundedSemaphore(0)
-            with mock.patch.object(client, "settimeout", wraps=client.settimeout) as settimeout, \
+            with mock.patch.object(socket.socket, "settimeout", autospec=True) as settimeout, \
                  mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
                 httpd.process_request(client, ("127.0.0.1", 12345))
 
-            settimeout.assert_called_once_with(server.REQUEST_TIMEOUT_SECONDS)
+            settimeout.assert_called_once_with(client, server.REQUEST_TIMEOUT_SECONDS)
             shutdown.assert_called_once_with(client)
             response = peer.recv(1024)
             self.assertEqual(
