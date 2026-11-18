@@ -1225,7 +1225,11 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403, {"error": "ماژول انبار یا کافه در لایسنس فعال نیست."})
                 rows = db.execute("""SELECT id,name,sku,category,sell_price AS sellPrice,cost_price AS costPrice,active
                     FROM products WHERE tenant_id=? ORDER BY name LIMIT 5000""", (user["tenant_id"],)).fetchall()
-                return self.send_json(200, {"items": [dict(row) for row in rows]})
+                items = [dict(row) for row in rows]
+                if user["role"] == "cashier":
+                    for item in items:
+                        item.pop("costPrice", None)
+                return self.send_json(200, {"items": items})
             if path == "/api/product-addons":
                 if not require_any_module(db,user["tenant_id"],"cafe","inventory"):
                     return self.send_json(403,{"error":"ماژول کافه یا انبار فعال نیست."})
