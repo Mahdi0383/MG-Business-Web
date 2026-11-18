@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class ProductionDeploymentAssetTests(unittest.TestCase):
     def test_nginx_proxy_is_tls_only_and_overwrites_real_ip(self):
         config = (ROOT / "deploy/nginx/mg-business.conf.example").read_text(encoding="utf-8")
-        self.assertIn("return 301 https://$host$request_uri;", config)
+        self.assertIn("return 301 https://business.example.com$request_uri;", config)
+        self.assertIn("if ($host != business.example.com) { return 444; }", config)
+        self.assertNotIn("return 301 https://$host$request_uri;", config)
         self.assertIn("listen 443 ssl;", config)
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
         self.assertIn("proxy_pass http://127.0.0.1:8080;", config)
