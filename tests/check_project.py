@@ -234,7 +234,7 @@ if "renderKitchenQueue" not in app or "data-order-fulfillment" not in app:
     raise SystemExit("Cafe kitchen queue UI and staged order actions are missing")
 if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
     raise SystemExit("Cash register opening and reconciliation UI is missing")
-if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'from schema_version import SCHEMA_VERSION' not in server or 'SCHEMA_VERSION = 17' not in (root / "schema_version.py").read_text(encoding="utf-8"):
     raise SystemExit("Cafe kitchen fulfillment migration is missing")
 if 'if path.startswith("/api/orders/") and path.endswith("/fulfillment"):' not in server or 'cafe.order.fulfillment.updated' not in server:
     raise SystemExit("Audited kitchen order fulfillment API is missing")
