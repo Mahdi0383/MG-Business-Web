@@ -182,6 +182,23 @@ class BoundedHttpServerTests(unittest.TestCase):
             peer.close()
             httpd.server_close()
 
+    def test_overload_send_failure_still_closes_socket_without_consuming_slot(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client, peer = socket.socketpair()
+        httpd._worker_slots = threading.BoundedSemaphore(0)
+        peer.close()
+        try:
+            with mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
+                # A disconnected peer makes the 503 write fail; cleanup must
+                # still close the accepted socket and leave capacity unchanged.
+                httpd.process_request(client, ("127.0.0.1", 12345))
+            shutdown.assert_called_once_with(client)
+            self.assertEqual(httpd._worker_slots._value, 0)
+            self.assertEqual(client.fileno(), -1)
+        finally:
+            client.close()
+            httpd.server_close()
+
     def test_live_worker_limit_rejects_excess_connection_until_slot_releases(self):
         started = threading.Event()
         release = threading.Event()
