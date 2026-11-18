@@ -332,10 +332,10 @@ class BoundedHttpServerTests(unittest.TestCase):
                 # The headers are complete, but the declared JSON body never
                 # arrives. The socket timeout must terminate this worker too.
                 client.sendall(
-                    b"POST /api/setup HTTP/1.1\\r\\n"
-                    b"Host: localhost\\r\\n"
-                    b"Content-Length: 20\\r\\n"
-                    b"Content-Type: application/json\\r\\n\\r\\n"
+                    b"POST /api/setup HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Content-Length: 20\r\n"
+                    b"Content-Type: application/json\r\n\r\n"
                     b"{"
                 )
                 client.settimeout(2)
