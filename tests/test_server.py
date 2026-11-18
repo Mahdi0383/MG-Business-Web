@@ -68,8 +68,7 @@ class DatabaseSchemaCompatibilityTests(unittest.TestCase):
     def test_failed_migration_rolls_back_schema_and_version_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "migration.sqlite3"
-            with mock.patch.object(server, "DATA_DIR", Path(directory)), \\
-                 mock.patch.object(server, "DB_PATH", db_path):
+            with mock.patch.object(server, "DATA_DIR", Path(directory)), mock.patch.object(server, "DB_PATH", db_path):
                 initialized = server.connect()
                 initialized.close()
 
