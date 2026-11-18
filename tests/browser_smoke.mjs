@@ -21,12 +21,12 @@ try {
 
   await page.locator('#navigation [data-page="accounting"]').click();
   await page.locator("#accountCreateForm").waitFor({ state: "visible" });
-  await page.locator('#accountCreateForm input[name="code"]').fill("1700");
+  await page.locator('#accountCreateForm input[name="code"]').fill("9876543210");
   await page.locator('#accountCreateForm input[name="name"]').fill("حساب آزمایشی مرورگر");
   await page.locator('#accountCreateForm select[name="accountType"]').selectOption("asset");
   await page.locator('#accountCreateForm button[type="submit"]').click();
-  await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" }).first().waitFor({ state: "visible" });
-  const unusedAccountRow = page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" });
+  await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "9876543210" }).first().waitFor({ state: "visible" });
+  const unusedAccountRow = page.locator("#modulePage .module-table-row.trial").filter({ hasText: "9876543210" });
   const accountDeactivationPromise = page.waitForResponse(response =>
     response.url().includes("/api/accounting/accounts/") && response.request().method() === "DELETE"
   );
@@ -43,7 +43,7 @@ try {
     return { status: response.status, body: await response.json() };
   });
   assert.equal(activeAccountsAfterDeactivation.status, 200, "active account chart API must remain available");
-  assert.equal(activeAccountsAfterDeactivation.body.items.some(account => account.code === "1700"), false,
+  assert.equal(activeAccountsAfterDeactivation.body.items.some(account => account.code === "9876543210"), false,
     "deactivated account must be excluded from the active chart API");
   const accountChart = page.locator("#modulePage h3.section-caption")
     .filter({ hasText: "کدینگ حساب‌ها" })
@@ -53,9 +53,9 @@ try {
     const heading = [...document.querySelectorAll("#modulePage h3.section-caption")]
       .find(element => element.textContent.includes("کدینگ حساب‌ها"));
     const chart = heading?.nextElementSibling;
-    return Boolean(chart && !chart.innerText.includes("1700"));
+    return Boolean(chart && !chart.innerText.includes("9876543210"));
   });
-  assert.equal(await accountChart.locator(".module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
+  assert.equal(await accountChart.locator(".module-table-row.trial").filter({ hasText: "9876543210" }).count(), 0,
     "deactivated account must disappear from the active chart UI");
 
   await page.locator('#navigation [data-page="overview"]').click();
