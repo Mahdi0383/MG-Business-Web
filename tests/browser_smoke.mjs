@@ -5,6 +5,9 @@ const errors = [];
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
+  page.on("console", message => { if (message.type() === "error") console.error("BROWSER CONSOLE:", message.text()); });
+  page.on("pageerror", error => console.error("BROWSER PAGE ERROR:", error.stack || error.message));
+  page.on("requestfailed", request => console.error("BROWSER REQUEST FAILED:", request.method(), request.url(), request.failure()?.errorText));
   page.on("pageerror", error => errors.push(error.message));
   await page.goto("http://127.0.0.1:8080", { waitUntil: "networkidle" });
   await page.locator("#authForm").waitFor({ state: "visible" });
@@ -240,7 +243,10 @@ try {
       url.searchParams.get("toDate") === accountingToday;
   }));
   await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
-  const reportResults = await Promise.all(reportResponses);
+  const reportSettled = await Promise.allSettled(reportResponses);
+  const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
+  if (missingReports.length) throw new Error("Accounting report requests were not observed: " + JSON.stringify(missingReports));
+  const reportResults = reportSettled.map(result => result.value);
   for (let index = 0; index < reportPaths.length; index++) {
     assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
   }
