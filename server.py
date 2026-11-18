@@ -635,7 +635,7 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM purchase_invoices i WHERE i.tenant_id=? AND i.supplier_id=?
                     UNION ALL
                     SELECT 'payment' AS sourceType,p.id AS sourceId,i.invoice_number AS reference,
-                    NULL AS entryDate,p.created_at AS createdAt,0 AS credit,p.amount AS debit
+                    date(p.created_at,'unixepoch','localtime') AS entryDate,p.created_at AS createdAt,0 AS credit,p.amount AS debit
                     FROM supplier_payments p JOIN purchase_invoices i ON i.id=p.invoice_id AND i.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? AND p.supplier_id=?
                     ORDER BY createdAt,sourceType,sourceId""",
