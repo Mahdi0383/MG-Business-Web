@@ -1655,11 +1655,12 @@ class ApiIntegrationTests(unittest.TestCase):
         # create exactly one balanced reversal, and leave an audit trail.
         db = server.connect()
         try:
+            tenant_id = db.execute("SELECT tenant_id FROM users WHERE id=?", (owner_id,)).fetchone()[0]
             voided_row = db.execute(
                 "SELECT status,voided_by,voided_at FROM transactions WHERE id='tx-test-1' AND tenant_id=?",
                 (tenant_id,)).fetchone()
             self.assertEqual(voided_row["status"], "voided")
-            self.assertEqual(voided_row["voided_by"], setup["user"]["id"])
+            self.assertEqual(voided_row["voided_by"], owner_id)
             self.assertGreater(voided_row["voided_at"], 0)
             reversal_rows = db.execute(
                 "SELECT id,reversal_of FROM journal_entries WHERE tenant_id=? AND source_type='transaction_reversal' AND source_id='tx-test-1'",
