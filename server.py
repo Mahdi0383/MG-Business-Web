@@ -929,12 +929,29 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def read_json(self):
-        try: length = int(self.headers.get("Content-Length", "0"))
-        except ValueError: raise ValueError("طول درخواست نامعتبر است.")
+        # Reject ambiguous HTTP message framing. BaseHTTPRequestHandler does not
+        # decode chunked bodies, and accepting both Transfer-Encoding and
+        # Content-Length can desynchronize persistent connections.
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if len(content_lengths) != 1 or self.headers.get("Transfer-Encoding") is not None:
+            self.close_connection = True
+            raise ValueError("قالب طول بدنه درخواست نامعتبر است.")
+        raw_length = content_lengths[0].strip()
+        if not raw_length.isascii() or not raw_length.isdecimal():
+            self.close_connection = True
+            raise ValueError("طول درخواست نامعتبر است.")
+        length = int(raw_length)
+        if self.headers.get("Content-Encoding", "identity").strip().lower() != "identity":
+            self.close_connection = True
+            raise ValueError("فشرده‌سازی بدنه درخواست پشتیبانی نمی‌شود.")
         body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
         if length <= 0 or length > body_limit: raise ValueError("حجم درخواست نامعتبر است.")
         try:
-            value = json.loads(self.rfile.read(length))
+            raw_body = self.rfile.read(length)
+            if len(raw_body) != length:
+                self.close_connection = True
+                raise ValueError("بدنه درخواست ناقص است.")
+            value = json.loads(raw_body)
         except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
         if not isinstance(value, dict): raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
         return value
