@@ -156,14 +156,14 @@ try {
   });
   assert.equal(purchaseReplay.status, 200, "replaying the same purchase invoice must be idempotent: " + JSON.stringify(purchaseReplay.body));
   assert.equal(purchaseReplay.body.duplicate, true, "replayed purchase invoice must be identified as duplicate");
-  const purchaseRow = page.locator(".module-table-row.movements").filter({ hasText: "E2E-PURCHASE-001" });
-  await purchaseRow.waitFor({ state: "visible" });
-  await purchaseRow.locator('.supplierPaymentForm input[name="amount"]').fill("9000");
+  const supplierPaymentForm = page.locator(".supplierPaymentForm").last();
+  await supplierPaymentForm.waitFor({ state: "visible" });
+  await supplierPaymentForm.locator('input[name="amount"]').fill("9000");
   const supplierPaymentPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/purchase-invoices/" + purchaseBody.id + "/payments") &&
     response.request().method() === "POST"
   );
-  await purchaseRow.locator(".supplierPaymentForm button[type=submit]").click();
+  await supplierPaymentForm.locator("button[type=submit]").click();
   const supplierPaymentResponse = await supplierPaymentPromise;
   const supplierPaymentBody = await supplierPaymentResponse.json();
   assert.equal(supplierPaymentResponse.status(), 201, "supplier partial payment response: " + JSON.stringify(supplierPaymentBody));
