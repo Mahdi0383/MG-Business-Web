@@ -1650,6 +1650,43 @@ class ApiIntegrationTests(unittest.TestCase):
 
         status, result = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
         self.assertEqual(status, 200)
+        self.assertTrue(result["voided"])
+        # A generic transaction void must atomically mark the transaction,
+        # create exactly one balanced reversal, and leave an audit trail.
+        db = server.connect()
+        try:
+            voided_row = db.execute(
+                "SELECT status,voided_by,voided_at FROM transactions WHERE id='tx-test-1' AND tenant_id=?",
+                (tenant_id,)).fetchone()
+            self.assertEqual(voided_row["status"], "voided")
+            self.assertEqual(voided_row["voided_by"], setup["user"]["id"])
+            self.assertGreater(voided_row["voided_at"], 0)
+            reversal_rows = db.execute(
+                "SELECT id,reversal_of FROM journal_entries WHERE tenant_id=? AND source_type='transaction_reversal' AND source_id='tx-test-1'",
+                (tenant_id,)).fetchall()
+            self.assertEqual(len(reversal_rows), 1)
+            self.assertTrue(reversal_rows[0]["reversal_of"])
+            reversal_totals = db.execute(
+                "SELECT COALESCE(SUM(debit),0) AS debit,COALESCE(SUM(credit),0) AS credit "
+                "FROM journal_lines WHERE tenant_id=? AND entry_id=?",
+                (tenant_id,reversal_rows[0]["id"])).fetchone()
+            self.assertEqual(reversal_totals["debit"], reversal_totals["credit"])
+            self.assertGreater(reversal_totals["debit"], 0)
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND action='transaction.voided' AND entity_id='tx-test-1'",
+                (tenant_id,)).fetchone()[0], 1)
+        finally:
+            db.close()
+        status, repeated_generic_void = self.request(
+            "DELETE", "/api/transactions/tx-test-1", token=token)
+        self.assertEqual(status, 404)
+        db = server.connect()
+        try:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE tenant_id=? AND source_type='transaction_reversal' AND source_id='tx-test-1'",
+                (tenant_id,)).fetchone()[0], 1)
+        finally:
+            db.close()
         status, result = self.request("GET", "/api/transactions", token=token)
         self.assertEqual(len(result["items"]), 3)
         self.assertIn("order-order-credit-1", [x["id"] for x in result["items"]])
