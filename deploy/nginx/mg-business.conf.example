@@ -37,6 +37,8 @@ server {
         client_max_body_size 50m;
         limit_req zone=mg_api_per_ip burst=60 nodelay;
         limit_req_status 429;
+        # Buffer complete client uploads at Nginx before occupying an app worker.
+        proxy_request_buffering on;
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -52,6 +54,8 @@ server {
         # Smooth bursts while limiting sustained API request floods per IP.
         limit_req zone=mg_api_per_ip burst=60 nodelay;
         limit_req_status 429;
+        # Buffer complete client uploads at Nginx before occupying an app worker.
+        proxy_request_buffering on;
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -64,6 +68,8 @@ server {
     }
 
     location / {
+        # Buffer complete client uploads at Nginx before occupying an app worker.
+        proxy_request_buffering on;
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
