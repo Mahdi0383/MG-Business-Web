@@ -396,6 +396,53 @@ class BackupManagerTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertFalse(list(root.glob("restored.sqlite3.decrypt-*.tmp")))
 
+    def test_restore_rejects_non_integer_schema_migration_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "malformed.sqlite3"
+            target = root / "live.sqlite3"
+            backup_dir = root / "backups"
+
+            db = sqlite3.connect(source)
+            db.execute("CREATE TABLE schema_migrations(version TEXT, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES('not-a-version',1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO business_records VALUES('malformed-schema')")
+            db.commit()
+            db.close()
+
+            db = sqlite3.connect(target)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(17,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO business_records VALUES('preserve-live-data')")
+            db.commit()
+            db.close()
+
+            snapshot = create_snapshot(source, backup_dir)
+            expected = "no valid integer MG Business schema migration"
+            with self.assertRaisesRegex(sqlite3.DatabaseError, expected):
+                verify_snapshot(snapshot)
+            with self.assertRaisesRegex(sqlite3.DatabaseError, expected):
+                restore_snapshot(snapshot, target, backup_dir)
+
+            db = sqlite3.connect(target)
+            try:
+                self.assertEqual(
+                    db.execute("SELECT value FROM business_records").fetchone()[0],
+                    "preserve-live-data",
+                )
+            finally:
+                db.close()
+            self.assertEqual(list(backup_dir.glob("mg-business-*.sqlite3")), [snapshot])
+
+
     def test_restore_rejects_database_schema_newer_than_application(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
