@@ -214,7 +214,7 @@ if 'if backup_version >= 2:' not in server or 'accounting_periods' not in server
     raise SystemExit("Legacy backup restore must preserve accounting period locks")
 if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
     raise SystemExit("Accounting period close form is missing")
-if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'from schema_version import SCHEMA_VERSION' not in server or 'SCHEMA_VERSION = 17' not in (root / "schema_version.py").read_text(encoding="utf-8"):
     raise SystemExit("Cash register shift schema migration is missing")
 if 'cash_register_expected_cash' not in server or 'a.code=\'1000\'' not in server:
     raise SystemExit("Cash register reconciliation must use posted cash-account journal movements")
