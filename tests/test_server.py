@@ -181,6 +181,19 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_backup_restore_authenticates_before_reading_large_body(self):
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=3)
+        try:
+            connection.putrequest("POST", "/api/backup/restore")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", str(server.MAX_BACKUP_BODY))
+            connection.endheaders()
+            response = connection.getresponse()
+            self.assertEqual(response.status, 401)
+            self.assertIn("وارد حساب", json.loads(response.read())["error"])
+        finally:
+            connection.close()
+
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
         tenant_ids = ("tenant-public-a", "tenant-public-b")
         db = server.connect()
