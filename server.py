@@ -591,7 +591,7 @@ def connect():
         if "request_fingerprint" not in order_columns:
             db.execute("ALTER TABLE orders ADD COLUMN request_fingerprint TEXT")
         legacy_public_orders = db.execute("""SELECT o.id,o.tenant_id,c.full_name,c.phone
-            FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
+            FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id AND c.tenant_id=o.tenant_id
             WHERE o.id LIKE 'public-%' AND o.request_fingerprint IS NULL""").fetchall()
         for legacy_order in legacy_public_orders:
             if not legacy_order["full_name"] or not legacy_order["phone"]:
@@ -1354,7 +1354,7 @@ class Handler(SimpleHTTPRequestHandler):
                 order_id=path.rsplit("/",1)[-1]
                 order=db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.fulfillment_status AS fulfillmentStatus,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
-                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
                     WHERE o.id=? AND o.tenant_id=?""",(order_id,user["tenant_id"])).fetchone()
                 if not order:
                     return self.send_json(404,{"error":"سفارش پیدا نشد."})
@@ -1386,7 +1386,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if upper is not None: conditions.append("o.created_at<?"); values.append(upper)
                 rows = db.execute("""SELECT o.id,o.order_number AS orderNumber,o.status,o.fulfillment_status AS fulfillmentStatus,o.subtotal,o.discount,o.total,
                     o.payment_method AS paymentMethod,o.created_at AS createdAt,c.full_name AS customerName
-                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+                    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id AND c.tenant_id=o.tenant_id
                     WHERE """+" AND ".join(conditions)+""" ORDER BY o.created_at DESC LIMIT 1000""", values).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows],
                     "fromDate":time.strftime("%Y-%m-%d",dates["fromDate"]) if "fromDate" in dates else None,
@@ -1414,7 +1414,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows=db.execute("""SELECT g.id,g.device_id AS deviceId,d.name AS deviceName,
                     g.started_at AS startedAt,g.ended_at AS endedAt,g.players_count AS playersCount,
                     g.rate_per_hour AS ratePerHour,g.is_free AS isFree
-                    FROM game_session_segments g JOIN game_devices d ON d.id=g.device_id
+                    FROM game_session_segments g JOIN game_devices d ON d.id=g.device_id AND d.tenant_id=g.tenant_id
                     WHERE g.tenant_id=? AND g.session_id=? ORDER BY g.started_at,g.id""",
                     (user["tenant_id"],session_id)).fetchall()
                 return self.send_json(200, {"items":[dict(row) for row in rows]})
@@ -1426,8 +1426,8 @@ class Handler(SimpleHTTPRequestHandler):
                     s.ended_at AS endedAt,s.status,s.players_count AS playersCount,
                     s.rate_per_hour AS ratePerHour,s.is_free AS isFree,s.amount_due AS amountDue,
                     s.payment_method AS paymentMethod
-                    FROM game_sessions s JOIN game_devices d ON d.id=s.device_id
-                    LEFT JOIN customers c ON c.id=s.customer_id
+                    FROM game_sessions s JOIN game_devices d ON d.id=s.device_id AND d.tenant_id=s.tenant_id
+                    LEFT JOIN customers c ON c.id=s.customer_id AND c.tenant_id=s.tenant_id
                     WHERE s.tenant_id=? ORDER BY s.started_at DESC LIMIT 500""", (user["tenant_id"],)).fetchall()
                 return self.send_json(200, {"items": [dict(row) for row in rows]})
             if path == "/api/gamenet/reservations":
@@ -1437,8 +1437,8 @@ class Handler(SimpleHTTPRequestHandler):
                     r.customer_id AS customerId,c.full_name AS customerName,r.starts_at AS startsAt,
                     r.ends_at AS endsAt,r.status,r.players_count AS playersCount,r.notes,
                     r.created_at AS createdAt FROM gamenet_reservations r
-                    JOIN game_devices d ON d.id=r.device_id
-                    LEFT JOIN customers c ON c.id=r.customer_id
+                    JOIN game_devices d ON d.id=r.device_id AND d.tenant_id=r.tenant_id
+                    LEFT JOIN customers c ON c.id=r.customer_id AND c.tenant_id=r.tenant_id
                     WHERE r.tenant_id=? ORDER BY r.starts_at DESC LIMIT 1000""",(user["tenant_id"],)).fetchall()
                 return self.send_json(200,{"items":[dict(row) for row in rows]})
             if path == "/api/accounting/accounts":
