@@ -277,6 +277,18 @@ try {
   assert.equal(shiftCloseBody.difference, 0, "cash shift should reconcile without a difference");
 
   // Exercise the complete GameNet lifecycle through the real browser UI.
+  const customerResult = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ fullName: "E2E Credit Customer", phone: null, email: null, notes: "GameNet receivable acceptance" })
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(customerResult.status, 201, "customer creation response: " + JSON.stringify(customerResult.body));
+  const customerBody = customerResult.body;
+
   await page.locator('#navigation [data-page="gamenet"]').click();
   await page.locator("#deviceForm").waitFor({ state: "visible" });
   await page.locator('#deviceForm input[name="name"]').fill("E2E-PC-01");
@@ -290,6 +302,7 @@ try {
   assert.equal(deviceResponse.status(), 201, "GameNet device API response: " + JSON.stringify(deviceBody));
   const deviceCard = page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" });
   await deviceCard.waitFor({ state: "visible" });
+  await deviceCard.locator(".game-customer").selectOption(customerBody.id);
   const startSessionPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/gamenet/sessions") && response.request().method() === "POST"
   );
@@ -309,6 +322,7 @@ try {
   await activeDeviceCard.locator(".game-adjust-form button[type=submit]").click();
   const adjustSessionResponse = await adjustSessionPromise;
   assert.equal(adjustSessionResponse.status(), 200, "GameNet session adjustment must succeed");
+  await activeDeviceCard.locator(".game-payment-method").selectOption("credit");
   const endSessionPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/gamenet/sessions/" + startSessionBody.id + "/end") && response.request().method() === "POST"
   );
@@ -316,8 +330,20 @@ try {
   const endSessionResponse = await endSessionPromise;
   const endSessionBody = await endSessionResponse.json();
   assert.equal(endSessionResponse.status(), 200, "GameNet session settlement response: " + JSON.stringify(endSessionBody));
-  assert.equal(endSessionBody.paymentMethod, "cash");
-  await page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" }).locator(".device-card-head b", { hasText: "E2E-PC-01" }).waitFor({ state: "visible" });
+  assert.equal(endSessionBody.paymentMethod, "credit");
+  assert.ok(endSessionBody.amountDue > 0, "credit GameNet session should create a positive customer receivable");
+  await page.locator('#navigation [data-page="customers"]').click();
+  await page.locator("#customerPaymentForm").waitFor({ state: "visible" });
+  await page.locator('#customerPaymentForm select[name="customerId"]').selectOption(customerBody.id);
+  await page.locator('#customerPaymentForm input[name="amount"]').fill(String(endSessionBody.amountDue));
+  const customerPaymentPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/customers/" + customerBody.id + "/payments") && response.request().method() === "POST"
+  );
+  await page.locator("#customerPaymentForm button[type=submit]").click();
+  const customerPaymentResponse = await customerPaymentPromise;
+  const customerPaymentBody = await customerPaymentResponse.json();
+  assert.equal(customerPaymentResponse.status(), 201, "customer payment response: " + JSON.stringify(customerPaymentBody));
+  assert.equal(customerPaymentBody.remainingBalance, 0, "customer payment should fully settle GameNet receivable");
 
   await page.locator('#navigation [data-page="accounting"]').click();
   const accountingToday = await page.evaluate(() => {
