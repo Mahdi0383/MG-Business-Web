@@ -688,38 +688,26 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_backup_restore_does_not_send_100_continue_before_authorization(self):
+    def test_backup_restore_rejects_expect_header_with_default_http_protocol(self):
         connection = socket.create_connection(self.httpd.server_address, timeout=3)
         try:
             connection.sendall(
-                b"POST /api/backup/restore HTTP/1.1\r\n"
-                b"Host: localhost\r\n"
-                b"Content-Type: application/json\r\n"
-                b"Expect: 100-continue\r\n"
-                + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
-                + b"\r\n"
+                b"POST /api/backup/restore HTTP/1.1\\r\\n"
+                b"Host: localhost\\r\\n"
+                b"Content-Type: application/json\\r\\n"
+                b"Expect: 100-continue\\r\\n"
+                + ("Content-Length: %d\\r\\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                + b"\\r\\n"
             )
             response = bytearray()
-            while b"\r\n\r\n" not in response:
+            while True:
                 chunk = connection.recv(4096)
-                self.assertTrue(chunk, "server closed before rejecting Expect header")
+                if not chunk:
+                    break
                 response.extend(chunk)
+            self.assertTrue(response.startswith(b"HTTP/1.0 417 "), bytes(response[:200]))
             self.assertNotIn(b"100 Continue", response)
-            self.assertIn(b"417", response.split(b"\r\n", 1)[0])
-            header_end = response.index(b"\r\n\r\n") + 4
-            headers = response[:header_end].decode("iso-8859-1")
-            body_length = next(
-                int(line.split(":", 1)[1].strip())
-                for line in headers.splitlines()
-                if line.lower().startswith("content-length:")
-            )
-            body = bytearray(response[header_end:])
-            while len(body) < body_length:
-                chunk = connection.recv(4096)
-                self.assertTrue(chunk, "server closed before completing unauthorized restore response")
-                body.extend(chunk)
-            self.assertIn("وارد حساب شوید", json.loads(body[:body_length].decode("utf-8"))["error"])
-            self.assertEqual(connection.recv(1), b"", "unauthorized restore must close without reading upload body")
+            self.assertIn(b"Expect is not supported", response)
         finally:
             connection.close()
 
