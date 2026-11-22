@@ -4,6 +4,8 @@ import hmac
 import json
 import http.client
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -60,6 +62,27 @@ class ApiIntegrationTests(unittest.TestCase):
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
+
+    def test_server_startup_rejects_backup_directory_that_contains_live_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backup_dir = Path(directory) / "backups"
+            backup_dir.mkdir()
+            env = dict(os.environ)
+            env.update({
+                "MG_BACKUP_DIR": str(backup_dir),
+                "MG_DB_PATH": str(backup_dir / "mg-business.sqlite3"),
+                "MG_DATA_DIR": str(Path(directory) / "data"),
+            })
+            result = subprocess.run(
+                [sys.executable, "-c", "import server"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("MG_BACKUP_DIR", result.stderr)
 
     def test_license_verification_rejects_empty_or_duplicate_module_keys(self):
         for modules in ([], ["cafe", "cafe"]):
