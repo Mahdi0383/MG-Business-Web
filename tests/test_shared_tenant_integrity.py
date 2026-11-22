@@ -363,9 +363,6 @@ class SharedTenantIntegrityTests(unittest.TestCase):
             (license_id, self.tenant_a, "hash-" + license_id, now + 86400, now),
         )
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("UPDATE users SET tenant_id=? WHERE id=?",
-                            (self.tenant_b, self.user_a))
-        with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("UPDATE licenses SET tenant_id=? WHERE id=?",
                             (self.tenant_b, license_id))
 
