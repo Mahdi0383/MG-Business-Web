@@ -583,6 +583,58 @@ WHEN NOT EXISTS (
 )
 BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
 
+
+CREATE TRIGGER IF NOT EXISTS product_addons_tenant_insert
+BEFORE INSERT ON product_addons
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'product addon tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS product_addons_tenant_update
+BEFORE UPDATE OF tenant_id,product_id ON product_addons
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'product addon tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS gamenet_reservations_tenant_insert
+BEFORE INSERT ON gamenet_reservations
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.created_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game reservation tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS gamenet_reservations_tenant_update
+BEFORE UPDATE OF tenant_id,device_id,customer_id,created_by ON gamenet_reservations
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.created_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game reservation tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS customer_loyalty_ledger_tenant_insert
+BEFORE INSERT ON customer_loyalty_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer loyalty tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS customer_loyalty_ledger_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON customer_loyalty_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer loyalty tenant mismatch'); END;
+
 """
 
 def parse_report_dates(raw_query, allow_from=True):
