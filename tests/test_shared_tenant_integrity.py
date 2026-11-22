@@ -115,6 +115,13 @@ class SharedTenantIntegrityTests(unittest.TestCase):
             (self.new_id(), self.tenant_a, order_id, self.product_a, "Product A"),
         )
         self.db.execute(
+            """INSERT INTO customer_ledger
+               (id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,created_at)
+               VALUES(?,?,?,?, 'manual', ?,100,0,?)""",
+            (self.new_id(), self.tenant_a, self.customer_a, self.user_a,
+             self.new_id(), now),
+        )
+        self.db.execute(
             """INSERT INTO game_session_segments
                (id,tenant_id,session_id,device_id,started_at,players_count,rate_per_hour,is_free)
                VALUES(?,?,?,?,?,1,1000,0)""",
@@ -232,6 +239,22 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                            (id,tenant_id,customer_id,created_by,source_type,source_id,
                             points_delta,created_at)
                            VALUES(?,?,?,?, 'order_earn', ?,10,?)""",
+                        (self.new_id(), self.tenant_a, customer_id, actor_id,
+                         self.new_id(), now),
+                    )
+
+
+    def test_customer_ledger_rejects_foreign_customer_or_creator(self):
+        now = int(time.time())
+        for customer_id, actor_id in ((self.customer_b, self.user_a),
+                                      (self.customer_a, self.user_b)):
+            with self.subTest(customer_id=customer_id, actor_id=actor_id):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        """INSERT INTO customer_ledger
+                           (id,tenant_id,customer_id,created_by,source_type,source_id,
+                            debit,credit,created_at)
+                           VALUES(?,?,?,?, 'manual', ?,100,0,?)""",
                         (self.new_id(), self.tenant_a, customer_id, actor_id,
                          self.new_id(), now),
                     )
