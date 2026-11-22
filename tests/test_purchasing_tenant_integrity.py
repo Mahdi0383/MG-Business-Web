@@ -210,5 +210,13 @@ class PurchasingTenantIntegrityTests(unittest.TestCase):
                     )
 
 
+    def test_supplier_cannot_be_reassigned_to_another_tenant(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "UPDATE suppliers SET tenant_id=? WHERE id=?",
+                (self.b, self.supplier_a),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
