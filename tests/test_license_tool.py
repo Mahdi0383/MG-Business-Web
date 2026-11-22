@@ -50,6 +50,18 @@ class LicenseToolTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Unknown module keys: hotel", result.stderr)
 
+    def test_issuer_rejects_duplicate_module_keys_instead_of_silently_deduplicating(self):
+        result = self.run_tool("cafe,cafe")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Duplicate module keys: cafe", result.stderr)
+
+    def test_issuer_rejects_empty_module_list_entries(self):
+        for value in ("cafe,,accounting", "cafe,"):
+            with self.subTest(value=value):
+                result = self.run_tool(value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Module list must not contain empty entries", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
