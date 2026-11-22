@@ -368,5 +368,37 @@ class SharedTenantIntegrityTests(unittest.TestCase):
 
 
 
+    def test_tenant_module_updates_allow_trial_and_reject_foreign_license(self):
+        now = int(time.time())
+        license_a, license_b = self.new_id(), self.new_id()
+        for tenant_id, license_id in ((self.tenant_a, license_a),
+                                      (self.tenant_b, license_b)):
+            self.db.execute(
+                """INSERT INTO licenses
+                   (id,tenant_id,code_hash,plan,expires_at,activated_at,status)
+                   VALUES(?,?,?,'pro',?,?, 'active')""",
+                (license_id, tenant_id, "hash-" + license_id, now + 86400, now),
+            )
+        self.db.execute(
+            """INSERT INTO tenant_modules
+               (tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+               VALUES(?,'accounting',1,?,NULL,?)""",
+            (self.tenant_a, now + 86400, now),
+        )
+        self.db.execute(
+            "UPDATE tenant_modules SET license_id=? WHERE tenant_id=? AND module_key='accounting'",
+            (license_a, self.tenant_a),
+        )
+        self.db.execute(
+            "UPDATE tenant_modules SET license_id='trial' WHERE tenant_id=? AND module_key='accounting'",
+            (self.tenant_a,),
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "UPDATE tenant_modules SET license_id=? WHERE tenant_id=? AND module_key='accounting'",
+                (license_b, self.tenant_a),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
