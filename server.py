@@ -724,7 +724,7 @@ WHEN NEW.license_id IS NOT NULL AND NEW.license_id <> 'trial' AND NOT EXISTS (
 BEGIN SELECT RAISE(ABORT,'tenant module license mismatch'); END;
 CREATE TRIGGER IF NOT EXISTS tenant_modules_license_update
 BEFORE UPDATE OF tenant_id,license_id ON tenant_modules
-WHEN NEW.license_id IS NOT NULL AND NOT EXISTS (
+WHEN NEW.license_id IS NOT NULL AND NEW.license_id <> 'trial' AND NOT EXISTS (
  SELECT 1 FROM licenses l
  WHERE l.id=NEW.license_id AND l.tenant_id=NEW.tenant_id
 )
