@@ -643,6 +643,77 @@ WHEN NOT EXISTS (
 )
 BEGIN SELECT RAISE(ABORT,'customer loyalty tenant mismatch'); END;
 
+
+CREATE TRIGGER IF NOT EXISTS transactions_tenant_insert
+BEFORE INSERT ON transactions
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.voided_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.voided_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'transaction tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS transactions_tenant_update
+BEFORE UPDATE OF tenant_id,created_by,voided_by ON transactions
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.voided_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.voided_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'transaction tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS journal_entries_tenant_insert
+BEFORE INSERT ON journal_entries
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.reversal_of IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM journal_entries original
+ WHERE original.id=NEW.reversal_of AND original.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'journal entry tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS accounting_periods_tenant_insert
+BEFORE INSERT ON accounting_periods
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'accounting period tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_periods_tenant_update
+BEFORE UPDATE OF tenant_id,closed_by ON accounting_periods
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'accounting period tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS cash_register_shifts_tenant_insert
+BEFORE INSERT ON cash_register_shifts
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.opened_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.closed_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'cash register shift tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS cash_register_shifts_tenant_update
+BEFORE UPDATE OF tenant_id,opened_by,closed_by ON cash_register_shifts
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.opened_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.closed_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'cash register shift tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS audit_log_tenant_insert
+BEFORE INSERT ON audit_log
+WHEN NEW.actor_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.actor_id AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'audit log tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_tenant_update
+BEFORE UPDATE OF tenant_id,actor_id ON audit_log
+WHEN NEW.actor_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.actor_id AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'audit log tenant mismatch'); END;
+
 """
 
 def parse_report_dates(raw_query, allow_from=True):
