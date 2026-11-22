@@ -714,6 +714,30 @@ WHEN NEW.actor_id IS NOT NULL AND NOT EXISTS (
 )
 BEGIN SELECT RAISE(ABORT,'audit log tenant mismatch'); END;
 
+
+CREATE TRIGGER IF NOT EXISTS tenant_modules_license_insert
+BEFORE INSERT ON tenant_modules
+WHEN NEW.license_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM licenses l
+ WHERE l.id=NEW.license_id AND l.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'tenant module license mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS tenant_modules_license_update
+BEFORE UPDATE OF tenant_id,license_id ON tenant_modules
+WHEN NEW.license_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM licenses l
+ WHERE l.id=NEW.license_id AND l.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'tenant module license mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS licenses_tenant_immutable
+BEFORE UPDATE OF tenant_id ON licenses
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'license tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS users_tenant_immutable
+BEFORE UPDATE OF tenant_id ON users
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'user tenant is immutable'); END;
+
 """
 
 def parse_report_dates(raw_query, allow_from=True):
