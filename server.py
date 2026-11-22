@@ -301,26 +301,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoic
 CREATE INDEX IF NOT EXISTS idx_supplier_payments_invoice ON supplier_payments(tenant_id,invoice_id,created_at DESC);
 
 
-CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_update
-BEFORE UPDATE OF tenant_id,customer_id,created_by ON customer_ledger
-WHEN NOT EXISTS (
- SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
- WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
-   AND u.tenant_id=NEW.tenant_id
-)
-BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
 
-CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_update
-BEFORE UPDATE OF tenant_id,invoice_id,supplier_id,created_by ON supplier_payments
-WHEN NOT EXISTS (
- SELECT 1 FROM purchase_invoices i
- JOIN suppliers s ON s.id=NEW.supplier_id
- JOIN users u ON u.id=NEW.created_by
- WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
-   AND s.tenant_id=NEW.tenant_id AND i.supplier_id=NEW.supplier_id
-   AND u.tenant_id=NEW.tenant_id
-)
-BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
 CREATE TABLE IF NOT EXISTS customers(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  full_name TEXT NOT NULL CHECK(length(full_name) BETWEEN 1 AND 160),
@@ -580,6 +561,27 @@ WHEN NOT EXISTS (
 BEGIN SELECT RAISE(ABORT,'game session segment tenant mismatch'); END;
 
 
+
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON customer_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_update
+BEFORE UPDATE OF tenant_id,invoice_id,supplier_id,created_by ON supplier_payments
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i
+ JOIN suppliers s ON s.id=NEW.supplier_id
+ JOIN users u ON u.id=NEW.created_by
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND s.tenant_id=NEW.tenant_id AND i.supplier_id=NEW.supplier_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
 
 """
 
