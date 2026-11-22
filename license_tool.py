@@ -28,10 +28,13 @@ def main():
     if unknown:
         parser.error("Unknown module keys: " + ", ".join(sorted(unknown)))
     modules = resolve_module_dependencies(requested)
+    license_id = args.license_id if args.license_id is not None else secrets.token_urlsafe(18)
     if not modules or not 1 <= args.days <= 3650:
         parser.error("Choose at least one module and a license duration between 1 and 3650 days.")
+    if not 1 <= len(license_id) <= 100:
+        parser.error("License ID must contain between 1 and 100 characters.")
     payload = {
-        "license_id": args.license_id or secrets.token_urlsafe(18),
+        "license_id": license_id,
         "modules": modules,
         "plan": args.plan[:80],
         "expires_at": int(time.time()) + args.days * 86400
