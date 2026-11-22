@@ -837,7 +837,9 @@ def verify_license_code(code):
     license_id = payload.get("license_id")
     if not isinstance(license_id,str) or not 1 <= len(license_id) <= 100:
         raise ValueError("شناسه لایسنس معتبر نیست.")
-    if not isinstance(modules,list) or any(not isinstance(module,str) or module not in MODULE_KEYS for module in modules):
+    if (not isinstance(modules,list) or not modules or
+            any(not isinstance(module,str) or module not in MODULE_KEYS for module in modules) or
+            len(set(modules)) != len(modules)):
         raise ValueError("فهرست ماژول‌های لایسنس معتبر نیست.")
     if type(expires_at) is not int or expires_at <= int(time.time()):
         raise ValueError("اعتبار لایسنس پایان یافته یا تاریخ آن معتبر نیست.")
