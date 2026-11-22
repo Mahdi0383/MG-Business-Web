@@ -24,8 +24,8 @@ class BoundedHttpServerTests(unittest.TestCase):
             response = peer.recv(1024)
             self.assertEqual(
                 response,
-                b"HTTP/1.1 503 Service Unavailable\\r\\n"
-                b"Connection: close\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Connection: close\r\nContent-Length: 0\r\n\r\n",
             )
             self.assertEqual(peer.recv(1), b"")
             self.assertEqual(self.httpd._worker_slots._value, 0)
