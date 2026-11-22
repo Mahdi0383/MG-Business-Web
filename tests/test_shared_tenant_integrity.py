@@ -98,7 +98,7 @@ class SharedTenantIntegrityTests(unittest.TestCase):
         )
         return session_id
 
-    def test_valid_inventory_order_game_and_customer_ledger_records(self):
+    def test_valid_inventory_order_and_game_records(self):
         order_id = self.create_order()
         session_id = self.create_session()
         now = int(time.time())
@@ -192,6 +192,49 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                 (self.new_id(), self.tenant_a, session_id, self.device_b, now),
             )
 
+
+
+    def test_product_addon_rejects_foreign_product(self):
+        now = int(time.time())
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                """INSERT INTO product_addons
+                   (id,tenant_id,product_id,name,price,active,created_at,updated_at)
+                   VALUES(?,?,?,'Extra',10,1,?,?)""",
+                (self.new_id(), self.tenant_a, self.product_b, now, now),
+            )
+
+    def test_reservation_rejects_foreign_device_customer_or_creator(self):
+        now = int(time.time())
+        attempts = ((self.device_b, self.customer_a, self.user_a),
+                    (self.device_a, self.customer_b, self.user_a),
+                    (self.device_a, self.customer_a, self.user_b))
+        for device_id, customer_id, actor_id in attempts:
+            with self.subTest(device_id=device_id, customer_id=customer_id, actor_id=actor_id):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        """INSERT INTO gamenet_reservations
+                           (id,tenant_id,device_id,customer_id,created_by,starts_at,ends_at,
+                            status,players_count,created_at)
+                           VALUES(?,?,?,?,?,?,?,'booked',1,?)""",
+                        (self.new_id(), self.tenant_a, device_id, customer_id, actor_id,
+                         now + 3600, now + 7200, now),
+                    )
+
+    def test_loyalty_ledger_rejects_foreign_customer_or_creator(self):
+        now = int(time.time())
+        for customer_id, actor_id in ((self.customer_b, self.user_a),
+                                      (self.customer_a, self.user_b)):
+            with self.subTest(customer_id=customer_id, actor_id=actor_id):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        """INSERT INTO customer_loyalty_ledger
+                           (id,tenant_id,customer_id,created_by,source_type,source_id,
+                            points_delta,created_at)
+                           VALUES(?,?,?,?, 'order_earn', ?,10,?)""",
+                        (self.new_id(), self.tenant_a, customer_id, actor_id,
+                         self.new_id(), now),
+                    )
 
 
 
