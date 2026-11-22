@@ -23,7 +23,14 @@ def main():
     secret = os.environ.get("MG_LICENSE_SECRET")
     if not secret or len(secret) < 32:
         parser.error("Set MG_LICENSE_SECRET to a strong secret of at least 32 characters.")
-    requested = sorted(set(x.strip() for x in args.modules.split(",") if x.strip()))
+    raw_modules = args.modules.split(",")
+    requested = [item.strip() for item in raw_modules]
+    if any(not item for item in requested):
+        parser.error("Module list must not contain empty entries.")
+    duplicates = sorted({item for item in requested if requested.count(item) > 1})
+    if duplicates:
+        parser.error("Duplicate module keys: " + ", ".join(duplicates))
+    requested = sorted(requested)
     unknown = set(requested) - MODULES
     if unknown:
         parser.error("Unknown module keys: " + ", ".join(sorted(unknown)))
