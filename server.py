@@ -734,6 +734,27 @@ BEFORE UPDATE OF tenant_id ON licenses
 WHEN NEW.tenant_id <> OLD.tenant_id
 BEGIN SELECT RAISE(ABORT,'license tenant is immutable'); END;
 
+CREATE TRIGGER IF NOT EXISTS products_tenant_immutable
+BEFORE UPDATE OF tenant_id ON products
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'product tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS suppliers_tenant_immutable
+BEFORE UPDATE OF tenant_id ON suppliers
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'supplier tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS customers_tenant_immutable
+BEFORE UPDATE OF tenant_id ON customers
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'customer tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS game_devices_tenant_immutable
+BEFORE UPDATE OF tenant_id ON game_devices
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'game device tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS accounts_tenant_immutable
+BEFORE UPDATE OF tenant_id ON accounts
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'account tenant is immutable'); END;
+
 
 """
 
