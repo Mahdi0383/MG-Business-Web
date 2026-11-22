@@ -40,7 +40,7 @@ class BoundedHttpServerTests(unittest.TestCase):
         try:
             with mock.patch.object(server, "REQUEST_TIMEOUT_SECONDS", 0.05):
                 self.httpd.process_request(client, ("127.0.0.1", 12345))
-            peer.sendall(b"GET / HTTP/1.1\\r\\n")
+            peer.sendall(b"GET / HTTP/1.1\r\n")
             self.assertEqual(peer.recv(1), b"")
             self.assertEqual(self.httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
         finally:
