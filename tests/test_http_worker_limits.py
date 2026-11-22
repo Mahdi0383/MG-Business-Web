@@ -1,3 +1,5 @@
+"""Regression tests for bounded HTTP worker admission and cleanup."""
+
 import socket
 import threading
 import unittest
