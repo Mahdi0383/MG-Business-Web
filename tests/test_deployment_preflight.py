@@ -11,6 +11,22 @@ class DeploymentPreflightTests(unittest.TestCase):
     def test_safe_local_defaults_pass(self):
         self.assertEqual(validate_config({}, ROOT), [])
 
+    def test_http_worker_and_timeout_settings_are_validated(self):
+        valid = {"MG_MAX_HTTP_WORKERS": "4", "MG_REQUEST_TIMEOUT_SECONDS": "120"}
+        self.assertEqual(validate_config(valid, ROOT), [])
+        invalid_cases = (
+            {"MG_MAX_HTTP_WORKERS": "3"},
+            {"MG_MAX_HTTP_WORKERS": "513"},
+            {"MG_MAX_HTTP_WORKERS": "many"},
+            {"MG_REQUEST_TIMEOUT_SECONDS": "4"},
+            {"MG_REQUEST_TIMEOUT_SECONDS": "121"},
+            {"MG_REQUEST_TIMEOUT_SECONDS": "slow"},
+        )
+        for values in invalid_cases:
+            with self.subTest(values=values):
+                errors = validate_config(values, ROOT)
+                self.assertTrue(any(key in error for key in values for error in errors))
+
     def test_production_requires_secret_and_https(self):
         errors = validate_config({"MG_ENV": "production"}, ROOT)
         self.assertTrue(any("MG_LICENSE_SECRET" in error for error in errors))

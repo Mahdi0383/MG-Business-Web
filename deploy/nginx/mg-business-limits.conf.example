@@ -1,0 +1,5 @@
+# Install as /etc/nginx/conf.d/mg-business-limits.conf.
+# Files in conf.d are included from Nginx's http context.
+# Per-client connection and request zones shared by virtual hosts.
+limit_conn_zone $binary_remote_addr zone=mg_per_ip:10m;
+limit_req_zone $binary_remote_addr zone=mg_api_per_ip:10m rate=20r/s;

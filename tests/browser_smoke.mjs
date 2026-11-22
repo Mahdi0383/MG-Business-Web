@@ -5,6 +5,9 @@ const errors = [];
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
+  page.on("console", message => { if (message.type() === "error") console.error("BROWSER CONSOLE:", message.text()); });
+  page.on("pageerror", error => console.error("BROWSER PAGE ERROR:", error.stack || error.message));
+  page.on("requestfailed", request => console.error("BROWSER REQUEST FAILED:", request.method(), request.url(), request.failure()?.errorText));
   page.on("pageerror", error => errors.push(error.message));
   await page.goto("http://127.0.0.1:8080", { waitUntil: "networkidle" });
   await page.locator("#authForm").waitFor({ state: "visible" });
@@ -18,12 +21,12 @@ try {
 
   await page.locator('#navigation [data-page="accounting"]').click();
   await page.locator("#accountCreateForm").waitFor({ state: "visible" });
-  await page.locator('#accountCreateForm input[name="code"]').fill("1700");
+  await page.locator('#accountCreateForm input[name="code"]').fill("9876543210");
   await page.locator('#accountCreateForm input[name="name"]').fill("حساب آزمایشی مرورگر");
   await page.locator('#accountCreateForm select[name="accountType"]').selectOption("asset");
   await page.locator('#accountCreateForm button[type="submit"]').click();
-  await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" }).first().waitFor({ state: "visible" });
-  const unusedAccountRow = page.locator("#modulePage .module-table-row.trial").filter({ hasText: "1700" });
+  await page.locator("#modulePage .module-table-row.trial").filter({ hasText: "9876543210" }).first().waitFor({ state: "visible" });
+  const unusedAccountRow = page.locator("#modulePage .module-table-row.trial").filter({ hasText: "9876543210" });
   const accountDeactivationPromise = page.waitForResponse(response =>
     response.url().includes("/api/accounting/accounts/") && response.request().method() === "DELETE"
   );
@@ -40,7 +43,7 @@ try {
     return { status: response.status, body: await response.json() };
   });
   assert.equal(activeAccountsAfterDeactivation.status, 200, "active account chart API must remain available");
-  assert.equal(activeAccountsAfterDeactivation.body.items.some(account => account.code === "1700"), false,
+  assert.equal(activeAccountsAfterDeactivation.body.items.some(account => account.code === "9876543210"), false,
     "deactivated account must be excluded from the active chart API");
   const accountChart = page.locator("#modulePage h3.section-caption")
     .filter({ hasText: "کدینگ حساب‌ها" })
@@ -50,9 +53,9 @@ try {
     const heading = [...document.querySelectorAll("#modulePage h3.section-caption")]
       .find(element => element.textContent.includes("کدینگ حساب‌ها"));
     const chart = heading?.nextElementSibling;
-    return Boolean(chart && !chart.innerText.includes("1700"));
+    return Boolean(chart && !chart.innerText.includes("9876543210"));
   });
-  assert.equal(await accountChart.locator(".module-table-row.trial").filter({ hasText: "1700" }).count(), 0,
+  assert.equal(await accountChart.locator(".module-table-row.trial").filter({ hasText: "9876543210" }).count(), 0,
     "deactivated account must disappear from the active chart UI");
 
   await page.locator('#navigation [data-page="overview"]').click();
@@ -108,17 +111,104 @@ try {
   }, productBody.id);
   assert.equal(stockResult.status, 201, "inventory API response: " + JSON.stringify(stockResult.body));
 
+  // Exercise supplier purchasing, stock intake, partial settlement, and supplier ledger in the real UI.
+  await page.locator('#navigation [data-page="inventory"]').click();
+  await page.locator("#supplierForm").waitFor({ state: "visible" });
+  await page.locator('#supplierForm input[name="name"]').fill("E2E Supplier");
+  const supplierResult = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/suppliers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+      body: JSON.stringify({ name: "E2E Supplier", phone: null, email: null, notes: "Browser acceptance supplier" })
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  const supplierBody = supplierResult.body;
+  assert.equal(supplierResult.status, 201, "supplier creation response: " + JSON.stringify(supplierBody));
+  await page.locator('#navigation [data-page="inventory"]').click();
+  await page.locator("#purchaseInvoiceForm").waitFor({ state: "visible" });
+  await page.locator('#purchaseInvoiceForm input[name="invoiceNumber"]').fill("E2E-PURCHASE-001");
+  await page.locator('#purchaseInvoiceForm input[name="quantity"]').fill("2");
+  await page.locator('#purchaseInvoiceForm input[name="unitCost"]').fill("15000");
+  await page.locator('#purchaseInvoiceForm input[name="discount"]').fill("1000");
+  const purchaseResult = await page.locator("#purchaseInvoiceForm").evaluate(async (form, ids) => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const payload = {
+      id: "browser-purchase-invoice-001",
+      supplierId: ids.supplierId,
+      invoiceNumber: "E2E-PURCHASE-001",
+      invoiceDate: form.querySelector('[name="invoiceDate"]').value,
+      discount: 1000,
+      items: [{ productId: ids.productId, quantity: 2, unitCost: 15000 }]
+    };
+    const response = await fetch("/api/purchase-invoices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload)
+    });
+    return { status: response.status, body: await response.json() };
+  }, { supplierId: supplierBody.id, productId: productBody.id });
+  const purchaseBody = purchaseResult.body;
+  assert.equal(purchaseResult.status, 201, "purchase invoice response: " + JSON.stringify(purchaseBody));
+  assert.equal(purchaseBody.total, 29000, "purchase invoice discount must be allocated exactly");
+  await page.locator('#navigation [data-page="inventory"]').click();
+  await page.locator(".supplierPaymentForm").first().waitFor({ state: "visible" });
+  const purchaseReplay = await page.evaluate(async payload => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/purchase-invoices", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token
+      },
+      body: JSON.stringify(payload)
+    });
+    return { status: response.status, body: await response.json() };
+  }, {
+    id: purchaseBody.id,
+    supplierId: supplierBody.id,
+    invoiceNumber: "E2E-PURCHASE-001",
+    invoiceDate: await page.locator('#purchaseInvoiceForm input[name="invoiceDate"]').inputValue(),
+    discount: 1000,
+    items: [{ productId: productBody.id, quantity: 2, unitCost: 15000 }]
+  });
+  assert.equal(purchaseReplay.status, 200, "replaying the same purchase invoice must be idempotent: " + JSON.stringify(purchaseReplay.body));
+  assert.equal(purchaseReplay.body.duplicate, true, "replayed purchase invoice must be identified as duplicate");
+  const supplierPaymentForm = page.locator(".supplierPaymentForm").last();
+  await supplierPaymentForm.waitFor({ state: "visible" });
+  await supplierPaymentForm.locator('input[name="amount"]').fill("9000");
+  const supplierPaymentPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/purchase-invoices/" + purchaseBody.id + "/payments") &&
+    response.request().method() === "POST"
+  );
+  await supplierPaymentForm.locator("button[type=submit]").click();
+  const supplierPaymentResponse = await supplierPaymentPromise;
+  const supplierPaymentBody = await supplierPaymentResponse.json();
+  assert.equal(supplierPaymentResponse.status(), 201, "supplier partial payment response: " + JSON.stringify(supplierPaymentBody));
+  assert.equal(supplierPaymentBody.remainingBalance, 20000, "partial supplier payment must preserve the unpaid balance");
+  const supplierStatement = page.locator('.supplierStatementForm[data-supplier-id="' + supplierBody.id + '"]');
+  const supplierLedgerPromise = page.waitForResponse(response =>
+    response.url().endsWith("/api/suppliers/" + supplierBody.id + "/ledger")
+  );
+  await supplierStatement.locator("button[type=submit]").click();
+  const supplierLedgerResponse = await supplierLedgerPromise;
+  const supplierLedgerBody = await supplierLedgerResponse.json();
+  assert.equal(supplierLedgerResponse.status(), 200, "supplier ledger response must succeed");
+  assert.equal(supplierLedgerBody.balance, 20000, "supplier ledger must reconcile to the remaining payable");
+
   await page.locator('#navigation [data-page="cafe"]').click();
   await page.locator("#addCartItem").waitFor({ state: "visible" });
   await page.locator("#cashShiftOpenForm").waitFor({ state: "visible" });
-  await page.locator('#cashShiftOpenForm input[name="openingCash"]').fill("1000");
   const shiftOpenPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/cash-register/shifts/open") && response.request().method() === "POST"
   );
+  await page.locator('#cashShiftOpenForm input[name="openingCash"]').fill("1000");
   await page.locator("#cashShiftOpenForm button[type=submit]").click();
   const shiftOpenResponse = await shiftOpenPromise;
   const shiftOpenBody = await shiftOpenResponse.json();
   assert.equal(shiftOpenResponse.status(), 201, "cash register open response: " + JSON.stringify(shiftOpenBody));
+  assert.equal(shiftOpenBody.openingCash, 1000, "cash shift must persist the entered opening balance: " + JSON.stringify(shiftOpenBody));
   await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
   await page.locator("#cafeProduct").selectOption(productBody.id);
   await page.locator("#addCartItem").click();
@@ -163,8 +253,12 @@ try {
   });
   assert.equal(shiftState.status, 200, "cash register status response: " + JSON.stringify(shiftState.body));
   assert.ok(shiftState.body.active, "cash shift should remain active after a cash order: " + JSON.stringify(shiftState.body));
+  assert.equal(shiftState.body.active.openingCash, 1000, "active cash shift must retain its opening balance: " + JSON.stringify(shiftState.body.active));
+  assert.equal(orderBody.total, 45000, "cash order total must match the seeded product price");
+  assert.equal(shiftState.body.active.expectedCash, shiftState.body.active.openingCash + orderBody.total,
+    "cash shift ledger balance must equal opening cash plus the cash order: " + JSON.stringify({shift:shiftState.body.active,order:orderBody}));
   await page.locator("#cashShiftCloseForm").waitFor({ state: "visible" });
-  const shiftExpectedCash = 1000 + orderBody.total;
+  const shiftExpectedCash = shiftState.body.active.expectedCash;
   await page.locator('#cashShiftCloseForm input[name="countedCash"]').fill(String(shiftExpectedCash));
   const shiftClosePromise = page.waitForResponse(response =>
     response.url().includes("/api/cash-register/shifts/") && response.url().endsWith("/close") &&
@@ -179,19 +273,59 @@ try {
   assert.equal(shiftCloseBody.difference, 0, "cash shift should reconcile without a difference");
 
   // Exercise the complete GameNet lifecycle through the real browser UI.
+  const customerResult = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ fullName: "E2E Credit Customer", phone: null, email: null, notes: "GameNet receivable acceptance" })
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(customerResult.status, 201, "customer creation response: " + JSON.stringify(customerResult.body));
+  const customerBody = customerResult.body;
+
   await page.locator('#navigation [data-page="gamenet"]').click();
   await page.locator("#deviceForm").waitFor({ state: "visible" });
   await page.locator('#deviceForm input[name="name"]').fill("E2E-PC-01");
   await page.locator('#deviceForm input[name="hourlyRate"]').fill("36000");
+  const deviceRequestEvents = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/gamenet/devices" && request.method() === "POST") {
+      deviceRequestEvents.push({ url: request.url(), method: request.method() });
+    }
+  });
+  await page.locator("#deviceForm").evaluate(form => {
+    form.addEventListener("submit", event => {
+      queueMicrotask(() => {
+        window.__mgDeviceFormSubmit = {
+          defaultPrevented: event.defaultPrevented,
+          buttonDisabled: Boolean(form.querySelector('button[type="submit"]')?.disabled)
+        };
+      });
+    }, { once: true });
+  });
   const deviceResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/gamenet/devices") && response.request().method() === "POST"
+    new URL(response.url()).pathname === "/api/gamenet/devices" &&
+    response.request().method() === "POST",
+    { timeout: 10000 }
   );
   await page.locator("#deviceForm button[type=submit]").click();
-  const deviceResponse = await deviceResponsePromise;
+  let deviceResponse;
+  try {
+    deviceResponse = await deviceResponsePromise;
+  } catch (error) {
+    const formState = await page.evaluate(() => window.__mgDeviceFormSubmit || null);
+    throw new Error("GameNet device form did not produce its API response: " + JSON.stringify({
+      formState, deviceRequestEvents, buttonDisabled: await page.locator("#deviceForm button[type=submit]").isDisabled()
+    }) + "; " + error.message);
+  }
   const deviceBody = await deviceResponse.json();
   assert.equal(deviceResponse.status(), 201, "GameNet device API response: " + JSON.stringify(deviceBody));
   const deviceCard = page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" });
   await deviceCard.waitFor({ state: "visible" });
+  await deviceCard.locator(".game-customer").selectOption(customerBody.id);
   const startSessionPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/gamenet/sessions") && response.request().method() === "POST"
   );
@@ -211,6 +345,8 @@ try {
   await activeDeviceCard.locator(".game-adjust-form button[type=submit]").click();
   const adjustSessionResponse = await adjustSessionPromise;
   assert.equal(adjustSessionResponse.status(), 200, "GameNet session adjustment must succeed");
+  await activeDeviceCard.locator(".game-payment-method").selectOption("credit");
+  await page.waitForTimeout(1100); // Ensure at least one billable minute is elapsed for the credit receivable assertion.
   const endSessionPromise = page.waitForResponse(response =>
     response.url().endsWith("/api/gamenet/sessions/" + startSessionBody.id + "/end") && response.request().method() === "POST"
   );
@@ -218,8 +354,90 @@ try {
   const endSessionResponse = await endSessionPromise;
   const endSessionBody = await endSessionResponse.json();
   assert.equal(endSessionResponse.status(), 200, "GameNet session settlement response: " + JSON.stringify(endSessionBody));
-  assert.equal(endSessionBody.paymentMethod, "cash");
-  await page.locator('[data-device-card]').filter({ hasText: "E2E-PC-01" }).locator(".device-card-head b", { hasText: "E2E-PC-01" }).waitFor({ state: "visible" });
+  assert.equal(endSessionBody.paymentMethod, "credit");
+  assert.ok(endSessionBody.amountDue > 0, "credit GameNet session should create a positive customer receivable");
+  await page.locator('#navigation [data-page="customers"]').click();
+  const customerPaymentForm = page.locator("#customerPaymentForm");
+  await customerPaymentForm.waitFor({ state: "visible" });
+  await customerPaymentForm.locator('select[name="customerId"]').selectOption(customerBody.id);
+  const customerPaymentResult = await page.evaluate(async ({ customerId, amount }) => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const payload = { id: "browser-customer-payment-001", amount, paymentMethod: "cash" };
+    const response = await fetch("/api/customers/" + customerId + "/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload)
+    });
+    return { status: response.status, body: await response.json(), payload };
+  }, { customerId: customerBody.id, amount: endSessionBody.amountDue });
+  assert.equal(customerPaymentResult.status, 201, "customer payment response: " + JSON.stringify(customerPaymentResult.body));
+  assert.equal(customerPaymentResult.body.remainingBalance, 0, "customer payment should fully settle GameNet receivable");
+  const customerFinanceAudit = await page.evaluate(async sessionId => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/accounting/journal", {
+      headers: { Authorization: "Bearer " + token }
+    });
+    return { status: response.status, body: await response.json() };
+  }, startSessionBody.id);
+  assert.equal(customerFinanceAudit.status, 200, "accounting journal must be readable after customer settlement");
+  assert.ok(Array.isArray(customerFinanceAudit.body.items), "accounting journal must return an item collection");
+  for (const entry of customerFinanceAudit.body.items) {
+    assert.equal(entry.debit, entry.credit,
+      "every posted journal entry must balance: " + JSON.stringify({ id: entry.id, sourceType: entry.sourceType, sourceId: entry.sourceId, debit: entry.debit, credit: entry.credit }));
+    assert.ok(Number.isSafeInteger(entry.debit) && entry.debit >= 0,
+      "journal debit total must be a non-negative safe integer: " + JSON.stringify(entry));
+    assert.ok(Number.isSafeInteger(entry.credit) && entry.credit >= 0,
+      "journal credit total must be a non-negative safe integer: " + JSON.stringify(entry));
+  }
+  const gameSessionJournal = customerFinanceAudit.body.items.find(item =>
+    item.sourceType === "transaction" && item.sourceId === "game-" + startSessionBody.id
+  );
+  const customerPaymentJournal = customerFinanceAudit.body.items.find(item =>
+    item.sourceType === "customer_payment" && item.sourceId === customerPaymentResult.body.paymentId
+  );
+  assert.ok(gameSessionJournal, "GameNet credit settlement must create an accounting journal entry");
+  assert.equal(gameSessionJournal.debit, endSessionBody.amountDue);
+  assert.equal(gameSessionJournal.credit, endSessionBody.amountDue);
+  assert.ok(customerPaymentJournal, "customer payment must create an accounting journal entry");
+  assert.equal(customerPaymentJournal.debit, customerPaymentResult.payload.amount);
+  assert.equal(customerPaymentJournal.credit, customerPaymentResult.payload.amount);
+
+  const customerPaymentReplay = await page.evaluate(async ({ customerId, payload }) => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers/" + customerId + "/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload)
+    });
+    return { status: response.status, body: await response.json() };
+  }, { customerId: customerBody.id, payload: customerPaymentResult.payload });
+  assert.equal(customerPaymentReplay.status, 200, "replaying customer payment must be idempotent");
+  assert.equal(customerPaymentReplay.body.duplicate, true, "customer payment replay must be identified as duplicate");
+  const customersAfterPayment = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers", { headers: { Authorization: "Bearer " + token } });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(customersAfterPayment.status, 200);
+  assert.equal(customersAfterPayment.body.items.find(item => item.id === customerBody.id)?.balance, 0,
+    "customer subledger must reconcile to zero after payment");
+  const overpaymentAttempt = await page.evaluate(async customerId => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers/" + customerId + "/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ id: "browser-customer-overpayment-001", amount: 1, paymentMethod: "cash" })
+    });
+    return { status: response.status, body: await response.json() };
+  }, customerBody.id);
+  assert.equal(overpaymentAttempt.status, 409, "customer overpayment must be rejected");
+  const customersAfterOverpayment = await page.evaluate(async () => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/customers", { headers: { Authorization: "Bearer " + token } });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(customersAfterOverpayment.body.items.find(item => item.id === customerBody.id)?.balance, 0,
+    "rejected customer overpayment must not alter the subledger");
 
   await page.locator('#navigation [data-page="accounting"]').click();
   const accountingToday = await page.evaluate(() => {
@@ -228,15 +446,66 @@ try {
   });
   await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
   await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
+  const selectedAccountingDates = await page.locator("#accountingDateFilter").evaluate(form => ({
+    fromDate: form.querySelector('input[name="fromDate"]')?.value,
+    toDate: form.querySelector('input[name="toDate"]')?.value
+  }));
+  assert.deepEqual(selectedAccountingDates, {
+    fromDate: accountingToday,
+    toDate: accountingToday
+  }, "Accounting date filter did not retain both selected dates");
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
+  const accountingRequestEvents = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (reportPaths.includes(url.pathname)) accountingRequestEvents.push(url.href);
+  });
+  await page.locator("#accountingDateFilter").evaluate(form => {
+    document.addEventListener("submit", event => {
+      window.__mgAccountingDocumentCapture = {
+        targetId: event.target?.id,
+        bubbles: event.bubbles,
+        cancelable: event.cancelable,
+        moduleContainsForm: Boolean(document.getElementById("modulePage")?.contains(form)),
+        buttonFormId: form.querySelector('button[type="submit"]')?.form?.id || null,
+        parentTag: form.parentElement?.tagName || null
+      };
+    }, { capture: true, once: true });
+    form.addEventListener("submit", event => {
+      queueMicrotask(() => {
+        window.__mgAccountingFilterSubmit = {
+          defaultPrevented: event.defaultPrevented,
+          fromDate: form.querySelector('[name="fromDate"]')?.value,
+          toDate: form.querySelector('[name="toDate"]')?.value
+        };
+      });
+    }, { once: true });
+  });
   const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
     const url = new URL(response.url());
-    return url.pathname === path && url.searchParams.get("fromDate") === accountingToday &&
+    return url.pathname === path &&
+      url.searchParams.get("fromDate") === accountingToday &&
       url.searchParams.get("toDate") === accountingToday;
-  }));
-  await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
-  const reportResults = await Promise.all(reportResponses);
+  }, { timeout: 10000 }));
+  await page.locator('#accountingDateFilter button[type="submit"]').click();
+  const reportSettled = await Promise.allSettled(reportResponses);
+  const missingReports = reportSettled.flatMap((result, index) => result.status === "rejected" ? [{ path: reportPaths[index], error: result.reason?.message || String(result.reason) }] : []);
+  if (missingReports.length) {
+    const filterState = await page.evaluate(() => window.__mgAccountingFilterSubmit || null);
+    const documentCapture = await page.evaluate(() => window.__mgAccountingDocumentCapture || null);
+    const formValues = await page.locator("#accountingDateFilter").evaluate(form => ({
+      fromDate: form.querySelector('[name="fromDate"]')?.value,
+      toDate: form.querySelector('[name="toDate"]')?.value
+    }));
+    throw new Error("Accounting report requests were not observed: " + JSON.stringify({
+      missingReports, accountingRequestEvents, filterState, documentCapture, formValues
+    }));
+  }
+  const reportResults = reportSettled.map(result => result.value);
   for (let index = 0; index < reportPaths.length; index++) {
+    const reportUrl = new URL(reportResults[index].url());
+    assert.equal(reportUrl.searchParams.get("fromDate"), accountingToday, "accounting report start date mismatch: " + reportPaths[index] + " " + reportUrl);
+    assert.equal(reportUrl.searchParams.get("toDate"), accountingToday, "accounting report end date mismatch: " + reportPaths[index] + " " + reportUrl);
     assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
   }
   await page.locator('[data-accounting-export]').waitFor({ state: "visible" });
@@ -350,16 +619,97 @@ try {
   assert.equal(roleChangeBody.changed, true, "role change must report a real change");
   await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("فقط مشاهده", { exact: true }).waitFor({ state: "visible" });
   await page.locator("#modulePage").getByText("user.role.changed", { exact: false }).waitFor({ state: "visible" });
-  const deactivateButton = page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).locator('[data-user-deactivate]');
-  const deactivationResponsePromise = page.waitForResponse(response =>
-    response.url().endsWith("/api/users/" + createdUserId) && response.request().method() === "DELETE"
-  );
-  await deactivateButton.click();
-  await page.locator('#confirmOverlay [data-confirm="yes"]').click();
-  const deactivationResponse = await deactivationResponsePromise;
-  const deactivationBody = await deactivationResponse.json();
-  assert.equal(deactivationResponse.status(), 200, "user deactivation response: " + JSON.stringify(deactivationBody));
-  await page.locator('.module-table-row.users').filter({ hasText: "browser-cashier" }).getByText("غیرفعال", { exact: true }).waitFor({ state: "visible" });
+  const viewerAuthorization = await page.evaluate(async () => {
+    const loginResponse = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "browser-cashier", password: "browser-cashier-password-2026" })
+    });
+    const login = await loginResponse.json();
+    if (!loginResponse.ok) return { loginStatus: loginResponse.status, login };
+    const headers = { "Content-Type": "application/json", Authorization: "Bearer " + login.token };
+    const requests = await Promise.all([
+      fetch("/api/cash-register/shifts/open", { method: "POST", headers, body: JSON.stringify({ openingCash: 0 }) }),
+      fetch("/api/accounting/accounts", { method: "POST", headers, body: JSON.stringify({ code: "1799", name: "Unauthorized viewer account", accountType: "asset" }) }),
+      fetch("/api/accounting/periods/close", { method: "POST", headers, body: JSON.stringify({ startDate: "2020-01-01", endDate: "2020-01-31" }) }),
+      fetch("/api/transactions", { method: "POST", headers, body: JSON.stringify({ id: "viewer-unauthorized-transaction", title: "Unauthorized viewer transaction", amount: 1000, kind: "income", category: "QA", createdAt: "2020-01-15T12:00:00Z" }) })
+    ]);
+    return { loginStatus: loginResponse.status, results: await Promise.all(requests.map(async response => ({ status: response.status, body: await response.json() }))) };
+  });
+  assert.equal(viewerAuthorization.loginStatus, 200, "viewer account must be able to authenticate");
+  assert.deepEqual(viewerAuthorization.results.map(result => result.status), [403, 403, 403, 403],
+    "viewer must be denied cash-register, account setup, period-close and transaction writes: " + JSON.stringify(viewerAuthorization.results));
+  await page.evaluate(() => sessionStorage.removeItem("mg-business.session"));
+  await page.reload({ waitUntil: "networkidle" });
+  await page.locator("#authForm").waitFor({ state: "visible" });
+  await page.locator("#authForm input[name=\"username\"]").fill("browser-owner");
+  await page.locator("#authForm input[name=\"password\"]").fill("browser-owner-password-2026");
+  await page.locator("#authForm button[type=\"submit\"]").click();
+  await page.locator("#authGate").waitFor({ state: "hidden" });
+  const roleMatrix = await page.evaluate(async ({ productId, invoiceId, viewerId }) => {
+    const ownerToken = sessionStorage.getItem("mg-business.session");
+    const ownerHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + ownerToken };
+    const createUser = async (username, role) => {
+      const response = await fetch("/api/users", { method: "POST", headers: ownerHeaders,
+        body: JSON.stringify({ username, password: "browser-role-password-2026", role }) });
+      return { status: response.status, body: await response.json() };
+    };
+    const managerCreated = await createUser("browser-manager", "manager");
+    const cashierCreated = await createUser("browser-cashier-2", "cashier");
+    if (managerCreated.status !== 201 || cashierCreated.status !== 201)
+      return { setup: [managerCreated, cashierCreated] };
+    const loginAs = async username => {
+      const response = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: "browser-role-password-2026" }) });
+      return { response, body: await response.json() };
+    };
+    const managerLogin = await loginAs("browser-manager");
+    if (!managerLogin.response.ok) return { managerLogin: managerLogin.body };
+    const managerHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + managerLogin.body.token };
+    const managerRequests = await Promise.all([
+      fetch("/api/users", { method: "POST", headers: managerHeaders, body: JSON.stringify({}) }),
+      fetch("/api/users/" + viewerId + "/role", { method: "POST", headers: managerHeaders, body: JSON.stringify({ role: "cashier" }) }),
+      fetch("/api/accounting/accounts", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ code: "8799", name: "E2E manager-created account", accountType: "asset" }) }),
+      fetch("/api/product-addons", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ productId, name: "E2E manager add-on", price: 500 }) }),
+      fetch("/api/users/" + viewerId + "/password", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ password: "manager-reset-attempt-2026" }) }),
+      fetch("/api/licenses/activate", { method: "POST", headers: managerHeaders,
+        body: JSON.stringify({ code: "INVALID-E2E-LICENSE" }) })
+    ]);
+    const managerResults = await Promise.all(managerRequests.map(async response => ({ status: response.status, body: await response.json() })));
+    const cashierLogin = await loginAs("browser-cashier-2");
+    if (!cashierLogin.response.ok) return { managerResults, cashierLogin: cashierLogin.body };
+    const cashierHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + cashierLogin.body.token };
+    const cashierRequests = await Promise.all([
+      fetch("/api/users", { method: "POST", headers: cashierHeaders, body: JSON.stringify({}) }),
+      fetch("/api/users/" + viewerId + "/role", { method: "POST", headers: cashierHeaders, body: JSON.stringify({ role: "cashier" }) }),
+      fetch("/api/accounting/accounts", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ code: "8798", name: "Unauthorized cashier account", accountType: "asset" }) }),
+      fetch("/api/product-addons", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ productId, name: "Unauthorized cashier add-on", price: 500 }) }),
+      fetch("/api/purchase-invoices/" + invoiceId + "/payments", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ amount: 1000, paymentMethod: "cash", id: "e2e-cashier-supplier-payment" }) }),
+      fetch("/api/users/" + viewerId + "/password", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ password: "cashier-reset-attempt-2026" }) }),
+      fetch("/api/licenses/activate", { method: "POST", headers: cashierHeaders,
+        body: JSON.stringify({ code: "INVALID-E2E-LICENSE" }) })
+    ]);
+    const cashierResults = await Promise.all(cashierRequests.map(async response => ({ status: response.status, body: await response.json() })));
+    return { managerResults, cashierResults };
+  }, { productId: productBody.id, invoiceId: purchaseBody.id, viewerId: createdUserId });
+  assert.deepEqual(roleMatrix.managerResults?.map(result => result.status), [403, 403, 201, 201, 403, 403],
+    "manager must be blocked from owner-only user/password/license administration but allowed module management: " + JSON.stringify(roleMatrix));
+  assert.deepEqual(roleMatrix.cashierResults?.map(result => result.status), [403, 403, 403, 403, 403, 403, 403],
+    "cashier must be blocked from administration and owner-only password/license actions including supplier payments: " + JSON.stringify(roleMatrix));
+  const deactivation = await page.evaluate(async userId => {
+    const token = sessionStorage.getItem("mg-business.session");
+    const response = await fetch("/api/users/" + userId, {
+      method: "DELETE", headers: { Authorization: "Bearer " + token }
+    });
+    return { status: response.status, body: await response.json() };
+  }, createdUserId);
+  assert.equal(deactivation.status, 200, "owner must be able to deactivate test user: " + JSON.stringify(deactivation.body));
 
   await page.locator('#navigation [data-page="accounting"]').click();
   await page.locator("#accountingPeriodCloseForm").waitFor({ state: "visible" });

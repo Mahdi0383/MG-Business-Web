@@ -1,8 +1,11 @@
 import os
 import sqlite3
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from backup_manager import create_snapshot, generate_encryption_key, restore_snapshot, verify_snapshot
@@ -116,10 +119,21 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, restored, encryption_key=generate_encryption_key())
+
+            # Authentication failure must happen before the current database is
+            # safety-backed-up or replaced. Preserve the exact live data.
+            damaged = bytearray(snapshot.read_bytes())
+            damaged[-20] ^= 0x01
+            snapshot.write_bytes(damaged)
+            with self.assertRaises(ValueError):
+                restore_snapshot(snapshot, restored, encryption_key=key)
             db = sqlite3.connect(restored)
             self.assertEqual(db.execute("SELECT value FROM existing_data").fetchone()[0],
                              "keep until verified restore")
             db.close()
+            self.assertEqual(len(list(backup_dir.glob("*.sqlite3.enc"))), 1)
+            snapshot.write_bytes(raw)
+
             restore_snapshot(snapshot, restored, encryption_key=key)
             safety_backups = list((root / "backups").glob("*.sqlite3.enc"))
             self.assertEqual(len(safety_backups), 2)
@@ -144,10 +158,330 @@ class BackupManagerTests(unittest.TestCase):
             damaged = bytearray(snapshot.read_bytes())
             damaged[-20] ^= 0x01
             snapshot.write_bytes(damaged)
+            # GCM may emit plaintext before its final authentication check. The
+            # verification path must always remove that temporary plaintext.
+            with mock.patch("backup_manager.tempfile.gettempdir", return_value=str(root)):
+                with self.assertRaises(ValueError):
+                    verify_snapshot(snapshot, encryption_key=key)
+            self.assertFalse(list(root.glob("mg-backup-verify-*.sqlite3")))
             with self.assertRaises(ValueError):
                 restore_snapshot(snapshot, root / "target.sqlite3", encryption_key=key)
             self.assertFalse((root / "target.sqlite3").exists())
             self.assertFalse(list(root.glob("target.sqlite3.decrypt-*.tmp")))
+
+
+    def test_backup_cli_create_verify_and_restore_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            backup_dir = root / "backups"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO business_records VALUES('before-cli-restore')")
+            db.commit()
+            db.close()
+
+            script = Path(__file__).resolve().parents[1] / "backup_manager.py"
+            key_result = subprocess.run(
+                [sys.executable, str(script), "--generate-key"],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            key = key_result.stdout.strip()
+            self.assertTrue(key)
+
+            environment = os.environ.copy()
+            environment.update({
+                "MG_DB_PATH": str(database),
+                "MG_BACKUP_DIR": str(backup_dir),
+                "MG_BACKUP_ENCRYPTION_KEY": key,
+                "MG_BACKUP_RETENTION": "5",
+            })
+            created = subprocess.run(
+                [sys.executable, str(script)],
+                check=True, capture_output=True, text=True, env=environment, timeout=30,
+            )
+            snapshot = Path(created.stdout.strip().split(":", 1)[1].strip())
+            self.assertTrue(snapshot.is_file())
+            self.assertTrue(snapshot.name.endswith(".sqlite3.enc"))
+
+            verified = subprocess.run(
+                [sys.executable, str(script), "--verify", str(snapshot)],
+                check=True, capture_output=True, text=True, env=environment, timeout=30,
+            )
+            self.assertIn("Verified MG database snapshot", verified.stdout)
+
+            db = sqlite3.connect(database)
+            db.execute("UPDATE business_records SET value='after-cli-snapshot'")
+            db.commit()
+            db.close()
+            restored = subprocess.run(
+                [sys.executable, str(script), "--restore", str(snapshot)],
+                check=True, capture_output=True, text=True, env=environment, timeout=30,
+            )
+            self.assertIn("Restored database", restored.stdout)
+            db = sqlite3.connect(database)
+            self.assertEqual(
+                db.execute("SELECT value FROM business_records").fetchone()[0],
+                "before-cli-restore",
+            )
+            db.close()
+            self.assertEqual(len(list(backup_dir.glob("*.sqlite3.enc"))), 2)
+
+    def test_restore_replacement_failure_preserves_existing_sqlite_sidecars(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            snapshot_source = root / "snapshot-source.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            create_valid_database(database, "live-before-failed-restore")
+            create_valid_database(snapshot_source, "snapshot-value")
+            snapshot = create_snapshot(snapshot_source, backup_dir)
+            wal = Path(str(database) + "-wal")
+            shm = Path(str(database) + "-shm")
+            wal.write_bytes(b"pending-wal-state")
+            shm.write_bytes(b"shared-memory-state")
+
+            real_replace = os.replace
+
+            def fail_database_commit(source, destination):
+                source_path = Path(source)
+                destination_path = Path(destination)
+                if (source_path.name.startswith(database.name + ".restore-")
+                        and destination_path == database):
+                    raise OSError("simulated atomic database replacement failure")
+                return real_replace(source, destination)
+
+            with mock.patch("backup_manager.create_snapshot"), \
+                    mock.patch("backup_manager.os.replace", side_effect=fail_database_commit):
+                with self.assertRaisesRegex(OSError, "simulated atomic database replacement failure"):
+                    restore_snapshot(snapshot, database, backup_dir)
+
+            self.assertEqual(wal.read_bytes(), b"pending-wal-state")
+            self.assertEqual(shm.read_bytes(), b"shared-memory-state")
+            db = sqlite3.connect(database)
+            self.assertEqual(db.execute("SELECT value FROM business_records").fetchone()[0],
+                             "live-before-failed-restore")
+            db.close()
+            self.assertFalse(list(root.glob("live.sqlite3.restore-*.tmp")))
+
+    def test_restore_rolls_back_first_sidecar_if_second_sidecar_move_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            snapshot_source = root / "snapshot-source.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            create_valid_database(database, "live-before-restore")
+            create_valid_database(snapshot_source, "snapshot-value")
+            snapshot = create_snapshot(snapshot_source, backup_dir)
+            wal = Path(str(database) + "-wal")
+            shm = Path(str(database) + "-shm")
+            wal.write_bytes(b"wal-state")
+            shm.write_bytes(b"shm-state")
+            real_replace = os.replace
+
+            def fail_second_sidecar(source, destination):
+                if Path(source) == shm:
+                    raise OSError("simulated shm move failure")
+                return real_replace(source, destination)
+
+            with mock.patch("backup_manager.create_snapshot"), mock.patch("backup_manager.os.replace", side_effect=fail_second_sidecar):
+                with self.assertRaisesRegex(OSError, "simulated shm move failure"):
+                    restore_snapshot(snapshot, database, backup_dir)
+
+            self.assertEqual(wal.read_bytes(), b"wal-state")
+            self.assertEqual(shm.read_bytes(), b"shm-state")
+            self.assertFalse(list(root.glob("live.sqlite3-wal.restore-*.tmp")))
+            self.assertFalse(list(root.glob("live.sqlite3-shm.restore-*.tmp")))
+
+    def test_restore_succeeds_if_committed_sidecar_cleanup_is_denied(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            snapshot_source = root / "snapshot-source.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            create_valid_database(database, "old-live-value")
+            create_valid_database(snapshot_source, "restored-value")
+            snapshot = create_snapshot(snapshot_source, backup_dir)
+            wal = Path(str(database) + "-wal")
+            wal.write_bytes(b"old-wal-state")
+            original_unlink = Path.unlink
+
+            def deny_preserved_sidecar_cleanup(path, *args, **kwargs):
+                if ".restore-" in path.name and path.name.endswith(".tmp"):
+                    raise PermissionError("simulated cleanup permission failure")
+                return original_unlink(path, *args, **kwargs)
+
+            with mock.patch("backup_manager.create_snapshot"), mock.patch(
+                    "backup_manager.Path.unlink", autospec=True, side_effect=deny_preserved_sidecar_cleanup):
+                restored = restore_snapshot(snapshot, database, backup_dir)
+
+            self.assertEqual(restored, database.resolve())
+            db = sqlite3.connect(database)
+            self.assertEqual(db.execute("SELECT value FROM business_records").fetchone()[0],
+                             "restored-value")
+            db.close()
+            self.assertEqual(len(list(root.glob("live.sqlite3-wal.restore-*.tmp"))), 1)
+
+    def test_restore_removes_decrypted_temp_if_validation_connection_cannot_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.sqlite3"
+            db = sqlite3.connect(source)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.commit()
+            db.close()
+
+            key = generate_encryption_key()
+            snapshot = create_snapshot(source, root / "backups", encryption_key=key)
+            target = root / "restored.sqlite3"
+            real_connect = sqlite3.connect
+
+            def fail_decrypted_validation(database, *args, **kwargs):
+                if ".decrypt-" in str(database):
+                    raise sqlite3.OperationalError("simulated validation open failure")
+                return real_connect(database, *args, **kwargs)
+
+            with mock.patch("backup_manager.sqlite3.connect", side_effect=fail_decrypted_validation):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "simulated validation open failure"):
+                    restore_snapshot(snapshot, target, encryption_key=key)
+
+            self.assertFalse(target.exists())
+            self.assertFalse(list(root.glob("restored.sqlite3.decrypt-*.tmp")))
+
+    def test_restore_rejects_non_integer_schema_migration_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "malformed.sqlite3"
+            target = root / "live.sqlite3"
+            backup_dir = root / "backups"
+
+            db = sqlite3.connect(source)
+            db.execute("CREATE TABLE schema_migrations(version TEXT, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES('not-a-version',1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO business_records VALUES('malformed-schema')")
+            db.commit()
+            db.close()
+
+            db = sqlite3.connect(target)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(17,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+            db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+            db.execute("INSERT INTO business_records VALUES('preserve-live-data')")
+            db.commit()
+            db.close()
+
+            snapshot = create_snapshot(source, backup_dir)
+            expected = "no valid integer MG Business schema migration"
+            with self.assertRaisesRegex(sqlite3.DatabaseError, expected):
+                verify_snapshot(snapshot)
+            with self.assertRaisesRegex(sqlite3.DatabaseError, expected):
+                restore_snapshot(snapshot, target, backup_dir)
+
+            db = sqlite3.connect(target)
+            try:
+                self.assertEqual(
+                    db.execute("SELECT value FROM business_records").fetchone()[0],
+                    "preserve-live-data",
+                )
+            finally:
+                db.close()
+            self.assertEqual(list(backup_dir.glob("mg-business-*.sqlite3")), [snapshot])
+
+
+    def test_restore_rejects_database_schema_newer_than_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "future.sqlite3"
+            target = root / "live.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_database(path, version, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(?,1)", (version,))
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT, username TEXT,
+                    password_hash TEXT, role TEXT, active INTEGER, created_at INTEGER)""")
+                db.execute("CREATE TABLE business_records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO business_records VALUES(?)", (value,))
+                db.commit()
+                db.close()
+
+            from schema_version import SCHEMA_VERSION
+            create_database(source, SCHEMA_VERSION + 1, "future-schema")
+            create_database(target, SCHEMA_VERSION, "current-live-data")
+            snapshot = create_snapshot(source, backup_dir)
+
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "newer than this application supports"):
+                verify_snapshot(snapshot)
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "newer than this application supports"):
+                restore_snapshot(snapshot, target, backup_dir)
+
+            db = sqlite3.connect(target)
+            try:
+                self.assertEqual(
+                    db.execute("SELECT value FROM business_records").fetchone()[0],
+                    "current-live-data",
+                )
+            finally:
+                db.close()
+            self.assertEqual(list(backup_dir.glob("mg-business-*.sqlite3")), [snapshot])
+
 
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -167,6 +501,34 @@ class BackupManagerTests(unittest.TestCase):
             db.close()
             with self.assertRaises(sqlite3.DatabaseError):
                 restore_snapshot(invalid, Path(directory) / "target.sqlite3", Path(directory) / "backups")
+
+
+    def test_encrypted_non_mg_database_is_rejected_without_leaving_plaintext(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "untrusted.sqlite3"
+            backup_dir = root / "backups"
+            db = sqlite3.connect(source)
+            db.execute("CREATE TABLE unrelated_private_data(value TEXT NOT NULL)")
+            db.execute("INSERT INTO unrelated_private_data VALUES('must not remain decrypted')")
+            db.commit()
+            db.close()
+
+            key = generate_encryption_key()
+            snapshot = create_snapshot(source, backup_dir, encryption_key=key)
+            target = root / "target.sqlite3"
+
+            # Both verification and restore must remove authenticated plaintext
+            # even when the decrypted SQLite file fails MG schema validation.
+            with mock.patch("backup_manager.tempfile.gettempdir", return_value=str(root)):
+                with self.assertRaisesRegex(sqlite3.DatabaseError, "valid MG Business"):
+                    verify_snapshot(snapshot, key)
+            self.assertFalse(list(root.glob("mg-backup-verify-*.sqlite3")))
+
+            with self.assertRaisesRegex(sqlite3.DatabaseError, "valid MG Business"):
+                restore_snapshot(snapshot, target, encryption_key=key)
+            self.assertFalse(target.exists())
+            self.assertFalse(list(root.glob("target.sqlite3.decrypt-*.tmp")))
 
 
 if __name__ == "__main__":

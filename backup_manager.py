@@ -11,6 +11,8 @@ import time
 import tempfile
 from pathlib import Path
 
+from schema_version import SCHEMA_VERSION
+
 MAGIC = b"MGBK1"
 NONCE_BYTES = 12
 TAG_BYTES = 16
@@ -197,8 +199,14 @@ def _validate_mg_database(connection: sqlite3.Connection) -> None:
         if not expected.issubset(actual):
             raise sqlite3.DatabaseError(f"Selected file has an invalid MG Business {table} schema.")
     migration = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-    if not migration or migration[0] is None or migration[0] < 1:
-        raise sqlite3.DatabaseError("Selected file has no applied MG Business schema migration.")
+    if not migration or type(migration[0]) is not int or migration[0] < 1:
+        raise sqlite3.DatabaseError(
+            "Selected file has no valid integer MG Business schema migration."
+        )
+    if migration[0] > SCHEMA_VERSION:
+        raise sqlite3.DatabaseError(
+            "Selected MG Business database schema is newer than this application supports."
+        )
 
 
 def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | None = None) -> bool:
@@ -263,15 +271,23 @@ def restore_snapshot(
                 decrypted_path.unlink()
             raise
 
-    check = sqlite3.connect(str(restore_source), timeout=30)
+    check = None
     try:
+        check = sqlite3.connect(str(restore_source), timeout=30)
         _validate_mg_database(check)
-    except Exception:
-        if decrypted_path.exists():
-            decrypted_path.unlink()
-        raise
-    finally:
         check.close()
+        check = None
+    except Exception:
+        try:
+            if check is not None:
+                try:
+                    check.close()
+                except Exception:
+                    pass
+        finally:
+            if decrypted_path.exists():
+                decrypted_path.unlink()
+        raise
 
     if target.exists():
         backup_dir = Path(safety_backup_dir).expanduser().resolve() if safety_backup_dir else target.parent / "backups"
@@ -299,11 +315,44 @@ def restore_snapshot(
             os.chmod(temp_path, 0o600)
         except OSError:
             pass
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(str(target) + suffix)
-            if sidecar.exists():
-                sidecar.unlink()
-        os.replace(temp_path, target)
+        # Preserve SQLite sidecars until the database replacement commits. If
+        # os.replace fails, restoring the sidecars keeps the original live DB
+        # recoverable instead of silently discarding pending WAL state.
+        preserved_sidecars: list[tuple[Path, Path]] = []
+        try:
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(target) + suffix)
+                if sidecar.exists():
+                    preserved = target.parent / (sidecar.name + ".restore-" + secrets.token_hex(6) + ".tmp")
+                    os.replace(sidecar, preserved)
+                    preserved_sidecars.append((sidecar, preserved))
+            os.replace(temp_path, target)
+        except Exception as replacement_error:
+            rollback_errors = []
+            for sidecar, preserved in reversed(preserved_sidecars):
+                if preserved.exists():
+                    try:
+                        os.replace(preserved, sidecar)
+                    except OSError as rollback_error:
+                        rollback_errors.append(
+                            f"{preserved} -> {sidecar}: {rollback_error}"
+                        )
+            if rollback_errors:
+                details = "; ".join(rollback_errors)
+                raise RuntimeError(
+                    "Restore failed and one or more SQLite sidecars could not be "
+                    f"returned to their original paths; recover them manually: {details}"
+                ) from replacement_error
+            raise
+        else:
+            # The database replacement is already committed. A stale sidecar
+            # backup is safer than reporting a failed restore after success;
+            # leave it for operator cleanup if the filesystem refuses unlink.
+            for _, preserved in preserved_sidecars:
+                try:
+                    preserved.unlink(missing_ok=True)
+                except OSError:
+                    pass
         try:
             os.chmod(target, 0o600)
         except OSError:

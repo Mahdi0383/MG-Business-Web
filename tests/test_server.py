@@ -4,6 +4,8 @@ import hmac
 import json
 import http.client
 import os
+import socket
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -11,8 +13,9 @@ from unittest import mock
 import urllib.error
 import urllib.request
 import time
+from email.message import Message
 from datetime import date, timedelta
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import server
@@ -26,6 +29,437 @@ def make_license(modules, license_id):
     secret = os.environ["MG_LICENSE_SECRET"]
     signature = base64.urlsafe_b64encode(hmac.new(secret.encode(),signed,hashlib.sha256).digest()).decode().rstrip("=")
     return "MG1." + encoded + "." + signature
+
+
+
+class DatabaseSchemaCompatibilityTests(unittest.TestCase):
+    def test_newer_database_schema_is_rejected_before_schema_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "future.sqlite3"
+            connection = __import__("sqlite3").connect(db_path)
+            connection.execute(
+                "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)",
+                (server.SCHEMA_VERSION + 1, int(time.time())),
+            )
+            connection.commit()
+            connection.close()
+
+            with mock.patch.object(server, "DATA_DIR", Path(directory)), \
+                 mock.patch.object(server, "DB_PATH", db_path):
+                with self.assertRaisesRegex(RuntimeError, "newer than this application supports"):
+                    server.connect()
+
+            check = __import__("sqlite3").connect(db_path)
+            try:
+                tables = {row[0] for row in check.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )}
+                self.assertEqual(tables, {"schema_migrations"})
+                self.assertEqual(
+                    check.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0],
+                    server.SCHEMA_VERSION + 1,
+                )
+            finally:
+                check.close()
+
+
+    def test_failed_migration_rolls_back_schema_and_version_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "migration.sqlite3"
+            with mock.patch.object(server, "DATA_DIR", Path(directory)), mock.patch.object(server, "DB_PATH", db_path):
+                initialized = server.connect()
+                initialized.close()
+
+                raw = sqlite3.connect(db_path)
+                try:
+                    raw.execute("DELETE FROM schema_migrations WHERE version=17")
+                    raw.execute("DROP INDEX IF EXISTS idx_orders_fulfillment_queue")
+                    columns = {row[1] for row in raw.execute("PRAGMA table_info(orders)")}
+                    if "fulfillment_status" in columns:
+                        raw.execute("ALTER TABLE orders DROP COLUMN fulfillment_status")
+                    raw.execute("""
+                        CREATE TRIGGER reject_migration_17
+                        BEFORE INSERT ON schema_migrations
+                        WHEN NEW.version = 17
+                        BEGIN SELECT RAISE(ABORT, 'simulated migration failure'); END
+                    """)
+                    raw.commit()
+                finally:
+                    raw.close()
+
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "simulated migration failure"):
+                    server.connect()
+
+                check = sqlite3.connect(db_path)
+                try:
+                    versions = {row[0] for row in check.execute("SELECT version FROM schema_migrations")}
+                    columns = {row[1] for row in check.execute("PRAGMA table_info(orders)")}
+                    index = check.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_orders_fulfillment_queue'"
+                    ).fetchone()
+                    self.assertNotIn(17, versions)
+                    self.assertNotIn("fulfillment_status", columns)
+                    self.assertIsNone(index)
+                finally:
+                    check.close()
+
+
+class BackupSchedulerTests(unittest.TestCase):
+    def test_failed_scheduled_backups_retry_with_bounded_backoff(self):
+        class StopAfterWaits:
+            def __init__(self, count):
+                self.count = count
+                self.waits = []
+
+            def is_set(self):
+                return False
+
+            def wait(self, delay):
+                self.waits.append(delay)
+                return len(self.waits) >= self.count
+
+        stop_event = StopAfterWaits(3)
+        with mock.patch.object(
+            server, "create_snapshot",
+            side_effect=[OSError("disk temporarily unavailable"),
+                         OSError("disk still unavailable"), Path("/tmp/recovered.sqlite3")],
+        ) as create, mock.patch.object(server, "BACKUP_INTERVAL_SECONDS", 86400):
+            server.backup_scheduler(stop_event)
+
+        self.assertEqual(create.call_count, 3)
+        self.assertEqual(stop_event.waits, [60, 120, 86400])
+
+    def test_successful_backup_resets_retry_backoff(self):
+        class StopAfterWaits:
+            def __init__(self):
+                self.waits = []
+
+            def is_set(self):
+                return False
+
+            def wait(self, delay):
+                self.waits.append(delay)
+                return len(self.waits) >= 3
+
+        stop_event = StopAfterWaits()
+        with mock.patch.object(
+            server, "create_snapshot",
+            side_effect=[OSError("temporary failure"), Path("/tmp/recovered.sqlite3"),
+                         OSError("later failure")],
+        ) as create, mock.patch.object(server, "BACKUP_INTERVAL_SECONDS", 7200):
+            server.backup_scheduler(stop_event)
+
+        self.assertEqual(create.call_count, 3)
+        self.assertEqual(stop_event.waits, [60, 7200, 60])
+
+
+class BoundedHttpServerTests(unittest.TestCase):
+    def test_over_capacity_response_is_bounded_well_formed_and_closed(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client, peer = socket.socketpair()
+        try:
+            # A zero-capacity semaphore deterministically models a saturated worker pool.
+            httpd._worker_slots = threading.BoundedSemaphore(0)
+            with mock.patch.object(socket.socket, "settimeout", autospec=True) as settimeout, \
+                 mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
+                httpd.process_request(client, ("127.0.0.1", 12345))
+
+            settimeout.assert_called_once_with(server.REQUEST_TIMEOUT_SECONDS)
+            shutdown.assert_called_once_with(client)
+            response = peer.recv(1024)
+            self.assertEqual(
+                response,
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Connection: close\r\n"
+                b"Content-Length: 0\r\n\r\n",
+            )
+            self.assertEqual(peer.recv(1), b"")
+            # A rejected request never acquired a worker slot.
+            self.assertEqual(httpd._worker_slots._value, 0)
+        finally:
+            peer.close()
+            httpd.server_close()
+
+    def test_overload_send_failure_still_closes_socket_without_consuming_slot(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client, peer = socket.socketpair()
+        httpd._worker_slots = threading.BoundedSemaphore(0)
+        peer.close()
+        try:
+            with mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
+                # A disconnected peer makes the 503 write fail; cleanup must
+                # still close the accepted socket and leave capacity unchanged.
+                httpd.process_request(client, ("127.0.0.1", 12345))
+            shutdown.assert_called_once_with(client)
+            self.assertEqual(httpd._worker_slots._value, 0)
+            self.assertEqual(client.fileno(), -1)
+        finally:
+            client.close()
+            httpd.server_close()
+
+    def test_live_worker_limit_rejects_excess_connection_until_slot_releases(self):
+        started = threading.Event()
+        release = threading.Event()
+        active_lock = threading.Lock()
+        active_count = 0
+        peak_active = 0
+
+        class BlockingHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                nonlocal active_count, peak_active
+                with active_lock:
+                    active_count += 1
+                    peak_active = max(peak_active, active_count)
+                started.set()
+                try:
+                    release.wait(3)
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                finally:
+                    with active_lock:
+                        active_count -= 1
+
+            def log_message(self, *args):
+                pass
+
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), BlockingHandler)
+        httpd._worker_slots = threading.BoundedSemaphore(1)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        first = second = None
+        try:
+            first = socket.create_connection(httpd.server_address, timeout=2)
+            first.sendall(b"GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            self.assertTrue(started.wait(2), "first request did not occupy the worker slot")
+
+            second = socket.create_connection(httpd.server_address, timeout=2)
+            second.sendall(b"GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            rejected = bytearray()
+            while True:
+                chunk = second.recv(1024)
+                if not chunk:
+                    break
+                rejected.extend(chunk)
+            self.assertTrue(rejected.startswith(b"HTTP/1.1 503 Service Unavailable\r\n"))
+            self.assertEqual(peak_active, 1, "the server must never exceed its worker ceiling")
+            self.assertEqual(httpd._worker_slots._value, 0)
+
+            release.set()
+            accepted = bytearray()
+            while True:
+                chunk = first.recv(1024)
+                if not chunk:
+                    break
+                accepted.extend(chunk)
+            self.assertTrue(accepted.startswith(b"HTTP/1.0 200 OK\r\n"))
+            self.assertTrue(accepted.endswith(b"ok"))
+            deadline = time.time() + 2
+            while httpd._worker_slots._value != 1 and time.time() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(httpd._worker_slots._value, 1)
+        finally:
+            release.set()
+            if first is not None:
+                first.close()
+            if second is not None:
+                second.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+    def test_overload_send_failure_still_closes_socket_without_consuming_capacity(self):
+        class BrokenPeer:
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def sendall(self, payload):
+                raise BrokenPipeError("peer disconnected")
+
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client = BrokenPeer()
+        try:
+            httpd._worker_slots = threading.BoundedSemaphore(0)
+            with mock.patch.object(httpd, "shutdown_request") as shutdown:
+                # A disconnected peer must not escape the overload cleanup path.
+                httpd.process_request(client, ("127.0.0.1", 12345))
+
+            self.assertEqual(client.timeout, server.REQUEST_TIMEOUT_SECONDS)
+            shutdown.assert_called_once_with(client)
+            self.assertEqual(httpd._worker_slots._value, 0)
+        finally:
+            httpd.server_close()
+
+    def test_slow_incomplete_request_is_closed_after_socket_timeout(self):
+        class NoopHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        with mock.patch.object(server, "REQUEST_TIMEOUT_SECONDS", 0.2):
+            httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), NoopHandler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(httpd.server_address, timeout=2)
+            try:
+                client.sendall(b"GET / HTTP/1.1\r\nHost:")
+                client.settimeout(2)
+                self.assertEqual(client.recv(1), b"")
+                deadline = time.time() + 2
+                while httpd._worker_slots._value != server.MAX_HTTP_WORKERS and time.time() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+            finally:
+                client.close()
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
+    def test_slow_incomplete_request_body_is_closed_and_releases_worker_slot(self):
+        with mock.patch.object(server, "REQUEST_TIMEOUT_SECONDS", 0.2):
+            httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(httpd.server_address, timeout=2)
+            try:
+                # The headers are complete, but the declared JSON body never
+                # arrives. The socket timeout must terminate this worker too.
+                client.sendall(
+                    b"POST /api/setup HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Content-Length: 20\r\n"
+                    b"Content-Type: application/json\r\n\r\n"
+                    b"{"
+                )
+                client.settimeout(2)
+                self.assertEqual(client.recv(1), b"")
+                deadline = time.time() + 2
+                while httpd._worker_slots._value != server.MAX_HTTP_WORKERS and time.time() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+            finally:
+                client.close()
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
+    def test_accepted_connection_gets_timeout_and_releases_worker_slot(self):
+        class TimeoutProbeHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = str(self.connection.gettimeout()).encode("ascii")
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), TimeoutProbeHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%d/" % httpd.server_address[1]
+            with urllib.request.urlopen(url, timeout=5) as response:
+                observed_timeout = float(response.read().decode("ascii"))
+            self.assertEqual(observed_timeout, server.REQUEST_TIMEOUT_SECONDS)
+            deadline = time.time() + 2
+            while httpd._worker_slots._value != server.MAX_HTTP_WORKERS and time.time() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+    def test_worker_slot_is_released_when_thread_start_fails(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        client, peer = socket.socketpair()
+        initial_slots = httpd._worker_slots._value
+        try:
+            with mock.patch("threading.Thread.start", side_effect=RuntimeError("simulated thread start failure")), \
+                 mock.patch.object(httpd, "shutdown_request", wraps=httpd.shutdown_request) as shutdown:
+                with self.assertRaisesRegex(RuntimeError, "simulated thread start failure"):
+                    httpd.process_request(client, ("127.0.0.1", 12345))
+            shutdown.assert_called_once_with(client)
+            self.assertEqual(peer.recv(1), b"")
+            self.assertEqual(httpd._worker_slots._value, initial_slots)
+        finally:
+            client.close()
+            peer.close()
+            httpd.server_close()
+
+
+class HttpProtocolHardeningTests(unittest.TestCase):
+    def test_backup_restore_rejects_expect_continue_without_interim_body_upload(self):
+        # BaseHTTPRequestHandler only invokes handle_expect_100 when its
+        # configured response protocol is HTTP/1.1 or newer.
+        with mock.patch.object(server.Handler, "protocol_version", "HTTP/1.1"):
+            httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(httpd.server_address, timeout=2)
+            try:
+                client.sendall(
+                    b"POST /api/backup/restore HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Content-Length: 100\r\n"
+                    b"Expect: 100-continue\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                response = bytearray()
+                while True:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+                self.assertTrue(response.startswith(b"HTTP/1.1 417 "), bytes(response[:200]))
+                self.assertNotIn(b"100 Continue", response)
+                self.assertNotIn(b"HTTP/1.1 100", response)
+            finally:
+                client.close()
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=3)
+
+
+class StaticPathSecurityTests(unittest.TestCase):
+    def test_symlink_cannot_publish_files_outside_web_root(self):
+        with tempfile.TemporaryDirectory() as root_dir, tempfile.TemporaryDirectory() as outside_dir:
+            root = Path(root_dir)
+            outside = Path(outside_dir) / "private.txt"
+            outside.write_text("private", encoding="utf-8")
+            (root / "assets").mkdir()
+            (root / "assets" / "external").symlink_to(outside_dir, target_is_directory=True)
+            handler = object.__new__(server.Handler)
+            handler.directory = str(root)
+            with mock.patch.object(server, "ROOT", root):
+                translated = Path(handler.translate_path("/assets/external/private.txt"))
+                self.assertEqual(translated, root / "__blocked_resource__")
+
+    def test_hidden_and_operational_files_are_not_public_resources(self):
+        with tempfile.TemporaryDirectory() as root_dir:
+            root = Path(root_dir)
+            (root / "assets").mkdir()
+            (root / "assets" / "app.js").write_text("ok", encoding="utf-8")
+            (root / ".secrets").mkdir()
+            (root / ".secrets" / "token.txt").write_text("secret", encoding="utf-8")
+            (root / "settings.env").write_text("secret", encoding="utf-8")
+            handler = object.__new__(server.Handler)
+            handler.directory = str(root)
+            with mock.patch.object(server, "ROOT", root):
+                self.assertEqual(Path(handler.translate_path("/assets/app.js")), root / "assets" / "app.js")
+                self.assertEqual(Path(handler.translate_path("/.secrets/token.txt")), root / "__blocked_resource__")
+                self.assertEqual(Path(handler.translate_path("/settings.env")), root / "__blocked_resource__")
 
 
 class ApiIntegrationTests(unittest.TestCase):
@@ -104,6 +538,311 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertIn("حجم درخواست", payload["error"])
         finally:
             connection.close()
+
+    def test_post_rejects_ambiguous_http_body_framing_and_closes_socket(self):
+        malformed_headers = (
+            b"Content-Length: 2\r\nContent-Length: 2\r\n",
+            b"Transfer-Encoding: chunked\r\nContent-Length: 2\r\n",
+        )
+        for framing in malformed_headers:
+            with self.subTest(framing=framing):
+                connection = socket.create_connection(self.httpd.server_address, timeout=3)
+                try:
+                    connection.sendall(
+                        b"POST /api/login HTTP/1.1\r\n"
+                        b"Host: localhost\r\n"
+                        b"Content-Type: application/json\r\n"
+                        + framing + b"\r\n{}"
+                    )
+                    response = bytearray()
+                    while b"\r\n\r\n" not in response:
+                        chunk = connection.recv(4096)
+                        self.assertTrue(chunk, "server closed before returning a framing error")
+                        response.extend(chunk)
+                    header_end = response.index(b"\r\n\r\n") + 4
+                    headers = response[:header_end].decode("iso-8859-1")
+                    self.assertIn(" 400 ", headers.splitlines()[0])
+                    body_length = next(
+                        int(line.split(":", 1)[1].strip())
+                        for line in headers.splitlines()
+                        if line.lower().startswith("content-length:")
+                    )
+                    body = bytearray(response[header_end:])
+                    while len(body) < body_length:
+                        chunk = connection.recv(4096)
+                        self.assertTrue(chunk, "server closed before completing the framing error")
+                        body.extend(chunk)
+                    self.assertIn("طول بدنه", json.loads(body[:body_length])["error"])
+                    self.assertEqual(connection.recv(1), b"", "ambiguous framing must close the connection")
+                finally:
+                    connection.close()
+
+    def test_post_rejects_duplicate_json_object_keys_and_closes_socket(self):
+        class Http11Handler(server.Handler):
+            protocol_version = "HTTP/1.1"
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Http11Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        connection = socket.create_connection(httpd.server_address, timeout=3)
+        try:
+            body = b'{"username":"first","username":"second","password":"not-a-real-password"}'
+            connection.sendall(
+                b"POST /api/login HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                + ("Content-Length: %d\r\n" % len(body)).encode("ascii")
+                + b"\r\n" + body
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before returning duplicate-key error")
+                response.extend(chunk)
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].decode("iso-8859-1")
+            self.assertIn(" 400 ", headers.splitlines()[0])
+            body_length = next(
+                int(line.split(":", 1)[1].strip())
+                for line in headers.splitlines()
+                if line.lower().startswith("content-length:")
+            )
+            body_response = bytearray(response[header_end:])
+            while len(body_response) < body_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing duplicate-key error")
+                body_response.extend(chunk)
+            self.assertIn("کلید تکراری", json.loads(body_response[:body_length])["error"])
+            connection.settimeout(2)
+            self.assertEqual(connection.recv(1), b"", "ambiguous JSON keys must close the HTTP/1.1 connection")
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+    def test_post_rejects_duplicate_content_encoding_headers(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"POST /api/login HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: 2\r\n"
+                b"Content-Encoding: identity\r\n"
+                b"Content-Encoding: gzip\r\n"
+                b"Connection: close\r\n\r\n{}"
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before returning encoding error")
+                response.extend(chunk)
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].decode("iso-8859-1")
+            self.assertIn(" 400 ", headers.splitlines()[0])
+            body_length = next(
+                int(line.split(":", 1)[1].strip())
+                for line in headers.splitlines()
+                if line.lower().startswith("content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < body_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing encoding error")
+                body.extend(chunk)
+            self.assertIn("فشرده‌سازی", json.loads(body[:body_length])["error"])
+            self.assertEqual(connection.recv(1), b"", "ambiguous content encoding must close connection")
+        finally:
+            connection.close()
+
+    def test_post_rejects_extremely_long_content_length_without_uncaught_error(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"POST /api/login HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                + b"Content-Length: " + (b"9" * 5000) + b"\r\n\r\n"
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before returning invalid-length response")
+                response.extend(chunk)
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].decode("iso-8859-1")
+            self.assertIn(" 400 ", headers.splitlines()[0])
+            body_length = next(
+                int(line.split(":", 1)[1].strip())
+                for line in headers.splitlines()
+                if line.lower().startswith("content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < body_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing invalid-length response")
+                body.extend(chunk)
+            self.assertIn("طول درخواست", json.loads(body[:body_length])["error"])
+            self.assertEqual(connection.recv(1), b"", "invalid numeric length must close connection")
+        finally:
+            connection.close()
+
+    def test_backup_restore_rejects_expect_header_with_default_http_protocol(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"POST /api/backup/restore HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Expect: 100-continue\r\n"
+                + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                + b"\r\n"
+            )
+            response = bytearray()
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+            self.assertTrue(response.startswith(b"HTTP/1.0 417 "), bytes(response[:200]))
+            self.assertNotIn(b"100 Continue", response)
+            self.assertIn(b"Expect is not supported", response)
+        finally:
+            connection.close()
+
+    def test_backup_restore_rejects_concurrent_large_upload_before_reading_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(server, "DATA_DIR", root), mock.patch.object(server, "DB_PATH", root / "test.sqlite3"):
+                status, setup = self.request("POST", "/api/setup", {
+                    "businessName": "Restore capacity test",
+                    "username": "restore-capacity-owner",
+                    "password": "restore-capacity-owner-strong-password"
+                })
+                self.assertEqual(status, 200)
+                with mock.patch.object(server, "BACKUP_RESTORE_SEMAPHORE", threading.BoundedSemaphore(0)):
+                    connection = socket.create_connection(self.httpd.server_address, timeout=3)
+                    try:
+                        connection.sendall(
+                            b"POST /api/backup/restore HTTP/1.1\r\n"
+                            b"Host: localhost\r\n"
+                            b"Content-Type: application/json\r\n"
+                            + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                            + ("Authorization: Bearer %s\r\n" % setup["token"]).encode("ascii")
+                            + b"\r\n"
+                        )
+                        response = bytearray()
+                        while b"\r\n\r\n" not in response:
+                            chunk = connection.recv(4096)
+                            self.assertTrue(chunk, "server closed before returning restore-capacity response")
+                            response.extend(chunk)
+                        header_end = response.index(b"\r\n\r\n") + 4
+                        headers = response[:header_end].decode("iso-8859-1")
+                        self.assertIn(" 503 ", headers.splitlines()[0])
+                        body_length = next(
+                            int(line.split(":", 1)[1].strip())
+                            for line in headers.splitlines()
+                            if line.lower().startswith("content-length:")
+                        )
+                        body = bytearray(response[header_end:])
+                        while len(body) < body_length:
+                            chunk = connection.recv(4096)
+                            self.assertTrue(chunk, "server closed before completing restore-capacity response")
+                            body.extend(chunk)
+                        self.assertIn("در حال اجراست", json.loads(body[:body_length])["error"])
+                        self.assertEqual(connection.recv(1), b"", "rejected restore upload must close connection")
+                    finally:
+                        connection.close()
+
+    def test_backup_restore_authenticates_before_reading_large_body_and_closes_socket(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"POST /api/backup/restore HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Type: application/json\r\n"
+                + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                + b"\r\n"
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before sending the authentication response")
+                response.extend(chunk)
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].decode("iso-8859-1")
+            self.assertIn(" 401 ", headers.splitlines()[0])
+            body_length = next(
+                int(line.split(":", 1)[1].strip())
+                for line in headers.splitlines()
+                if line.lower().startswith("content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < body_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before sending the complete response body")
+                body.extend(chunk)
+            self.assertIn("وارد حساب", json.loads(body[:body_length])["error"])
+            self.assertEqual(connection.recv(1), b"", "unauthenticated large-body connection must close immediately")
+        finally:
+            connection.close()
+
+    def test_backup_restore_rejects_non_owner_before_reading_large_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(server, "DATA_DIR", root), mock.patch.object(server, "DB_PATH", root / "test.sqlite3"):
+                status, setup = self.request("POST", "/api/setup", {
+                    "businessName": "Restore authorization test",
+                    "username": "restore-owner",
+                    "password": "restore-owner-strong-password"
+                })
+                self.assertEqual(status, 200)
+                owner_token = setup["token"]
+                status, cashier = self.request("POST", "/api/users", {
+                    "username": "restore-cashier",
+                    "password": "restore-cashier-strong-password",
+                    "role": "cashier"
+                }, owner_token)
+                self.assertEqual(status, 201)
+                status, login = self.request("POST", "/api/login", {
+                    "username": "restore-cashier",
+                    "password": "restore-cashier-strong-password"
+                })
+                self.assertEqual(status, 200)
+
+                connection = socket.create_connection(self.httpd.server_address, timeout=3)
+                try:
+                    connection.sendall(
+                        b"POST /api/backup/restore HTTP/1.1\r\n"
+                        b"Host: localhost\r\n"
+                        b"Content-Type: application/json\r\n"
+                        + ("Content-Length: %d\r\n" % server.MAX_BACKUP_BODY).encode("ascii")
+                        + ("Authorization: Bearer %s\r\n" % login["token"]).encode("ascii")
+                        + b"\r\n"
+                    )
+                    response = bytearray()
+                    while b"\r\n\r\n" not in response:
+                        chunk = connection.recv(4096)
+                        self.assertTrue(chunk, "server closed before sending the authorization response")
+                        response.extend(chunk)
+                    header_end = response.index(b"\r\n\r\n") + 4
+                    headers = response[:header_end].decode("iso-8859-1")
+                    self.assertIn(" 403 ", headers.splitlines()[0])
+                    body_length = next(
+                        int(line.split(":", 1)[1].strip())
+                        for line in headers.splitlines()
+                        if line.lower().startswith("content-length:")
+                    )
+                    body = bytearray(response[header_end:])
+                    while len(body) < body_length:
+                        chunk = connection.recv(4096)
+                        self.assertTrue(chunk, "server closed before sending the complete authorization response")
+                        body.extend(chunk)
+                    self.assertIn("فقط مالک", json.loads(body[:body_length])["error"])
+                    self.assertEqual(connection.recv(1), b"", "non-owner backup connection must close immediately")
+                finally:
+                    connection.close()
 
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
         tenant_ids = ("tenant-public-a", "tenant-public-b")
@@ -733,6 +1472,14 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_payment["duplicate"])
         self.assertEqual(duplicate_payment["remainingBalance"],35000)
+        status, changed_customer_amount = self.request("POST", "/api/customers/customer-1/payments", {
+            "id":"customer-payment-01","amount":49000,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,409)
+        status, changed_customer_method = self.request("POST", "/api/customers/customer-1/payments", {
+            "id":"customer-payment-01","amount":50000,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,409)
         # A customer-payment retry must not succeed if its accounting journal was damaged.
         db=server.connect()
         try:
@@ -831,6 +1578,22 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/products", token=token)
         self.assertEqual(result["items"][0]["active"], 0)
 
+        # Generic accounting void must not bypass the order-return workflow.
+        status, generic_order_void = self.request(
+            "DELETE", "/api/transactions/order-order-test-1", token=token)
+        self.assertEqual(status, 409)
+        db = server.connect()
+        try:
+            self.assertEqual(db.execute(
+                "SELECT status FROM orders WHERE id='order-test-1'").fetchone()["status"], "paid")
+            self.assertEqual(db.execute(
+                "SELECT status FROM transactions WHERE id='order-order-test-1'").fetchone()["status"], "posted")
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='order-order-test-1'"
+            ).fetchone()[0], 0)
+        finally:
+            db.close()
+
         status, result = self.request("DELETE", "/api/orders/order-test-1", token=token)
         self.assertEqual(status, 200)
         status, result = self.request("GET", "/api/orders", token=token)
@@ -875,6 +1638,44 @@ class ApiIntegrationTests(unittest.TestCase):
 
         status, result = self.request("DELETE", "/api/transactions/tx-test-1", token=token)
         self.assertEqual(status, 200)
+        self.assertTrue(result["voided"])
+        # A generic transaction void must atomically mark the transaction,
+        # create exactly one balanced reversal, and leave an audit trail.
+        db = server.connect()
+        try:
+            tenant_id = db.execute("SELECT tenant_id FROM users WHERE id=?", (owner_id,)).fetchone()[0]
+            voided_row = db.execute(
+                "SELECT status,voided_by,voided_at FROM transactions WHERE id='tx-test-1' AND tenant_id=?",
+                (tenant_id,)).fetchone()
+            self.assertEqual(voided_row["status"], "voided")
+            self.assertEqual(voided_row["voided_by"], owner_id)
+            self.assertGreater(voided_row["voided_at"], 0)
+            reversal_rows = db.execute(
+                "SELECT id,reversal_of FROM journal_entries WHERE tenant_id=? AND source_type='transaction_reversal' AND source_id='tx-test-1'",
+                (tenant_id,)).fetchall()
+            self.assertEqual(len(reversal_rows), 1)
+            self.assertTrue(reversal_rows[0]["reversal_of"])
+            reversal_totals = db.execute(
+                "SELECT COALESCE(SUM(debit),0) AS debit,COALESCE(SUM(credit),0) AS credit "
+                "FROM journal_lines WHERE tenant_id=? AND entry_id=?",
+                (tenant_id,reversal_rows[0]["id"])).fetchone()
+            self.assertEqual(reversal_totals["debit"], reversal_totals["credit"])
+            self.assertGreater(reversal_totals["debit"], 0)
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE tenant_id=? AND action='transaction.voided' AND entity_id='tx-test-1'",
+                (tenant_id,)).fetchone()[0], 1)
+        finally:
+            db.close()
+        status, repeated_generic_void = self.request(
+            "DELETE", "/api/transactions/tx-test-1", token=token)
+        self.assertEqual(status, 404)
+        db = server.connect()
+        try:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE tenant_id=? AND source_type='transaction_reversal' AND source_id='tx-test-1'",
+                (tenant_id,)).fetchone()[0], 1)
+        finally:
+            db.close()
         status, result = self.request("GET", "/api/transactions", token=token)
         self.assertEqual(len(result["items"]), 3)
         self.assertIn("order-order-credit-1", [x["id"] for x in result["items"]])
@@ -1093,6 +1894,23 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(card_retry["duplicate"])
         self.assertEqual(card_retry["paymentMethod"],"card")
+        # GameNet settlement transactions are domain-owned too: generic
+        # accounting void must not detach a paid session from its journal.
+        status, generic_game_void=self.request(
+            "DELETE","/api/transactions/game-session-card",token=token)
+        self.assertEqual(status,409)
+        db=server.connect()
+        try:
+            self.assertEqual(db.execute(
+                "SELECT status FROM game_sessions WHERE id='session-card'").fetchone()["status"],"ended")
+            self.assertEqual(db.execute(
+                "SELECT status FROM transactions WHERE id='game-session-card'").fetchone()["status"],"posted")
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='game-session-card'"
+            ).fetchone()[0],0)
+        finally:
+            db.close()
+
         # A voided settlement transaction must not be accepted as a successful retry.
         db=server.connect()
         try:
@@ -1240,6 +2058,31 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/inventory", token=token)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test")["quantity"],10)
         self.assertEqual(next(x for x in result["items"] if x["productId"]=="product-purchase-test-2")["quantity"],5)
+        # Cashiers cannot view supplier liabilities and must not be able to settle them.
+        status, cashier_user = self.request("POST", "/api/users", {
+            "username":"purchase-cashier","password":"purchase-cashier-password-2026","role":"cashier"
+        }, token)
+        self.assertEqual(status,201)
+        status, cashier_login = self.request("POST", "/api/login", {
+            "username":"purchase-cashier","password":"purchase-cashier-password-2026"
+        })
+        self.assertEqual(status,200)
+        cashier_token=cashier_login["token"]
+        for restricted_path in ("/api/suppliers", "/api/purchase-invoices"):
+            with self.subTest(cashier_read=restricted_path):
+                restricted_status,_=self.request("GET",restricted_path,token=cashier_token)
+                self.assertEqual(restricted_status,403)
+        cashier_payment_status,cashier_payment_result=self.request(
+            "POST","/api/purchase-invoices/purchase-invoice-1/payments",
+            {"id":"cashier-must-not-pay","amount":100000,"paymentMethod":"card"},cashier_token)
+        self.assertEqual(cashier_payment_status,403)
+        self.assertIn("error",cashier_payment_result)
+        db=server.connect()
+        try:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM supplier_payments WHERE id='cashier-must-not-pay'").fetchone()[0],0)
+        finally:
+            db.close()
+
         status, result = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
             "id":"supplier-payment-01","amount":100000,"paymentMethod":"card"
         }, token)
@@ -1276,6 +2119,14 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertTrue(duplicate_supplier_payment["duplicate"])
         self.assertEqual(duplicate_supplier_payment["remainingBalance"],319999)
+        status, changed_supplier_amount = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "id":"supplier-payment-01","amount":99999,"paymentMethod":"card"
+        }, token)
+        self.assertEqual(status,409)
+        status, changed_supplier_method = self.request("POST", "/api/purchase-invoices/purchase-invoice-1/payments", {
+            "id":"supplier-payment-01","amount":100000,"paymentMethod":"cash"
+        }, token)
+        self.assertEqual(status,409)
         # An idempotent retry must not report success if its accounting journal was damaged.
         db=server.connect()
         try:
@@ -1458,6 +2309,20 @@ class ApiIntegrationTests(unittest.TestCase):
         altered["tenant"]["id"] = "different-workspace"
         status, result = self.request("POST", "/api/backup/restore", altered, token)
         self.assertEqual(status, 400)
+        # Even when the outer tenant ID matches, reject any embedded row that
+        # attempts to smuggle another tenant's data into this workspace.
+        foreign_row_snapshot = json.loads(json.dumps(snapshot))
+        foreign_row_snapshot["tables"]["products"][0]["tenant_id"] = "foreign-workspace"
+        status, foreign_row_result = self.request(
+            "POST", "/api/backup/restore", foreign_row_snapshot, token
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("فضای کاری دیگر", foreign_row_result["error"])
+        status, after_foreign_row_rejection = self.request(
+            "GET", "/api/gamenet/sessions", token=token
+        )
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(len(after_foreign_row_rejection["items"]), 2)
         missing_chart = json.loads(json.dumps(snapshot))
         missing_chart["tables"]["accounts"] = [
             row for row in missing_chart["tables"]["accounts"] if row["code"] != "5100"
@@ -1709,6 +2574,24 @@ class ApiIntegrationTests(unittest.TestCase):
             status, order = self.request("POST","/api/public/orders",payload)
             self.assertEqual(status,201)
             self.assertEqual(order["total"],250)
+            # Public QR orders use the same order-owned transaction namespace;
+            # generic accounting void must preserve their inventory and order workflow.
+            status, generic_public_void = self.request(
+                "DELETE","/api/transactions/order-public-public-addon-order-01",token=token)
+            self.assertEqual(status,409)
+            db=server.connect()
+            try:
+                self.assertEqual(db.execute(
+                    "SELECT status FROM orders WHERE id='public-public-addon-order-01'"
+                ).fetchone()["status"],"paid")
+                self.assertEqual(db.execute(
+                    "SELECT status FROM transactions WHERE id='order-public-public-addon-order-01'"
+                ).fetchone()["status"],"posted")
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM journal_entries WHERE source_type='transaction_reversal' AND source_id='order-public-public-addon-order-01'"
+                ).fetchone()[0],0)
+            finally:
+                db.close()
             db=server.connect()
             try:
                 public_fulfillment=db.execute("SELECT fulfillment_status FROM orders WHERE id=?",
@@ -1930,6 +2813,36 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertEqual(json.loads(restored_item["addons_json"])[0]["price"],25)
             finally:
                 db.close()
+
+            # Simulate a damaged cross-tenant relation: the addon and inventory
+            # movement belong to this tenant, but their product row is reassigned.
+            db = server.connect()
+            try:
+                foreign_tenant = "addon-foreign-tenant"
+                db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)",
+                           (foreign_tenant,"Foreign Addon Tenant",int(time.time())))
+                db.execute("UPDATE products SET tenant_id=? WHERE id=?",
+                           (foreign_tenant,"addon-product"))
+                db.execute("""INSERT INTO users(id,tenant_id,username,password_hash,role,active,created_at)
+                    VALUES(?,?,?,?,?,1,?)""",
+                    ("addon-foreign-user",foreign_tenant,"foreign-audit-actor","not-a-login-hash","manager",int(time.time())))
+                db.execute("""INSERT INTO audit_log(tenant_id,actor_id,action,entity_type,entity_id,details_json,created_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (tenant_id,"addon-foreign-user","tenant.join.probe","test","foreign-actor-probe","{}",int(time.time())))
+                db.commit()
+            finally:
+                db.close()
+            status, isolated_addons = self.request("GET", "/api/product-addons", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(isolated_addons["items"], [])
+            status, isolated_inventory = self.request("GET", "/api/inventory", token=token)
+            self.assertEqual(status, 200)
+            self.assertEqual(isolated_inventory["items"], [])
+            status, isolated_audit = self.request("GET", "/api/audit-log", token=token)
+            self.assertEqual(status, 200)
+            probe = next(item for item in isolated_audit["items"]
+                         if item["entityId"] == "foreign-actor-probe")
+            self.assertIsNone(probe["actorUsername"])
         finally:
             server.DB_PATH = original_db_path
 
@@ -1979,15 +2892,22 @@ class ApiIntegrationTests(unittest.TestCase):
     def test_client_ip_trusts_real_ip_only_from_configured_proxy(self):
         handler = object.__new__(server.Handler)
         handler.client_address = ("127.0.0.1", 12345)
-        handler.headers = {"X-Real-IP": "198.51.100.23"}
+        handler.headers = Message()
+        handler.headers["X-Real-IP"] = "198.51.100.23"
         old = os.environ.get("MG_TRUSTED_PROXIES")
         try:
             os.environ.pop("MG_TRUSTED_PROXIES", None)
             self.assertEqual(handler.client_ip(), "127.0.0.1")
             os.environ["MG_TRUSTED_PROXIES"] = "127.0.0.1/32"
             self.assertEqual(handler.client_ip(), "198.51.100.23")
-            handler.headers = {"X-Real-IP": "not-an-ip"}
+            handler.headers = Message()
+            handler.headers["X-Real-IP"] = "not-an-ip"
             self.assertEqual(handler.client_ip(), "127.0.0.1")
+            handler.headers = Message()
+            handler.headers["X-Real-IP"] = "198.51.100.23"
+            handler.headers["X-Real-IP"] = "203.0.113.45"
+            self.assertEqual(handler.client_ip(), "127.0.0.1",
+                "duplicate forwarded client addresses must fall back to the trusted proxy")
             os.environ["MG_TRUSTED_PROXIES"] = "192.0.2.0/24"
             self.assertEqual(handler.client_ip(), "127.0.0.1")
         finally:
@@ -2008,25 +2928,29 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["missingTables"],[])
         self.assertEqual(payload["schemaVersion"],server.SCHEMA_VERSION)
         self.assertEqual(payload["expectedSchemaVersion"],server.SCHEMA_VERSION)
-        # A database opened by a newer incompatible app version must not pass readiness.
-        db=server.connect()
+        # A newer database must be rejected by connect() before any migration
+        # can mutate it; readiness is intentionally unreachable in this state.
+        future_version=server.SCHEMA_VERSION+1
+        raw=sqlite3.connect(server.DB_PATH)
         try:
-            db.execute("INSERT OR REPLACE INTO schema_migrations(version,applied_at) VALUES(?,?)",
-                       (server.SCHEMA_VERSION+1,int(time.time())))
-            db.commit()
+            raw.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)",
+                        (future_version,int(time.time())))
+            raw.commit()
         finally:
-            db.close()
-        status,future_schema=self.request("GET","/api/ready")
-        self.assertEqual(status,503)
-        self.assertFalse(future_schema["ready"])
-        self.assertFalse(future_schema["checks"]["migrations"])
-        self.assertEqual(future_schema["schemaVersion"],server.SCHEMA_VERSION+1)
-        db=server.connect()
+            raw.close()
+        with self.assertRaisesRegex(RuntimeError,"newer than this application supports"):
+            server.connect()
+        raw=sqlite3.connect(server.DB_PATH)
         try:
-            db.execute("DELETE FROM schema_migrations WHERE version=?",(server.SCHEMA_VERSION+1,))
-            db.commit()
+            self.assertEqual(raw.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0],
+                             future_version)
+            raw.execute("DELETE FROM schema_migrations WHERE version=?",(future_version,))
+            raw.commit()
         finally:
-            db.close()
+            raw.close()
+        status,restored=self.request("GET","/api/ready")
+        self.assertEqual(status,200)
+        self.assertTrue(restored["ready"])
 
     def test_production_responses_include_hsts_and_cross_origin_guards(self):
         old_env = {key: os.environ.get(key) for key in ("MG_ENV", "MG_PUBLIC_URL")}
@@ -2086,6 +3010,40 @@ class ApiIntegrationTests(unittest.TestCase):
                 server.LOGIN_IP_FAILURES.clear()
                 server.LOGIN_IP_FAILURES.update(original_ip)
             server.DB_PATH = original_db_path
+
+    def test_duplicate_authorization_headers_are_rejected(self):
+        connection = socket.create_connection(self.httpd.server_address, timeout=3)
+        try:
+            connection.sendall(
+                b"GET /api/me HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Authorization: Bearer " + b"a" * 40 + b"\r\n"
+                b"Authorization: Bearer " + b"b" * 40 + b"\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            response = bytearray()
+            while b"\r\n\r\n" not in response:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before returning authorization error")
+                response.extend(chunk)
+            header_end = response.index(b"\r\n\r\n") + 4
+            headers = response[:header_end].split(b"\r\n")
+            status_line = headers[0]
+            self.assertIn(b" 401 ", status_line)
+            content_length = next(
+                int(line.split(b":", 1)[1].strip())
+                for line in headers
+                if line.lower().startswith(b"content-length:")
+            )
+            body = bytearray(response[header_end:])
+            while len(body) < content_length:
+                chunk = connection.recv(4096)
+                self.assertTrue(chunk, "server closed before completing authorization error")
+                body.extend(chunk)
+            self.assertEqual(len(body), content_length)
+            self.assertEqual(connection.recv(1), b"", "ambiguous authorization must not keep connection alive")
+        finally:
+            connection.close()
 
     def test_session_idle_expiry_and_absolute_lifetime(self):
         # Use an isolated database so this security test cannot contaminate
@@ -2500,7 +3458,6 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/products", {"id": "unauthorized-product", "name": "Unauthorized", "sellPrice": 1}),
                 ("POST", "/api/suppliers", {"name": "Unauthorized supplier"}),
                 ("POST", "/api/purchase-invoices", {"id": "unauthorized-invoice", "supplierId": "missing", "items": []}),
-                ("POST", "/api/purchase-invoices/missing-invoice/payments", {"amount": 1, "paymentMethod": "cash"}),
                 ("POST", "/api/inventory/movements", {"productId": "missing-product", "quantityDelta": 1}),
                 ("POST", "/api/customers", {"name": "Unauthorized customer"}),
                 ("POST", "/api/customers/missing-viewer-customer/payments", {
@@ -2509,7 +3466,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/transactions", {
                     "id": "unauthorized-transaction", "title": "Unauthorized",
                     "amount": 1, "kind": "income", "category": "test"
-                })
+                }),
+                ("DELETE", "/api/transactions/owner-only-void-attempt", {})
             ]
             for method, path, payload in attempts:
                 with self.subTest(path=path):
@@ -2600,6 +3558,22 @@ class ApiIntegrationTests(unittest.TestCase):
             }, created_tokens["manager"])
             self.assertEqual(status, 201)
 
+            status, opened_shift = self.request("POST", "/api/cash-register/shifts/open", {
+                "openingCash": 5000, "note": "role privacy test"
+            }, created_tokens["manager"])
+            self.assertEqual(status, 201)
+            status, cashier_shifts = self.request("GET", "/api/cash-register/shifts",
+                token=created_tokens["cashier"])
+            self.assertEqual(status, 200)
+            self.assertEqual(cashier_shifts["items"], [])
+            self.assertNotIn("openingCash", cashier_shifts["active"])
+            self.assertNotIn("expectedCash", cashier_shifts["active"])
+            status, manager_shifts = self.request("GET", "/api/cash-register/shifts",
+                token=created_tokens["manager"])
+            self.assertEqual(status, 200)
+            self.assertEqual(manager_shifts["active"]["openingCash"], 5000)
+            self.assertIn("expectedCash", manager_shifts["active"])
+
             status, denied_user = self.request("POST", "/api/users", {
                 "username": "manager-created-user",
                 "password": "manager-created-password-2026", "role": "viewer"
@@ -2622,9 +3596,56 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(reversed["voided"])
 
+            for path in (
+                "/api/transactions",
+                "/api/accounting/cash-flow",
+                "/api/accounting/periods",
+                "/api/accounting/journal",
+                "/api/accounting/profit-loss",
+                "/api/reports/sales-by-product",
+                "/api/accounting/trial-balance",
+                "/api/accounting/balance-sheet"
+            ):
+                with self.subTest(role="manager-read", path=path):
+                    status, result = self.request("GET",path,token=created_tokens["manager"])
+                    self.assertEqual(status,200)
+
             status, stock = self.request("GET", "/api/inventory", token=created_tokens["cashier"])
             self.assertEqual(status, 200)
-            self.assertEqual(next(item for item in stock["items"] if item["productId"] == product["id"])["quantity"], 5)
+            cashier_stock_item=next(item for item in stock["items"] if item["productId"] == product["id"])
+            self.assertEqual(cashier_stock_item["quantity"], 5)
+            self.assertNotIn("costPrice",cashier_stock_item)
+
+            status, products = self.request("GET", "/api/products", token=created_tokens["cashier"])
+            self.assertEqual(status, 200)
+            cashier_product=next(item for item in products["items"] if item["id"] == product["id"])
+            self.assertEqual(cashier_product["sellPrice"], 2500)
+            self.assertNotIn("costPrice",cashier_product)
+
+            status, manager_products = self.request("GET", "/api/products", token=created_tokens["manager"])
+            self.assertEqual(status, 200)
+            manager_product=next(item for item in manager_products["items"] if item["id"] == product["id"])
+            self.assertEqual(manager_product["costPrice"], 1000)
+
+            for path in (
+                "/api/inventory/movements",
+                "/api/suppliers",
+                "/api/suppliers/" + supplier["id"] + "/ledger",
+                "/api/purchase-invoices",
+                "/api/transactions",
+                "/api/accounting/cash-flow",
+                "/api/accounting/periods",
+                "/api/accounting/account-ledger?accountId=irrelevant",
+                "/api/accounting/journal",
+                "/api/accounting/profit-loss",
+                "/api/reports/sales-by-product",
+                "/api/accounting/trial-balance",
+                "/api/accounting/balance-sheet"
+            ):
+                with self.subTest(role="cashier-read", path=path):
+                    status, result = self.request("GET",path,token=created_tokens["cashier"])
+                    self.assertEqual(status,403)
+                    self.assertIn("error",result)
 
             db = server.connect()
             try:
@@ -3195,6 +4216,111 @@ class ApiIntegrationTests(unittest.TestCase):
                 db.close()
         finally:
             server.DB_PATH=original_db_path
+
+
+    def test_role_and_password_changes_revoke_existing_sessions(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "role-password-session-revocation.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Session Revocation",
+                "username": "session-owner",
+                "password": "session-owner-password-2026"
+            })
+            self.assertEqual(status, 200)
+            owner_token = setup["token"]
+
+            status, created = self.request("POST", "/api/users", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026",
+                "role": "viewer"
+            }, owner_token)
+            self.assertEqual(status, 201)
+            staff_id = created["id"]
+
+            status, first_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, second_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+
+            # Changing a role must invalidate every token issued under the old role.
+            status, changed_role = self.request("POST", "/api/users/" + staff_id + "/role",
+                {"role": "cashier"}, owner_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(changed_role["sessionsRevoked"])
+            for token in (first_login["token"], second_login["token"]):
+                with self.subTest(stage="role-change", token=token[:8]):
+                    status, _ = self.request("GET", "/api/me", token=token)
+                    self.assertEqual(status, 401)
+
+            status, fresh_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, second_fresh_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 200)
+
+            # An owner password reset invalidates all active sessions and the old password.
+            status, reset = self.request("POST", "/api/users/" + staff_id + "/password",
+                {"password": "session-staff-reset-password-2026"}, owner_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(reset["sessionsRevoked"])
+            for token in (fresh_login["token"], second_fresh_login["token"]):
+                with self.subTest(stage="owner-password-reset", token=token[:8]):
+                    status, _ = self.request("GET", "/api/me", token=token)
+                    self.assertEqual(status, 401)
+            status, old_password = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-password-2026"
+            })
+            self.assertEqual(status, 401)
+            status, after_reset = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-reset-password-2026"
+            })
+            self.assertEqual(status, 200)
+
+            # Self-service password change must also revoke parallel sessions,
+            # while returning a valid replacement token to the changing client.
+            status, parallel_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-reset-password-2026"
+            })
+            self.assertEqual(status, 200)
+            status, changed_password = self.request("POST", "/api/account/password", {
+                "currentPassword": "session-staff-reset-password-2026",
+                "newPassword": "session-staff-self-change-password-2026"
+            }, after_reset["token"])
+            self.assertEqual(status, 200)
+            self.assertTrue(changed_password.get("token"))
+            status, me = self.request("GET", "/api/me", token=changed_password["token"])
+            self.assertEqual(status, 200)
+            self.assertEqual(me["user"]["username"], "session-staff")
+            status, revoked_parallel = self.request("GET", "/api/me", token=parallel_login["token"])
+            self.assertEqual(status, 401)
+            status, wrong_old_password = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-reset-password-2026"
+            })
+            self.assertEqual(status, 401)
+            status, new_password_login = self.request("POST", "/api/login", {
+                "username": "session-staff",
+                "password": "session-staff-self-change-password-2026"
+            })
+            self.assertEqual(status, 200)
+        finally:
+            server.DB_PATH = original_db_path
+
 
 if __name__ == "__main__":
     unittest.main()
