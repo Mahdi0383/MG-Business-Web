@@ -755,6 +755,75 @@ BEFORE UPDATE OF tenant_id ON accounts
 WHEN NEW.tenant_id <> OLD.tenant_id
 BEGIN SELECT RAISE(ABORT,'account tenant is immutable'); END;
 
+CREATE TRIGGER IF NOT EXISTS transactions_tenant_immutable
+BEFORE UPDATE OF tenant_id ON transactions
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'transactions tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_entries_tenant_immutable
+BEFORE UPDATE OF tenant_id ON journal_entries
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'journal_entries tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_lines_tenant_immutable
+BEFORE UPDATE OF tenant_id ON journal_lines
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'journal_lines tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_periods_tenant_immutable
+BEFORE UPDATE OF tenant_id ON accounting_periods
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'accounting_periods tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS cash_register_shifts_tenant_immutable
+BEFORE UPDATE OF tenant_id ON cash_register_shifts
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'cash_register_shifts tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS product_addons_tenant_immutable
+BEFORE UPDATE OF tenant_id ON product_addons
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'product_addons tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS inventory_movements_tenant_immutable
+BEFORE UPDATE OF tenant_id ON inventory_movements
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'inventory_movements tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_immutable
+BEFORE UPDATE OF tenant_id ON customer_ledger
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'customer_ledger tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS loyalty_programs_tenant_immutable
+BEFORE UPDATE OF tenant_id ON loyalty_programs
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'loyalty_programs tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS customer_loyalty_ledger_tenant_immutable
+BEFORE UPDATE OF tenant_id ON customer_loyalty_ledger
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'customer_loyalty_ledger tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS orders_tenant_immutable
+BEFORE UPDATE OF tenant_id ON orders
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'orders tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS game_sessions_tenant_immutable
+BEFORE UPDATE OF tenant_id ON game_sessions
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'game_sessions tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS game_session_segments_tenant_immutable
+BEFORE UPDATE OF tenant_id ON game_session_segments
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'game_session_segments tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS gamenet_reservations_tenant_immutable
+BEFORE UPDATE OF tenant_id ON gamenet_reservations
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'gamenet_reservations tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS order_items_tenant_immutable
+BEFORE UPDATE OF tenant_id ON order_items
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'order_items tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS tenant_modules_tenant_immutable
+BEFORE UPDATE OF tenant_id ON tenant_modules
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'tenant_modules tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_tenant_immutable
+BEFORE UPDATE OF tenant_id ON audit_log
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'audit_log tenant is immutable'); END;
+
 
 """
 
