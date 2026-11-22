@@ -579,14 +579,7 @@ WHEN NOT EXISTS (
 )
 BEGIN SELECT RAISE(ABORT,'game session segment tenant mismatch'); END;
 
-CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_insert
-BEFORE INSERT ON customer_ledger
-WHEN NOT EXISTS (
- SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
- WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
-   AND u.tenant_id=NEW.tenant_id
-)
-BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
+
 
 """
 
