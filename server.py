@@ -734,20 +734,6 @@ BEFORE UPDATE OF tenant_id ON licenses
 WHEN NEW.tenant_id <> OLD.tenant_id
 BEGIN SELECT RAISE(ABORT,'license tenant is immutable'); END;
 
--- Posted journal history is append-only. Corrections must be represented by
--- a linked reversal entry; direct edits/deletes would destroy the audit trail.
-CREATE TRIGGER IF NOT EXISTS journal_entries_immutable_update
-BEFORE UPDATE ON journal_entries
-BEGIN SELECT RAISE(ABORT,'journal entries are immutable; post a reversal'); END;
-CREATE TRIGGER IF NOT EXISTS journal_entries_immutable_delete
-BEFORE DELETE ON journal_entries
-BEGIN SELECT RAISE(ABORT,'journal entries are immutable; post a reversal'); END;
-CREATE TRIGGER IF NOT EXISTS journal_lines_immutable_update
-BEFORE UPDATE ON journal_lines
-BEGIN SELECT RAISE(ABORT,'journal lines are immutable; post a reversal'); END;
-CREATE TRIGGER IF NOT EXISTS journal_lines_immutable_delete
-BEFORE DELETE ON journal_lines
-BEGIN SELECT RAISE(ABORT,'journal lines are immutable; post a reversal'); END;
 
 """
 
