@@ -111,6 +111,8 @@ def create_snapshot(
         raise ValueError("Backup retention must be between 1 and 365 snapshots.")
     if not source_path.is_file():
         raise FileNotFoundError("MG database file does not exist.")
+    if source_path == target_dir or target_dir in source_path.parents:
+        raise ValueError("MG_BACKUP_DIR must not contain the live database file; retention could delete it.")
     target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         os.chmod(target_dir, 0o700)
