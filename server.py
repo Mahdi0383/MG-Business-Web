@@ -733,10 +733,6 @@ CREATE TRIGGER IF NOT EXISTS licenses_tenant_immutable
 BEFORE UPDATE OF tenant_id ON licenses
 WHEN NEW.tenant_id <> OLD.tenant_id
 BEGIN SELECT RAISE(ABORT,'license tenant is immutable'); END;
-CREATE TRIGGER IF NOT EXISTS users_tenant_immutable
-BEFORE UPDATE OF tenant_id ON users
-WHEN NEW.tenant_id <> OLD.tenant_id
-BEGIN SELECT RAISE(ABORT,'user tenant is immutable'); END;
 
 """
 
