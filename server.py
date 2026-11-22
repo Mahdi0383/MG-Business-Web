@@ -15,8 +15,9 @@ BACKUP_DIR = Path(os.environ.get("MG_BACKUP_DIR", DATA_DIR / "backups")).expandu
 BACKUP_ENCRYPTION_KEY = decode_encryption_key(os.environ.get("MG_BACKUP_ENCRYPTION_KEY"))
 if DATA_DIR == ROOT or ROOT in DATA_DIR.parents or DB_PATH == ROOT or ROOT in DB_PATH.parents:
     raise RuntimeError("MG_DATA_DIR and MG_DB_PATH must be outside the public web root.")
-if BACKUP_DIR == ROOT or ROOT in BACKUP_DIR.parents or BACKUP_DIR == DB_PATH:
-    raise RuntimeError("MG_BACKUP_DIR must be outside the public web root and separate from the database file.")
+if (BACKUP_DIR == ROOT or ROOT in BACKUP_DIR.parents or BACKUP_DIR == DB_PATH
+        or BACKUP_DIR == DATA_DIR or BACKUP_DIR in DB_PATH.parents):
+    raise RuntimeError("MG_BACKUP_DIR must be outside the public web root, separate from MG_DATA_DIR, and must not contain the live database file.")
 try:
     BACKUP_INTERVAL_SECONDS = int(os.environ.get("MG_BACKUP_INTERVAL_HOURS", "24")) * 3600
     BACKUP_RETENTION = int(os.environ.get("MG_BACKUP_RETENTION", "14"))
