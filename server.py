@@ -299,6 +299,61 @@ CREATE TABLE IF NOT EXISTS supplier_payments(id TEXT PRIMARY KEY,tenant_id TEXT 
 CREATE INDEX IF NOT EXISTS idx_purchase_invoices_tenant_date ON purchase_invoices(tenant_id,invoice_date DESC);
 CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_payments_invoice ON supplier_payments(tenant_id,invoice_id,created_at DESC);
+
+CREATE TRIGGER IF NOT EXISTS purchase_invoices_tenant_insert
+BEFORE INSERT ON purchase_invoices
+WHEN NOT EXISTS (
+ SELECT 1 FROM suppliers s JOIN users u ON u.id=NEW.created_by
+ WHERE s.id=NEW.supplier_id AND s.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoices_tenant_update
+BEFORE UPDATE OF tenant_id,supplier_id,created_by ON purchase_invoices
+WHEN NOT EXISTS (
+ SELECT 1 FROM suppliers s JOIN users u ON u.id=NEW.created_by
+ WHERE s.id=NEW.supplier_id AND s.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoice_items_tenant_insert
+BEFORE INSERT ON purchase_invoice_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i JOIN products p ON p.id=NEW.product_id
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice item tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoice_items_tenant_update
+BEFORE UPDATE OF tenant_id,invoice_id,product_id ON purchase_invoice_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i JOIN products p ON p.id=NEW.product_id
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice item tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_insert
+BEFORE INSERT ON supplier_payments
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i
+ JOIN suppliers s ON s.id=NEW.supplier_id
+ JOIN users u ON u.id=NEW.created_by
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND s.tenant_id=NEW.tenant_id AND i.supplier_id=NEW.supplier_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_update
+BEFORE UPDATE OF tenant_id,invoice_id,supplier_id,created_by ON supplier_payments
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i
+ JOIN suppliers s ON s.id=NEW.supplier_id
+ JOIN users u ON u.id=NEW.created_by
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND s.tenant_id=NEW.tenant_id AND i.supplier_id=NEW.supplier_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
 CREATE TABLE IF NOT EXISTS customers(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  full_name TEXT NOT NULL CHECK(length(full_name) BETWEEN 1 AND 160),
