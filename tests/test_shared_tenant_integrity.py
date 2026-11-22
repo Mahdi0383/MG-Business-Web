@@ -400,5 +400,19 @@ class SharedTenantIntegrityTests(unittest.TestCase):
             )
 
 
+    def test_root_business_records_cannot_be_reparented_to_another_tenant(self):
+        for table, record_id in (
+            ("products", self.product_a),
+            ("customers", self.customer_a),
+            ("game_devices", self.device_a),
+        ):
+            with self.subTest(table=table):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        f"UPDATE {table} SET tenant_id=? WHERE id=?",
+                        (self.tenant_b, record_id),
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
