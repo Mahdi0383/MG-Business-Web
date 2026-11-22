@@ -5,7 +5,21 @@ const errors = [];
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
+  const accountingNetwork = [];
   page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push("console: " + message.text()); });
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "request", method: request.method(), url: url.pathname + url.search });
+  });
+  page.on("response", response => {
+    const url = new URL(response.url());
+    if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "response", status: response.status(), url: url.pathname + url.search });
+  });
+  page.on("requestfailed", request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "requestfailed", error: request.failure()?.errorText, url: url.pathname + url.search });
+  });
   await page.goto("http://127.0.0.1:8080", { waitUntil: "networkidle" });
   await page.locator("#authForm").waitFor({ state: "visible" });
   await page.locator('#authForm input[name="businessName"]').fill("MG Browser QA");
@@ -234,8 +248,14 @@ try {
     return url.pathname === path && url.searchParams.get("fromDate") === accountingToday &&
       url.searchParams.get("toDate") === accountingToday;
   }));
-  await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
-  const reportResults = await Promise.all(reportResponses);
+  await page.locator("#accountingDateFilter button[type=\"submit\"]").click();
+  let reportResults;
+  try {
+    reportResults = await Promise.all(reportResponses);
+  } catch (error) {
+    console.error("Accounting date-filter browser diagnostic:", JSON.stringify({ accountingToday, accountingNetwork, pageErrors: errors }, null, 2));
+    throw error;
+  }
   for (let index = 0; index < reportPaths.length; index++) {
     assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
   }
