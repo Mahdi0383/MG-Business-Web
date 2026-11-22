@@ -6,8 +6,9 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
   const accountingNetwork = [];
+  const consoleErrors = [];
   page.on("pageerror", error => errors.push(error.message));
-  page.on("console", message => { if (message.type() === "error") errors.push("console: " + message.text()); });
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("request", request => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "request", method: request.method(), url: url.pathname + url.search });
@@ -253,7 +254,7 @@ try {
   try {
     reportResults = await Promise.all(reportResponses);
   } catch (error) {
-    console.error("Accounting date-filter browser diagnostic:", JSON.stringify({ accountingToday, accountingNetwork, pageErrors: errors }, null, 2));
+    console.error("Accounting date-filter browser diagnostic:", JSON.stringify({ accountingToday, accountingNetwork, pageErrors: errors, consoleErrors }, null, 2));
     throw error;
   }
   for (let index = 0; index < reportPaths.length; index++) {
@@ -410,6 +411,7 @@ try {
   assert.equal(backdatedPosting.status, 409, "posting into a closed accounting period must be rejected");
 
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
+  if (consoleErrors.length) console.log("Browser console error responses (including expected negative API checks):", consoleErrors);
   console.log("Browser E2E passed: setup, login, accounting, account-level general ledger, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, owner user-role management/deactivation, and audited period closure.");
 } finally {
   await browser.close();
