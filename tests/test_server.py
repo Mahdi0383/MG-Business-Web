@@ -61,6 +61,16 @@ class ApiIntegrationTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def test_license_verification_rejects_empty_or_duplicate_module_keys(self):
+        for modules in ([], ["cafe", "cafe"]):
+            with self.subTest(modules=modules):
+                with self.assertRaisesRegex(ValueError, "فهرست ماژول‌های لایسنس معتبر نیست"):
+                    server.verify_license_code(make_license(modules, "invalid-module-list"))
+
+    def test_license_verification_expands_required_accounting_dependency(self):
+        verified = server.verify_license_code(make_license(["cafe"], "valid-cafe-license"))
+        self.assertEqual(verified["modules"], ["accounting", "cafe"])
+
     def test_security_headers_are_applied_to_api_and_static_responses(self):
         for path in ("/api/health", "/"):
             req = urllib.request.Request(self.base + path, method="GET")
