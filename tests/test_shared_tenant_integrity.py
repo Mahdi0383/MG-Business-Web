@@ -414,5 +414,45 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                     )
 
 
+    def test_financial_and_platform_records_cannot_be_reparented(self):
+        now = int(time.time())
+        transaction_id = self.new_id()
+        self.db.execute(
+            """INSERT INTO transactions
+               (id,tenant_id,created_by,title,amount,kind,occurred_at,created_at)
+               VALUES(?,?,?,'Tenant ownership test',100,'income','2026-11-23',?)""",
+            (transaction_id, self.tenant_a, self.user_a, now),
+        )
+        audit_cursor = self.db.execute(
+            """INSERT INTO audit_log
+               (tenant_id,actor_id,action,entity_type,created_at)
+               VALUES(?,?,'tenant.test','tenant',?)""",
+            (self.tenant_a, self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO tenant_modules
+               (tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+               VALUES(?,'tenant_integrity_test',1,?,NULL,?)""",
+            (self.tenant_a, now + 86400, now),
+        )
+        attempts = (
+            ("transactions", "id", transaction_id),
+            ("audit_log", "rowid", audit_cursor.lastrowid),
+        )
+        for table, key, record_id in attempts:
+            with self.subTest(table=table):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        f"UPDATE {table} SET tenant_id=? WHERE {key}=?",
+                        (self.tenant_b, record_id),
+                    )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                """UPDATE tenant_modules SET tenant_id=?
+                   WHERE tenant_id=? AND module_key='tenant_integrity_test'""",
+                (self.tenant_b, self.tenant_a),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
