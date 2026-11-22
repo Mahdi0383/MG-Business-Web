@@ -323,6 +323,53 @@ class SharedTenantIntegrityTests(unittest.TestCase):
         )
 
 
+    def test_tenant_modules_cannot_reference_another_tenants_license(self):
+        now = int(time.time())
+        license_a, license_b = self.new_id(), self.new_id()
+        for tenant_id, license_id in ((self.tenant_a, license_a),
+                                      (self.tenant_b, license_b)):
+            self.db.execute(
+                """INSERT INTO licenses
+                   (id,tenant_id,code_hash,plan,expires_at,activated_at,status)
+                   VALUES(?,?,?,'pro',? ,?,'active')""",
+                (license_id, tenant_id, "hash-" + license_id, now + 86400, now),
+            )
+        self.db.execute(
+            """INSERT INTO tenant_modules
+               (tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+               VALUES(?,'accounting',1,?,?,?)""",
+            (self.tenant_a, now + 86400, license_a, now),
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                """INSERT INTO tenant_modules
+                   (tenant_id,module_key,enabled,expires_at,license_id,updated_at)
+                   VALUES(?,'gamenet',1,?,?,?)""",
+                (self.tenant_a, now + 86400, license_b, now),
+            )
+        module = self.db.execute(
+            "SELECT module_key FROM tenant_modules WHERE tenant_id=?",
+            (self.tenant_a,),
+        ).fetchone()
+        self.assertEqual(module[0], "accounting")
+
+    def test_user_and_license_cannot_be_moved_between_tenants(self):
+        now = int(time.time())
+        license_id = self.new_id()
+        self.db.execute(
+            """INSERT INTO licenses
+               (id,tenant_id,code_hash,plan,expires_at,activated_at,status)
+               VALUES(?,?,?,'pro',?,?, 'active')""",
+            (license_id, self.tenant_a, "hash-" + license_id, now + 86400, now),
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE users SET tenant_id=? WHERE id=?",
+                            (self.tenant_b, self.user_a))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE licenses SET tenant_id=? WHERE id=?",
+                            (self.tenant_b, license_id))
+
+
 
 if __name__ == "__main__":
     unittest.main()
