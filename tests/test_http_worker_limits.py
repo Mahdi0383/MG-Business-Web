@@ -34,6 +34,18 @@ class BoundedHttpServerTests(unittest.TestCase):
         finally:
             peer.close()
 
+    def test_incomplete_request_is_closed_after_socket_inactivity_timeout(self):
+        client, peer = socket.socketpair()
+        peer.settimeout(1)
+        try:
+            with mock.patch.object(server, "REQUEST_TIMEOUT_SECONDS", 0.05):
+                self.httpd.process_request(client, ("127.0.0.1", 12345))
+            peer.sendall(b"GET / HTTP/1.1\\r\\n")
+            self.assertEqual(peer.recv(1), b"")
+            self.assertEqual(self.httpd._worker_slots._value, server.MAX_HTTP_WORKERS)
+        finally:
+            peer.close()
+
     def test_thread_start_failure_releases_slot_and_closes_socket(self):
         client, peer = socket.socketpair()
         try:
