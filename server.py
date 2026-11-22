@@ -343,6 +343,111 @@ WHEN NOT EXISTS (
    AND u.tenant_id=NEW.tenant_id
 )
 BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS inventory_movements_tenant_insert
+BEFORE INSERT ON inventory_movements
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p JOIN users u ON u.id=NEW.created_by
+ WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'inventory movement tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS inventory_movements_tenant_update
+BEFORE UPDATE OF tenant_id,product_id,created_by ON inventory_movements
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p JOIN users u ON u.id=NEW.created_by
+ WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'inventory movement tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS orders_tenant_insert
+BEFORE INSERT ON orders
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'order tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS orders_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON orders
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'order tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS order_items_tenant_insert
+BEFORE INSERT ON order_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM orders o JOIN products p ON p.id=NEW.product_id
+ WHERE o.id=NEW.order_id AND o.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'order item tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS order_items_tenant_update
+BEFORE UPDATE OF tenant_id,order_id,product_id ON order_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM orders o JOIN products p ON p.id=NEW.product_id
+ WHERE o.id=NEW.order_id AND o.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'order item tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS game_sessions_tenant_insert
+BEFORE INSERT ON game_sessions
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.started_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game session tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS game_sessions_tenant_update
+BEFORE UPDATE OF tenant_id,device_id,customer_id,started_by ON game_sessions
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.started_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game session tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS game_session_segments_tenant_insert
+BEFORE INSERT ON game_session_segments
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_sessions s JOIN game_devices d ON d.id=NEW.device_id
+ WHERE s.id=NEW.session_id AND s.tenant_id=NEW.tenant_id
+   AND d.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'game session segment tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS game_session_segments_tenant_update
+BEFORE UPDATE OF tenant_id,session_id,device_id ON game_session_segments
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_sessions s JOIN game_devices d ON d.id=NEW.device_id
+ WHERE s.id=NEW.session_id AND s.tenant_id=NEW.tenant_id
+   AND d.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'game session segment tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_insert
+BEFORE INSERT ON customer_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON customer_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
+
 CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_update
 BEFORE UPDATE OF tenant_id,invoice_id,supplier_id,created_by ON supplier_payments
 WHEN NOT EXISTS (
