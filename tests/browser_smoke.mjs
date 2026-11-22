@@ -5,7 +5,22 @@ const errors = [];
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
+  const accountingNetwork = [];
+  const consoleErrors = [];
   page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "request", method: request.method(), url: url.pathname + url.search });
+  });
+  page.on("response", response => {
+    const url = new URL(response.url());
+    if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "response", status: response.status(), url: url.pathname + url.search });
+  });
+  page.on("requestfailed", request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "requestfailed", error: request.failure()?.errorText, url: url.pathname + url.search });
+  });
   await page.goto("http://127.0.0.1:8080", { waitUntil: "networkidle" });
   await page.locator("#authForm").waitFor({ state: "visible" });
   await page.locator('#authForm input[name="businessName"]').fill("MG Browser QA");
@@ -234,8 +249,14 @@ try {
     return url.pathname === path && url.searchParams.get("fromDate") === accountingToday &&
       url.searchParams.get("toDate") === accountingToday;
   }));
-  await page.locator("#accountingDateFilter").evaluate(form => form.requestSubmit());
-  const reportResults = await Promise.all(reportResponses);
+  await page.locator("#accountingDateFilter button[type=\"submit\"]").click();
+  let reportResults;
+  try {
+    reportResults = await Promise.all(reportResponses);
+  } catch (error) {
+    console.error("Accounting date-filter browser diagnostic:", JSON.stringify({ accountingToday, accountingNetwork, pageErrors: errors, consoleErrors }, null, 2));
+    throw error;
+  }
   for (let index = 0; index < reportPaths.length; index++) {
     assert.ok(reportResults[index].ok(), "accounting report request failed: " + reportPaths[index]);
   }
@@ -373,7 +394,13 @@ try {
   );
   await page.locator("#accountingPeriodCloseForm button[type=submit]").click();
   await page.locator('#confirmOverlay [data-confirm="yes"]').click();
-  const periodCloseResponse = await periodClosePromise;
+  let periodCloseResponse;
+  try {
+    periodCloseResponse = await periodClosePromise;
+  } catch (error) {
+    console.error("Accounting period-close browser diagnostic:", JSON.stringify({ closedDate, form: await page.locator("#accountingPeriodCloseForm").evaluate(form => ({ valid: form.checkValidity(), startDate: form.elements.startDate.value, endDate: form.elements.endDate.value })), confirmationVisible: await page.locator("#confirmOverlay").isVisible().catch(() => false), accountingNetwork, pageErrors: errors }, null, 2));
+    throw error;
+  }
   const periodCloseBody = await periodCloseResponse.json();
   assert.equal(periodCloseResponse.status(), 201, "period close response: " + JSON.stringify(periodCloseBody));
   await page.locator("#modulePage").getByText(closedDate, { exact: true }).last().waitFor({ state: "visible" });
@@ -390,6 +417,7 @@ try {
   assert.equal(backdatedPosting.status, 409, "posting into a closed accounting period must be rejected");
 
   assert.equal(errors.length, 0, "browser runtime errors: " + errors.join("; "));
+  if (consoleErrors.length) console.log("Browser console error responses (including expected negative API checks):", consoleErrors);
   console.log("Browser E2E passed: setup, login, accounting, account-level general ledger, custom account creation, transaction posting, inventory intake, cafe POS order, and accounting/management CSV exports, owner user-role management/deactivation, and audited period closure.");
 } finally {
   await browser.close();

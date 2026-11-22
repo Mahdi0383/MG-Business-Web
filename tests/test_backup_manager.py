@@ -149,6 +149,28 @@ class BackupManagerTests(unittest.TestCase):
             self.assertFalse((root / "target.sqlite3").exists())
             self.assertFalse(list(root.glob("target.sqlite3.decrypt-*.tmp")))
 
+    def test_snapshot_rejects_backup_directory_containing_live_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backup_dir = Path(directory) / "backups"
+            backup_dir.mkdir()
+            database = backup_dir / "mg-business-live.sqlite3"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE records(value TEXT)")
+            db.execute("INSERT INTO records VALUES('must survive retention')")
+            db.commit()
+            db.close()
+            old_snapshot = backup_dir / "mg-business-old.sqlite3"
+            old_snapshot.write_bytes(b"old snapshot")
+
+            with self.assertRaisesRegex(ValueError, "must not contain the live database"):
+                create_snapshot(database, backup_dir, retention=1)
+
+            self.assertTrue(database.is_file())
+            db = sqlite3.connect(database)
+            self.assertEqual(db.execute("SELECT value FROM records").fetchone()[0],
+                             "must survive retention")
+            db.close()
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
