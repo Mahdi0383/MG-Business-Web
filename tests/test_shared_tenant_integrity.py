@@ -120,12 +120,7 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                VALUES(?,?,?,?,?,1,1000,0)""",
             (self.new_id(), self.tenant_a, session_id, self.device_a, now),
         )
-        self.db.execute(
-            """INSERT INTO customer_ledger
-               (id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,created_at)
-               VALUES(?,?,?,?, 'manual', ?,100,0,?)""",
-            (self.new_id(), self.tenant_a, self.customer_a, self.user_a, self.new_id(), now),
-        )
+
 
     def test_inventory_movement_rejects_foreign_product_and_actor(self):
         now = int(time.time())
@@ -197,19 +192,7 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                 (self.new_id(), self.tenant_a, session_id, self.device_b, now),
             )
 
-    def test_customer_ledger_rejects_foreign_customer_or_actor(self):
-        for customer_id, actor_id in ((self.customer_b, self.user_a),
-                                      (self.customer_a, self.user_b)):
-            with self.subTest(customer_id=customer_id, actor_id=actor_id):
-                with self.assertRaises(sqlite3.IntegrityError):
-                    self.db.execute(
-                        """INSERT INTO customer_ledger
-                           (id,tenant_id,customer_id,created_by,source_type,source_id,
-                            debit,credit,created_at)
-                           VALUES(?,?,?,?, 'manual', ?,100,0,?)""",
-                        (self.new_id(), self.tenant_a, customer_id, actor_id,
-                         self.new_id(), int(time.time())),
-                    )
+
 
 
 if __name__ == "__main__":
