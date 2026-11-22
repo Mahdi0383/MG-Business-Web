@@ -168,5 +168,47 @@ class PurchasingTenantIntegrityTests(unittest.TestCase):
                             (self.product_b, item_id))
 
 
+    def test_invoice_and_supplier_payment_updates_reject_foreign_references(self):
+        invoice_id = self._invoice()
+        foreign_invoice_id = self._invoice(
+            tenant_id=self.b,
+            supplier_id=self.supplier_b,
+            created_by=self.user_b,
+        )
+
+        invalid_invoice_updates = (
+            ("supplier_id", self.supplier_b),
+            ("created_by", self.user_b),
+        )
+        for column, value in invalid_invoice_updates:
+            with self.subTest(invoice_column=column):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        f"UPDATE purchase_invoices SET {column}=? WHERE id=?",
+                        (value, invoice_id),
+                    )
+
+        payment_id = self._id()
+        self.db.execute(
+            """INSERT INTO supplier_payments
+               (id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at)
+               VALUES(?,?,?,?,?,'cash',10,?)""",
+            (payment_id, self.a, invoice_id, self.supplier_a,
+             self.user_a, int(time.time())),
+        )
+        invalid_payment_updates = (
+            ("invoice_id", foreign_invoice_id),
+            ("supplier_id", self.supplier_b),
+            ("created_by", self.user_b),
+        )
+        for column, value in invalid_payment_updates:
+            with self.subTest(payment_column=column):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        f"UPDATE supplier_payments SET {column}=? WHERE id=?",
+                        (value, payment_id),
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
