@@ -394,7 +394,13 @@ try {
   );
   await page.locator("#accountingPeriodCloseForm button[type=submit]").click();
   await page.locator('#confirmOverlay [data-confirm="yes"]').click();
-  const periodCloseResponse = await periodClosePromise;
+  let periodCloseResponse;
+  try {
+    periodCloseResponse = await periodClosePromise;
+  } catch (error) {
+    console.error("Accounting period-close browser diagnostic:", JSON.stringify({ closedDate, form: await page.locator("#accountingPeriodCloseForm").evaluate(form => ({ valid: form.checkValidity(), startDate: form.elements.startDate.value, endDate: form.elements.endDate.value })), confirmationVisible: await page.locator("#confirmOverlay").isVisible().catch(() => false), accountingNetwork, pageErrors: errors }, null, 2));
+    throw error;
+  }
   const periodCloseBody = await periodCloseResponse.json();
   assert.equal(periodCloseResponse.status(), 201, "period close response: " + JSON.stringify(periodCloseBody));
   await page.locator("#modulePage").getByText(closedDate, { exact: true }).last().waitFor({ state: "visible" });
