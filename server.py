@@ -6,6 +6,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from backup_manager import create_snapshot, decode_encryption_key
+from module_catalog import MODULE_KEYS, module_dependencies_satisfied, resolve_module_dependencies
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("MG_DATA_DIR", Path.home() / ".mg-business-data")).resolve()
@@ -14,8 +15,9 @@ BACKUP_DIR = Path(os.environ.get("MG_BACKUP_DIR", DATA_DIR / "backups")).expandu
 BACKUP_ENCRYPTION_KEY = decode_encryption_key(os.environ.get("MG_BACKUP_ENCRYPTION_KEY"))
 if DATA_DIR == ROOT or ROOT in DATA_DIR.parents or DB_PATH == ROOT or ROOT in DB_PATH.parents:
     raise RuntimeError("MG_DATA_DIR and MG_DB_PATH must be outside the public web root.")
-if BACKUP_DIR == ROOT or ROOT in BACKUP_DIR.parents or BACKUP_DIR == DB_PATH:
-    raise RuntimeError("MG_BACKUP_DIR must be outside the public web root and separate from the database file.")
+if (BACKUP_DIR == ROOT or ROOT in BACKUP_DIR.parents or BACKUP_DIR == DB_PATH
+        or BACKUP_DIR == DATA_DIR or BACKUP_DIR in DB_PATH.parents):
+    raise RuntimeError("MG_BACKUP_DIR must be outside the public web root, separate from MG_DATA_DIR, and must not contain the live database file.")
 try:
     BACKUP_INTERVAL_SECONDS = int(os.environ.get("MG_BACKUP_INTERVAL_HOURS", "24")) * 3600
     BACKUP_RETENTION = int(os.environ.get("MG_BACKUP_RETENTION", "14"))
@@ -25,11 +27,19 @@ if not 3600 <= BACKUP_INTERVAL_SECONDS <= 168 * 3600 or not 1 <= BACKUP_RETENTIO
     raise RuntimeError("Backup interval must be 1-168 hours and retention 1-365 snapshots.")
 HOST = os.environ.get("MG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MG_PORT", "8080"))
+try:
+    MAX_HTTP_WORKERS = int(os.environ.get("MG_MAX_HTTP_WORKERS", "64"))
+    REQUEST_TIMEOUT_SECONDS = int(os.environ.get("MG_REQUEST_TIMEOUT_SECONDS", "15"))
+except ValueError as exc:
+    raise RuntimeError("HTTP worker and request timeout settings must be integers.") from exc
+if not 4 <= MAX_HTTP_WORKERS <= 512:
+    raise RuntimeError("MG_MAX_HTTP_WORKERS must be between 4 and 512.")
+if not 5 <= REQUEST_TIMEOUT_SECONDS <= 120:
+    raise RuntimeError("MG_REQUEST_TIMEOUT_SECONDS must be between 5 and 120.")
 SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 2 * 1024 * 1024
 MAX_BACKUP_BODY = 50 * 1024 * 1024
-MODULE_KEYS = ('cafe','gamenet','accounting','customers','inventory','reports','settings')
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
@@ -797,9 +807,14 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
                    (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
 
 def module_enabled(db, tenant_id, module_key):
-    row = db.execute("SELECT enabled,expires_at FROM tenant_modules WHERE tenant_id=? AND module_key=?",
-                     (tenant_id,module_key)).fetchone()
-    return bool(row and row["enabled"] and (row["expires_at"] is None or row["expires_at"] > int(time.time())))
+    now = int(time.time())
+    rows = db.execute(
+        "SELECT module_key FROM tenant_modules WHERE tenant_id=? AND enabled=1 "
+        "AND (expires_at IS NULL OR expires_at>?)",
+        (tenant_id, now),
+    ).fetchall()
+    enabled_modules = {row["module_key"] for row in rows}
+    return module_dependencies_satisfied(module_key, enabled_modules)
 
 def require_any_module(db, tenant_id, *module_keys):
     return any(module_enabled(db,tenant_id,key) for key in module_keys)
@@ -832,14 +847,14 @@ def verify_license_code(code):
     license_id = payload.get("license_id")
     if not isinstance(license_id,str) or not 1 <= len(license_id) <= 100:
         raise ValueError("شناسه لایسنس معتبر نیست.")
-    if not isinstance(modules,list) or any(not isinstance(module,str) or module not in MODULE_KEYS for module in modules):
+    if (not isinstance(modules,list) or not modules or
+            any(not isinstance(module,str) or module not in MODULE_KEYS for module in modules) or
+            len(set(modules)) != len(modules)):
         raise ValueError("فهرست ماژول‌های لایسنس معتبر نیست.")
     if type(expires_at) is not int or expires_at <= int(time.time()):
         raise ValueError("اعتبار لایسنس پایان یافته یا تاریخ آن معتبر نیست.")
-    modules = set(modules)
-    if "reports" in modules:
-        modules.add("accounting")
-    return {"license_id":license_id,"modules":sorted(modules),"expires_at":expires_at,
+    modules = resolve_module_dependencies(modules)
+    return {"license_id":license_id,"modules":modules,"expires_at":expires_at,
             "plan":str(payload.get("plan","custom"))[:80]}
 
 def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, method):
@@ -3544,11 +3559,48 @@ def backup_scheduler(stop_event=None):
             break
 
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Thread-per-connection server with a hard worker ceiling and socket timeout."""
+    daemon_threads = True
+    request_queue_size = 128
+
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
+        self._worker_slots = threading.BoundedSemaphore(MAX_HTTP_WORKERS)
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+
+    def process_request(self, request, client_address):
+        if not self._worker_slots.acquire(blocking=False):
+            try:
+                request.settimeout(REQUEST_TIMEOUT_SECONDS)
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Connection: close\r\nContent-Length: 0\r\n\r\n"
+                )
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            request.settimeout(REQUEST_TIMEOUT_SECONDS)
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            self.shutdown_request(request)
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
+
 def main():
     connect().close()
     threading.Thread(target=backup_scheduler, name="mg-backup-scheduler", daemon=True).start()
     print("MG Business listening on http://%s:%s (database: %s)" % (HOST, PORT, DB_PATH), flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    BoundedThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 if __name__ == "__main__":
     main()

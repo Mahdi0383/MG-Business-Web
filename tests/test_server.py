@@ -4,6 +4,8 @@ import hmac
 import json
 import http.client
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -60,6 +62,37 @@ class ApiIntegrationTests(unittest.TestCase):
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
+
+    def test_server_startup_rejects_backup_directory_that_contains_live_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backup_dir = Path(directory) / "backups"
+            backup_dir.mkdir()
+            env = dict(os.environ)
+            env.update({
+                "MG_BACKUP_DIR": str(backup_dir),
+                "MG_DB_PATH": str(backup_dir / "mg-business.sqlite3"),
+                "MG_DATA_DIR": str(Path(directory) / "data"),
+            })
+            result = subprocess.run(
+                [sys.executable, "-c", "import server"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("MG_BACKUP_DIR", result.stderr)
+
+    def test_license_verification_rejects_empty_or_duplicate_module_keys(self):
+        for modules in ([], ["cafe", "cafe"]):
+            with self.subTest(modules=modules):
+                with self.assertRaisesRegex(ValueError, "فهرست ماژول‌های لایسنس معتبر نیست"):
+                    server.verify_license_code(make_license(modules, "invalid-module-list"))
+
+    def test_license_verification_expands_required_accounting_dependency(self):
+        verified = server.verify_license_code(make_license(["cafe"], "valid-cafe-license"))
+        self.assertEqual(verified["modules"], ["accounting", "cafe"])
 
     def test_security_headers_are_applied_to_api_and_static_responses(self):
         for path in ("/api/health", "/"):
@@ -3198,3 +3231,63 @@ class ApiIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModuleEntitlementRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+        self.db = sqlite3.connect(":memory:")
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("""
+            CREATE TABLE tenant_modules (
+                tenant_id TEXT NOT NULL,
+                module_key TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                expires_at INTEGER,
+                license_id TEXT,
+                updated_at INTEGER
+            )
+        """)
+        self.now = int(time.time())
+
+    def tearDown(self):
+        self.db.close()
+
+    def grant(self, module_key, enabled=1, expires_at=None):
+        self.db.execute(
+            "INSERT INTO tenant_modules(tenant_id,module_key,enabled,expires_at) VALUES(?,?,?,?)",
+            ("tenant-runtime-test", module_key, enabled, expires_at),
+        )
+
+    def enabled(self, module_key):
+        return server.module_enabled(self.db, "tenant-runtime-test", module_key)
+
+    def test_operational_module_is_denied_without_accounting(self):
+        self.grant("cafe")
+        self.assertFalse(self.enabled("cafe"))
+
+    def test_operational_module_is_allowed_with_active_accounting(self):
+        self.grant("cafe")
+        self.grant("accounting")
+        self.assertTrue(self.enabled("cafe"))
+
+    def test_expired_accounting_disables_dependent_module(self):
+        self.grant("cafe")
+        self.grant("accounting", expires_at=self.now - 1)
+        self.assertFalse(self.enabled("cafe"))
+
+    def test_disabled_accounting_disables_dependent_module(self):
+        self.grant("cafe")
+        self.grant("accounting", enabled=0)
+        self.assertFalse(self.enabled("cafe"))
+
+    def test_accounting_does_not_depend_on_other_modules(self):
+        self.grant("accounting")
+        self.assertTrue(self.enabled("accounting"))
+
+    def test_unknown_module_is_denied(self):
+        self.grant("hotel")
+        self.grant("accounting")
+        self.assertFalse(self.enabled("hotel"))
+
+
