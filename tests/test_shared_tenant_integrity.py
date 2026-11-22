@@ -260,6 +260,69 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                     )
 
 
+    def test_financial_and_audit_records_reject_foreign_actors(self):
+        now = int(time.time())
+        invalid_writes = (
+            ("transaction", """INSERT INTO transactions
+                (id,tenant_id,created_by,title,amount,kind,occurred_at,created_at)
+                VALUES(?,?,?,'Cross tenant',100,'income','2026-11-22',?)""",
+             (self.new_id(), self.tenant_a, self.user_b, now)),
+            ("journal entry", """INSERT INTO journal_entries
+                (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+                VALUES(?,?,'2026-11-22','Cross tenant','manual',?,?,?)""",
+             (self.new_id(), self.tenant_a, self.new_id(), self.user_b, now)),
+            ("accounting period", """INSERT INTO accounting_periods
+                (id,tenant_id,start_date,end_date,closed_by,closed_at)
+                VALUES(?,?,'2026-01-01','2026-12-31',?,?)""",
+             (self.new_id(), self.tenant_a, self.user_b, now)),
+            ("cash shift", """INSERT INTO cash_register_shifts
+                (id,tenant_id,opened_by,opened_at,opening_cash,status)
+                VALUES(?,?,?,? ,0,'open')""",
+             (self.new_id(), self.tenant_a, self.user_b, now)),
+            ("audit log", """INSERT INTO audit_log
+                (tenant_id,actor_id,action,entity_type,created_at)
+                VALUES(?,?,'test','tenant',?)""",
+             (self.tenant_a, self.user_b, now)),
+        )
+        for label, statement, values in invalid_writes:
+            with self.subTest(record=label):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(statement, values)
+
+    def test_financial_and_audit_records_accept_same_tenant_actors(self):
+        now = int(time.time())
+        self.db.execute(
+            """INSERT INTO transactions
+               (id,tenant_id,created_by,title,amount,kind,occurred_at,created_at)
+               VALUES(?,?,?,'Valid transaction',100,'income','2026-11-22',?)""",
+            (self.new_id(), self.tenant_a, self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO journal_entries
+               (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+               VALUES(?,?,'2026-11-22','Valid journal','manual',?,?,?)""",
+            (self.new_id(), self.tenant_a, self.new_id(), self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO accounting_periods
+               (id,tenant_id,start_date,end_date,closed_by,closed_at)
+               VALUES(?,?,'2026-01-01','2026-12-31',?,?)""",
+            (self.new_id(), self.tenant_a, self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO cash_register_shifts
+               (id,tenant_id,opened_by,opened_at,opening_cash,status)
+               VALUES(?,?,?, ?,0,'open')""",
+            (self.new_id(), self.tenant_a, self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO audit_log
+               (tenant_id,actor_id,action,entity_type,created_at)
+               VALUES(?,?,'test','tenant',?)""",
+            (self.tenant_a, self.user_a, now),
+        )
+
+
 
 if __name__ == "__main__":
     unittest.main()
