@@ -1337,14 +1337,34 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def read_json(self):
-        try: length = int(self.headers.get("Content-Length", "0"))
-        except ValueError: raise ValueError("طول درخواست نامعتبر است.")
+        content_types = self.headers.get_all("Content-Type", [])
+        if len(content_types) != 1:
+            raise ValueError("نوع محتوای درخواست باید application/json باشد.")
+        media_type, *parameters = content_types[0].split(";")
+        if media_type.strip().lower() != "application/json":
+            raise ValueError("نوع محتوای درخواست باید application/json باشد.")
+        for parameter in parameters:
+            key, separator, value = parameter.strip().partition("=")
+            if not separator or key.strip().lower() != "charset" or value.strip().strip('"').lower() != "utf-8":
+                raise ValueError("کدگذاری JSON درخواست باید UTF-8 باشد.")
+        if self.headers.get_all("Transfer-Encoding"):
+            raise ValueError("ارسال بدنه با Transfer-Encoding پشتیبانی نمی‌شود.")
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if len(content_lengths) != 1 or not content_lengths[0].strip().isdigit():
+            raise ValueError("طول درخواست نامعتبر است.")
+        length = int(content_lengths[0].strip())
         body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
-        if length <= 0 or length > body_limit: raise ValueError("حجم درخواست نامعتبر است.")
+        if length <= 0 or length > body_limit:
+            raise ValueError("حجم درخواست نامعتبر است.")
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("بدنه درخواست ناقص است.")
         try:
-            value = json.loads(self.rfile.read(length))
-        except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
-        if not isinstance(value, dict): raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
+            value = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ValueError("JSON درخواست معتبر نیست.")
+        if not isinstance(value, dict):
+            raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
         return value
 
     def route(self):
