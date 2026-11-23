@@ -2278,12 +2278,17 @@ class ApiIntegrationTests(unittest.TestCase):
         try:
             self.assertTrue(all(server.reserve_login_attempt(key, ip, now) for _ in range(8)))
             self.assertFalse(server.reserve_login_attempt(key, ip, now))
-            self.assertFalse(server.reserve_login_attempt(("127.0.0.1", "other-user"), ip, now))
             for _ in range(7):
                 server.finish_login_attempt(key, ip, now, failed=True)
             self.assertTrue(server.reserve_login_attempt(key, ip, now))
             server.finish_login_attempt(key, ip, now, failed=True)
             self.assertFalse(server.reserve_login_attempt(key, ip, now))
+
+            ip_keys = [(ip, "account-" + str(index)) for index in range(30)]
+            self.assertTrue(all(server.reserve_login_attempt(other_key, ip, now) for other_key in ip_keys))
+            self.assertFalse(server.reserve_login_attempt((ip, "thirty-first"), ip, now))
+            for other_key in ip_keys:
+                server.finish_login_attempt(other_key, ip, now)
             with server.LOGIN_LOCK:
                 self.assertEqual(server.LOGIN_INFLIGHT_BY_KEY, {})
                 self.assertEqual(server.LOGIN_INFLIGHT_BY_IP, {})
