@@ -3088,6 +3088,30 @@ class ApiIntegrationTests(unittest.TestCase):
                 "id":"cash-shift-active-backup-sale","title":"Cash after shift open","amount":300,
                 "kind":"income","category":"cash test","createdAt":now},owner)
             self.assertEqual(status,201)
+            status,party_customer=self.request("POST","/api/customers",{
+                "id":"backup-party-customer","fullName":"Backup Party Customer"},owner)
+            self.assertEqual(status,201)
+            db=server.connect()
+            try:
+                tenant_id=setup["user"]["tenantId"]
+                accounts={row["code"]:row["id"] for row in db.execute(
+                    "SELECT id,code FROM accounts WHERE tenant_id=?",(tenant_id,))}
+                entry_id="backup-party-entry"
+                db.execute("""INSERT INTO journal_entries
+                    (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+                    VALUES(?,?,?,'Party backup fixture','party_backup_test',?,?,?)""",
+                    (entry_id,tenant_id,time.strftime("%Y-%m-%d"),entry_id,setup["user"]["id"],int(time.time())))
+                receivable_line="backup-party-receivable"
+                db.executemany("""INSERT INTO journal_lines
+                    (id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)""",[
+                    (receivable_line,tenant_id,entry_id,accounts["1100"],1234,0),
+                    ("backup-party-revenue",tenant_id,entry_id,accounts["4000"],0,1234)])
+                db.execute("""INSERT INTO journal_line_parties
+                    (journal_line_id,tenant_id,customer_id) VALUES(?,?,?)""",
+                    (receivable_line,tenant_id,"backup-party-customer"))
+                db.commit()
+            finally:
+                db.close()
             status,live_active=self.request("GET","/api/cash-register/shifts",token=owner)
             self.assertEqual(status,200)
             self.assertEqual(live_active["active"]["expectedCash"],2300)
@@ -3096,7 +3120,8 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(status,200)
             self.assertEqual(snapshot["version"],5)
             self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),3)
-            self.assertIn("journal_line_parties",snapshot["tables"])
+            self.assertEqual(len(snapshot["tables"]["journal_line_parties"]),1)
+            self.assertEqual(snapshot["tables"]["journal_line_parties"][0]["customer_id"],"backup-party-customer")
             self.assertTrue(all("__rowid" in row for row in snapshot["tables"]["journal_entries"]))
             db=server.connect()
             try:
@@ -3111,6 +3136,14 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(len(history["items"]),3)
             self.assertEqual(history["active"]["id"],active_shift["id"])
             self.assertEqual(history["active"]["expectedCash"],2300)
+            db=server.connect()
+            try:
+                restored_party=db.execute("""SELECT customer_id FROM journal_line_parties
+                    WHERE journal_line_id='backup-party-receivable' AND tenant_id=?""",
+                    (setup["user"]["tenantId"],)).fetchone()
+                self.assertEqual(restored_party["customer_id"],"backup-party-customer")
+            finally:
+                db.close()
             first=next(item for item in history["items"] if item["id"]==shift_id)
             self.assertEqual(first["difference"],-50)
 
