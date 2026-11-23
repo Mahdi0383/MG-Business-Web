@@ -32,6 +32,9 @@ class BoundedHttpServerTests(unittest.TestCase):
                 entered.set()
                 release.wait(timeout=3)
 
+            def shutdown_request(self, request):
+                request.close()
+
         class DummySocket:
             def __init__(self):
                 self.closed = False
