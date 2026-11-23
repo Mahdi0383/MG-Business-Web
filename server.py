@@ -1484,9 +1484,16 @@ class Handler(SimpleHTTPRequestHandler):
             db.commit()
             return None
         refreshed_expiry = min(row["session_created_at"] + SESSION_SECONDS, now + 30 * 60)
-        if refreshed_expiry - row["expires_at"] >= 60:
-            db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (refreshed_expiry, token_hash))
-            db.commit()
+        # Revalidate and refresh in one write statement. A concurrent logout,
+        # password reset, role change, or account deactivation must win if it
+        # removed the session before this statement acquires the write lock.
+        refreshed = db.execute("""UPDATE sessions SET expires_at=?
+            WHERE token_hash=? AND expires_at>?
+              AND EXISTS (SELECT 1 FROM users WHERE users.id=sessions.user_id AND users.active=1)""",
+            (refreshed_expiry, token_hash, now))
+        db.commit()
+        if refreshed.rowcount != 1:
+            return None
         return row
 
     def do_GET(self):
