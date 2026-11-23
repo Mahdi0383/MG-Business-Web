@@ -3094,8 +3094,9 @@ class ApiIntegrationTests(unittest.TestCase):
 
             status,snapshot=self.request("GET","/api/backup",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(snapshot["version"],4)
+            self.assertEqual(snapshot["version"],5)
             self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),3)
+            self.assertIn("journal_line_parties",snapshot["tables"])
             self.assertTrue(all("__rowid" in row for row in snapshot["tables"]["journal_entries"]))
             db=server.connect()
             try:
@@ -3115,6 +3116,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
             legacy_v3=json.loads(json.dumps(snapshot))
             legacy_v3["version"]=3
+            legacy_v3["tables"].pop("journal_line_parties")
             for journal in legacy_v3["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
             for shift in legacy_v3["tables"]["cash_register_shifts"]:
@@ -3128,6 +3130,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
             legacy_v2=json.loads(json.dumps(snapshot))
             legacy_v2["version"]=2
+            legacy_v2["tables"].pop("journal_line_parties")
             legacy_v2["tables"].pop("cash_register_shifts")
             for journal in legacy_v2["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
