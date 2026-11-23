@@ -1238,7 +1238,15 @@ def cash_register_expected_cash(db, tenant_id, opened_at, opening_cash, journal_
     return int(opening_cash)+int(movement)
 
 
-def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000'):
+def tag_journal_line_party(db, tenant_id, journal_line_id, customer_id=None, supplier_id=None):
+    if (customer_id is None) == (supplier_id is None):
+        raise ValueError("Exactly one customer or supplier party is required.")
+    db.execute("""INSERT INTO journal_line_parties
+        (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+        (journal_line_id,tenant_id,customer_id,supplier_id))
+
+
+def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000', customer_id=None):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
     cash, counterpart = accounts[debit_account_code] if kind == "income" else accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
     entry_date=occurred_at[:10]
@@ -1248,10 +1256,13 @@ def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind,
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,title,"transaction",tx_id,user_id,now))
     lines = ((cash,amount,0),(counterpart,0,amount)) if kind == "income" else ((counterpart,amount,0),(cash,0,amount))
     for account_id, debit, credit in lines:
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if customer_id and account_id==accounts.get("1100"):
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=customer_id)
 
-def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost, note=''):
+def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost, note='', supplier_id=None):
     entry_date=time.strftime("%Y-%m-%d")
     assert_accounting_period_open(db,tenant_id,entry_date)
     amount = abs(quantity_delta) * unit_cost
@@ -1275,8 +1286,11 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"گردش انبار "+movement_id,
                                       "inventory_movement",movement_id,user_id,now))
     for account_id,debit,credit in lines:
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if supplier_id and movement_type=="purchase" and account_id==accounts.get("2000"):
+            tag_journal_line_party(db,tenant_id,line_id,supplier_id=supplier_id)
 
 def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_id, amount, payment_method):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
@@ -1288,8 +1302,11 @@ def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_i
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"دریافت از مشتری "+customer_id,
                                       "customer_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts[cash_code],amount,0),(accounts["1100"],0,amount)):
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if account_id==accounts["1100"]:
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=customer_id)
 
 
 def award_customer_loyalty_points(db, tenant_id, customer_id, actor_id, order_id, amount, now):
@@ -1403,7 +1420,7 @@ def verify_license_code(code):
     return {"license_id":license_id,"modules":modules,"expires_at":expires_at,
             "plan":str(payload.get("plan","custom"))[:80]}
 
-def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, method):
+def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, supplier_id, amount, method):
     accounts={r["code"]:r["id"] for r in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1",(tenant_id,))}
     cash_code={"cash":"1000","card":"1010","online":"1020"}[method]
     entry_date=time.strftime("%Y-%m-%d")
@@ -1412,8 +1429,11 @@ def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, me
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?)""",(entry_id,tenant_id,entry_date,"پرداخت به تأمین‌کننده","supplier_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts["2000"],amount,0),(accounts[cash_code],0,amount)):
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-            (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+            (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if account_id==accounts["2000"]:
+            tag_journal_line_party(db,tenant_id,line_id,supplier_id=supplier_id)
 
 def seed_trial_modules(db, tenant_id):
     expires = int(time.time()) + 14*24*60*60
@@ -2660,7 +2680,7 @@ class Handler(SimpleHTTPRequestHandler):
                 occurred_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(created))
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,'income','سفارش آنلاین',?,?)""", (tx_id,tenant_id,actor["id"],title,subtotal,occurred_at,created))
-                post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100")
+                post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100",customer_id=customer_id)
                 audit(db,tenant_id,actor["id"],"online_order.created","order",order_id,{"total":subtotal,"items":len(order_lines)})
                 db.commit()
                 return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
@@ -3324,7 +3344,7 @@ class Handler(SimpleHTTPRequestHandler):
                         db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                             VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],session["customer_id"],user["id"],
                             "game_session",session_id,amount,"هزینه بازی "+session_id,now))
-                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,"1100")
+                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,"1100",customer_id=session["customer_id"])
                     else:
                         payment_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
                         post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,payment_account)
@@ -3566,7 +3586,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,'income','فروش کافه',?,?)""", (tx_id,user["tenant_id"],user["id"],title,total,occurred_at,now))
                 payment_account = {"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment]
-                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at,payment_account)
+                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at,payment_account,customer_id=customer_id if payment=="credit" else None)
                 audit(db,user["tenant_id"],user["id"],"order.created","order",order_id,{"total":total,"items":len(order_lines)})
                 db.commit()
                 return self.send_json(201, {"id":order_id,"orderNumber":order_number,"subtotal":subtotal,"discount":discount,"total":total})
@@ -3847,7 +3867,7 @@ class Handler(SimpleHTTPRequestHandler):
                     mid=secrets.token_urlsafe(16); note="فاکتور خرید "+number.strip()
                     db.execute("INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                         (mid,user["tenant_id"],product["id"],user["id"],"purchase",qty,cost,note,now))
-                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note)
+                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note,supplier_id=sid)
                 audit(db,user["tenant_id"],user["id"],"purchase_invoice.created","purchase_invoice",invoice_id,{"total":total,"items":len(prepared)})
                 db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
             if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
@@ -3900,7 +3920,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if updated.rowcount != 1:
                     db.rollback()
                     return self.send_json(409,{"error":"وضعیت فاکتور برای ثبت پرداخت تغییر کرده است؛ دوباره تلاش کنید."})
-                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,amount,method)
+                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,inv["supplier_id"],amount,method)
                 audit(db,user["tenant_id"],user["id"],"supplier.payment.created","purchase_invoice",iid,{"amount":amount})
                 db.commit(); return self.send_json(201,{"paymentId":payid,"paidAmount":paid,"remainingBalance":inv["total"]-paid,"status":status})
             if path == "/api/inventory/movements":
