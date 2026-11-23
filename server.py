@@ -3399,9 +3399,16 @@ class Handler(SimpleHTTPRequestHandler):
                         account={"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment_method]
                         expected=sorted([(account,amount,0),("4000",0,amount)])
                         actual=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                        party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+                            JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                            WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?
+                              AND a.code='1100'""",(user["tenant_id"],tx_id)).fetchall()
                         ledger_valid=((payment_method=="credit" and len(ledger_rows)==1 and
-                                       ledger_rows[0]["debit"]==amount and ledger_rows[0]["credit"]==0) or
-                                      (payment_method!="credit" and not ledger_rows))
+                                       ledger_rows[0]["debit"]==amount and ledger_rows[0]["credit"]==0 and
+                                       len(party_rows)==1 and party_rows[0]["customer_id"]==session["customer_id"]) or
+                                      (payment_method!="credit" and not ledger_rows and not party_rows))
                         journal_valid=(tx is not None and tx["amount"]==amount and tx["kind"]=="income" and tx["status"]=="posted" and
                             len(journal_entries)==1 and len(journal_rows)==2 and actual==expected and ledger_valid)
                     if not journal_valid:
