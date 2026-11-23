@@ -216,6 +216,57 @@ class BackupManagerTests(unittest.TestCase):
             self.assertFalse(list(root.glob("live.sqlite3*-restore-*.tmp")))
             db.close()
 
+    def test_restore_reports_success_when_quarantined_sidecar_cleanup_fails(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_path = root / "snapshot-source.sqlite3"
+            target = root / "live.sqlite3"
+            backup_dir = root / "backups"
+
+            def create_valid_database(path, value):
+                db = sqlite3.connect(path)
+                db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+                db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+                db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+                db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id),
+                    username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL,
+                    active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
+                db.execute("INSERT INTO tenants VALUES('tenant-1','MG Test',1)")
+                db.execute("INSERT INTO users VALUES('user-1','tenant-1','owner','hash','owner',1,1)")
+                db.execute("CREATE TABLE records(value TEXT NOT NULL)")
+                db.execute("INSERT INTO records VALUES(?)", (value,))
+                db.commit()
+                return db
+
+            source_db = create_valid_database(source_path, "restored snapshot")
+            source_db.close()
+            snapshot = create_snapshot(source_path, backup_dir)
+            live_db = create_valid_database(target, "old live data")
+            live_db.execute("PRAGMA journal_mode=WAL")
+            live_db.execute("INSERT INTO records VALUES('committed in WAL')")
+            live_db.commit()
+            wal = Path(str(target) + "-wal")
+            self.assertTrue(wal.exists())
+
+            real_unlink = Path.unlink
+            def fail_quarantine_cleanup(path, *args, **kwargs):
+                if "-wal.restore-" in path.name:
+                    raise PermissionError("simulated quarantine cleanup failure")
+                return real_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", new=fail_quarantine_cleanup):
+                restored = restore_snapshot(snapshot, target, root / "safety")
+
+            self.assertEqual(restored, target.resolve())
+            live_db.close()
+            check = sqlite3.connect(target)
+            self.assertEqual(check.execute("SELECT value FROM records").fetchone()[0],
+                             "restored snapshot")
+            check.close()
+            self.assertTrue(list(root.glob("live.sqlite3-wal.restore-*.tmp")))
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
