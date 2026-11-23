@@ -17,6 +17,14 @@ TAG_BYTES = 16
 CHUNK_BYTES = 1024 * 1024
 
 
+def _unlink_quietly(path: Path) -> None:
+    """Best-effort cleanup that never hides the operation's original result."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def decode_encryption_key(value: str | bytes | None) -> bytes | None:
     if value is None or value == "":
         return None
@@ -157,10 +165,9 @@ def create_snapshot(
         if destination is not None:
             destination.close()
         for temporary in (temp_db, temp_output):
-            if temporary.exists():
-                temporary.unlink()
-        if key and final_path.exists():
-            final_path.unlink()
+            _unlink_quietly(temporary)
+        if key:
+            _unlink_quietly(final_path)
         raise
     finally:
         if source is not None:
@@ -222,8 +229,7 @@ def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | Non
             finally:
                 check.close()
         finally:
-            if temporary.exists():
-                temporary.unlink()
+            _unlink_quietly(temporary)
     else:
         check = sqlite3.connect(str(snapshot), timeout=30)
         try:
@@ -261,16 +267,14 @@ def restore_snapshot(
                 pass
             restore_source = decrypted_path
         except Exception:
-            if decrypted_path.exists():
-                decrypted_path.unlink()
+            _unlink_quietly(decrypted_path)
             raise
 
     check = sqlite3.connect(str(restore_source), timeout=30)
     try:
         _validate_mg_database(check)
     except Exception:
-        if decrypted_path.exists():
-            decrypted_path.unlink()
+        _unlink_quietly(decrypted_path)
         raise
     finally:
         check.close()
@@ -280,8 +284,7 @@ def restore_snapshot(
         try:
             create_snapshot(target, backup_dir, retention=365, encryption_key=key)
         except Exception:
-            if decrypted_path.exists():
-                decrypted_path.unlink()
+            _unlink_quietly(decrypted_path)
             raise
 
     temp_path = target.parent / (target.name + ".restore-" + secrets.token_hex(6) + ".tmp")
@@ -317,15 +320,26 @@ def restore_snapshot(
             os.replace(temp_path, target)
         except Exception:
             for original, quarantine in reversed(quarantined_sidecars):
+                rollback_errors = []
+            for original, quarantine in reversed(quarantined_sidecars):
                 if os.path.lexists(quarantine):
-                    os.replace(quarantine, original)
+                    try:
+                        os.replace(quarantine, original)
+                    except OSError as rollback_error:
+                        rollback_errors.append((str(quarantine), str(rollback_error)))
+            if rollback_errors:
+                details = "; ".join(f"{path}: {error}" for path, error in rollback_errors)
+                raise RuntimeError(
+                    "Database replacement failed and one or more SQLite sidecars "
+                    f"could not be restored; recovery files remain in place: {details}"
+                ) from None
             raise
         else:
+            # The database replacement is already committed. A sidecar cleanup
+            # failure must not report restore failure after the live DB changed;
+            # leave the uniquely named quarantine file for operator cleanup.
             for _, quarantine in quarantined_sidecars:
-                try:
-                    quarantine.unlink()
-                except FileNotFoundError:
-                    pass
+                _unlink_quietly(quarantine)
         try:
             os.chmod(target, 0o600)
         except OSError:
@@ -333,14 +347,12 @@ def restore_snapshot(
     except Exception:
         if destination is not None:
             destination.close()
-        if temp_path.exists():
-            temp_path.unlink()
+        _unlink_quietly(temp_path)
         raise
     finally:
         if source is not None:
             source.close()
-        if decrypted_path.exists():
-            decrypted_path.unlink()
+        _unlink_quietly(decrypted_path)
     return target
 
 
