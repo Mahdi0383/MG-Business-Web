@@ -40,7 +40,7 @@ LOGIN_INFLIGHT_BY_IP = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -1045,6 +1045,112 @@ def connect():
         db.execute("""CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_queue
             ON orders(tenant_id,fulfillment_status,created_at DESC)""")
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(17,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=18").fetchone():
+        # A party dimension is separate from immutable journal_lines so that
+        # historical journal rows can be linked without rewriting posted entries.
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_journal_lines_id_tenant ON journal_lines(id,tenant_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_customers_id_tenant ON customers(id,tenant_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_suppliers_id_tenant ON suppliers(id,tenant_id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS journal_line_parties(
+            journal_line_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            customer_id TEXT,
+            supplier_id TEXT,
+            CHECK((customer_id IS NOT NULL AND supplier_id IS NULL) OR
+                  (customer_id IS NULL AND supplier_id IS NOT NULL)),
+            FOREIGN KEY(journal_line_id,tenant_id) REFERENCES journal_lines(id,tenant_id),
+            FOREIGN KEY(customer_id,tenant_id) REFERENCES customers(id,tenant_id),
+            FOREIGN KEY(supplier_id,tenant_id) REFERENCES suppliers(id,tenant_id)
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_journal_line_parties_customer ON journal_line_parties(tenant_id,customer_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_journal_line_parties_supplier ON journal_line_parties(tenant_id,supplier_id)")
+        db.executescript("""
+        CREATE TRIGGER IF NOT EXISTS journal_line_parties_customer_account
+        BEFORE INSERT ON journal_line_parties WHEN NEW.customer_id IS NOT NULL
+        BEGIN
+          SELECT CASE WHEN NOT EXISTS(
+            SELECT 1 FROM journal_lines l JOIN accounts a
+              ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='1100'
+          ) THEN RAISE(ABORT,'customer party must tag receivables account 1100') END;
+        END;
+        CREATE TRIGGER IF NOT EXISTS journal_line_parties_supplier_account
+        BEFORE INSERT ON journal_line_parties WHEN NEW.supplier_id IS NOT NULL
+        BEGIN
+          SELECT CASE WHEN NOT EXISTS(
+            SELECT 1 FROM journal_lines l JOIN accounts a
+              ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='2000'
+          ) THEN RAISE(ABORT,'supplier party must tag payables account 2000') END;
+        END;
+        CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_update
+        BEFORE UPDATE ON journal_line_parties
+        BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete
+        BEFORE DELETE ON journal_line_parties
+        BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END;
+        """)
+        # Backfill only from explicit business relationships. Never infer a
+        # party from free-form journal memos or supplier invoice descriptions.
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='payment' AND cl.source_id=e.source_id
+            WHERE e.source_type='customer_payment' AND a.code='1100' AND l.credit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='order' AND e.source_id='order-'||cl.source_id
+            WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='game_session' AND e.source_id='game-'||cl.source_id
+            WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+            SELECT l.id,l.tenant_id,p.supplier_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN supplier_payments p ON p.tenant_id=e.tenant_id AND p.id=e.source_id
+            WHERE e.source_type='supplier_payment' AND a.code='2000' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+            SELECT l.id,l.tenant_id,i.supplier_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN inventory_movements m ON m.tenant_id=e.tenant_id AND m.id=e.source_id
+            JOIN purchase_invoices i ON i.tenant_id=m.tenant_id
+              AND m.note='فاکتور خرید '||i.invoice_number
+            WHERE e.source_type='inventory_movement' AND m.movement_type='purchase'
+              AND a.code='2000' AND l.credit>0""")
+        # Reversal lines inherit the party from their exact reversed account
+        # line; this preserves identity without editing the original journal.
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties
+            (journal_line_id,tenant_id,customer_id,supplier_id)
+            SELECT reversed_line.id,reversed_line.tenant_id,original_party.customer_id,original_party.supplier_id
+            FROM journal_entries reversal
+            JOIN journal_lines reversed_line
+              ON reversed_line.entry_id=reversal.id AND reversed_line.tenant_id=reversal.tenant_id
+            JOIN journal_entries original ON original.id=reversal.reversal_of
+              AND original.tenant_id=reversal.tenant_id
+            JOIN journal_lines original_line
+              ON original_line.entry_id=original.id AND original_line.tenant_id=original.tenant_id
+              AND original_line.account_id=reversed_line.account_id
+              AND original_line.debit=reversed_line.credit
+              AND original_line.credit=reversed_line.debit
+            JOIN journal_line_parties original_party ON original_party.journal_line_id=original_line.id
+              AND original_party.tenant_id=original_line.tenant_id""")
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(18,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -1507,7 +1613,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "service": "mg-business", "database": "sqlite"})
             if path == "/api/ready":
                 required_tables={"tenants","users","sessions","orders","order_items","products",
-                    "inventory_movements","accounts","journal_entries","journal_lines","accounting_periods","cash_register_shifts","schema_migrations"}
+                    "inventory_movements","accounts","journal_entries","journal_lines","journal_line_parties","accounting_periods","cash_register_shifts","schema_migrations"}
                 present={row["name"] for row in db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
                 missing=sorted(required_tables-present)
