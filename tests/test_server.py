@@ -2290,6 +2290,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 server.finish_login_attempt(key, ip, now, failed=True)
             self.assertFalse(server.reserve_login_attempt(key, ip, now))
 
+            with server.LOGIN_LOCK:
+                server.LOGIN_IP_FAILURES[ip] = []
             ip_keys = [(ip, "account-" + str(index)) for index in range(30)]
             self.assertTrue(all(server.reserve_login_attempt(other_key, ip, now) for other_key in ip_keys))
             self.assertFalse(server.reserve_login_attempt((ip, "thirty-first"), ip, now))
