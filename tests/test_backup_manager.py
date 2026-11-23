@@ -187,7 +187,9 @@ class BackupManagerTests(unittest.TestCase):
                 username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL,
                 active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
             db.commit()
-            db.close()
+            # Keep the live connection open in WAL mode so SQLite retains real
+            # -wal and -shm sidecars while restore attempts its replacement.
+            db.execute("PRAGMA journal_mode=WAL")
             db.execute("CREATE TABLE records(value TEXT)")
             db.execute("INSERT INTO records VALUES('committed in WAL')")
             db.commit()
