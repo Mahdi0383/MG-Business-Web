@@ -754,6 +754,18 @@ CREATE TRIGGER IF NOT EXISTS accounts_tenant_immutable
 BEFORE UPDATE OF tenant_id ON accounts
 WHEN NEW.tenant_id <> OLD.tenant_id
 BEGIN SELECT RAISE(ABORT,'account tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoices_tenant_immutable
+BEFORE UPDATE OF tenant_id ON purchase_invoices
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'purchase_invoices tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoice_items_tenant_immutable
+BEFORE UPDATE OF tenant_id ON purchase_invoice_items
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'purchase_invoice_items tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_immutable
+BEFORE UPDATE OF tenant_id ON supplier_payments
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'supplier_payments tenant is immutable'); END;
 
 CREATE TRIGGER IF NOT EXISTS transactions_tenant_immutable
 BEFORE UPDATE OF tenant_id ON transactions
