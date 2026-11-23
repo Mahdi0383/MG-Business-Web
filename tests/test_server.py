@@ -889,6 +889,13 @@ class ApiIntegrationTests(unittest.TestCase):
             "amount": 40000, "paymentMethod": "cash"
         }, token)
         self.assertEqual(status, 409)
+        status, customer_statement = self.request("GET", "/api/customers/customer-1/ledger", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(len(customer_statement["items"]),2)
+        self.assertEqual([row["sourceType"] for row in customer_statement["items"]],["payment","order"])
+        status, missing_customer_statement = self.request("GET", "/api/customers/missing-customer/ledger", token=token)
+        self.assertEqual(status,404)
+        self.assertIn("error",missing_customer_statement)
         status, result = self.request("GET", "/api/customers", token=token)
         self.assertEqual(next(x for x in result["items"] if x["id"]=="customer-1")["balance"], 35000)
         status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
