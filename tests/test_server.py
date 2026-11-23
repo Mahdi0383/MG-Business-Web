@@ -898,6 +898,10 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(customer_statement["totalCredit"],50000)
         self.assertEqual(customer_statement["balance"],35000)
         self.assertFalse(customer_statement["hasMore"])
+        self.assertEqual(customer_statement["reconciliation"]["controlAccountCode"],"1100")
+        self.assertEqual(customer_statement["reconciliation"]["controlAccountBalance"],35000)
+        self.assertEqual(customer_statement["reconciliation"]["unassignedControlLineCount"],0)
+        self.assertTrue(customer_statement["reconciliation"]["reconciled"])
         status, missing_customer_statement = self.request("GET", "/api/customers/missing-customer/ledger", token=token)
         self.assertEqual(status,404)
         self.assertIn("error",missing_customer_statement)
@@ -1305,9 +1309,37 @@ class ApiIntegrationTests(unittest.TestCase):
                 JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                 WHERE e.tenant_id=? AND a.code='1100'""",(tenant_id,)).fetchone()[0]
             self.assertEqual(subledger_balance,control_balance)
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                WHERE e.tenant_id=? AND e.source_type='transaction_reversal'
+                  AND e.source_id='order-order-credit-1' AND p.customer_id='customer-1'""",
+                (tenant_id,)).fetchone()[0],1)
             self.assertEqual(db.execute("""SELECT COUNT(*) FROM customer_ledger
                 WHERE tenant_id=? AND source_type='order_reversal' AND source_id='order-credit-1'""",
                 (tenant_id,)).fetchone()[0],1)
+        finally:
+            db.close()
+        # Re-run the v18 migration against already-posted records to prove the
+        # party links are backfilled from typed source relationships only.
+        db=server.connect()
+        try:
+            db.execute("DROP TABLE journal_line_parties")
+            db.execute("DELETE FROM schema_migrations WHERE version=18")
+            db.commit()
+        finally:
+            db.close()
+        db=server.connect()
+        try:
+            party_rows=db.execute("""SELECT p.customer_id,COUNT(*) AS count
+                FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE p.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
+                  AND a.code='1100' AND p.customer_id='customer-1'
+                GROUP BY p.customer_id""").fetchone()
+            self.assertIsNotNone(party_rows)
+            self.assertEqual(party_rows["count"],4)
         finally:
             db.close()
         db=server.connect()
@@ -1423,6 +1455,10 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(partial_statement["totalPurchases"],419999)
         self.assertEqual(partial_statement["totalPayments"],100000)
         self.assertEqual(partial_statement["balance"],319999)
+        self.assertEqual(partial_statement["reconciliation"]["controlAccountCode"],"2000")
+        self.assertEqual(partial_statement["reconciliation"]["controlAccountBalance"],319999)
+        self.assertEqual(partial_statement["reconciliation"]["unassignedControlLineCount"],0)
+        self.assertTrue(partial_statement["reconciliation"]["reconciled"])
         status, unknown_supplier = self.request("GET", "/api/suppliers/missing-supplier/ledger", token=token)
         self.assertEqual(status,404)
         # A retry must reject invoice totals/status that no longer reconcile to supplier payment rows.
@@ -1491,6 +1527,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(statement["totalPurchases"],419999)
         self.assertEqual(statement["totalPayments"],419999)
         self.assertEqual(statement["balance"],0)
+        self.assertEqual(statement["reconciliation"]["controlAccountBalance"],0)
+        self.assertEqual(statement["reconciliation"]["unassignedControlLineCount"],0)
+        self.assertTrue(statement["reconciliation"]["reconciled"])
         self.assertEqual(len(statement["items"]),3)
         self.assertEqual([row["balanceAfter"] for row in statement["items"]],[0,319999,419999])
         self.assertEqual(statement["items"][0]["sourceType"],"payment")
