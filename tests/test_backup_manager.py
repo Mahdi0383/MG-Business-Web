@@ -44,6 +44,7 @@ class BackupManagerTests(unittest.TestCase):
             database = root / "live.sqlite3"
             backup_dir = root / "backups"
             db = sqlite3.connect(database)
+            db.execute("PRAGMA journal_mode=WAL")
             db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
             db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(1,1)")
             db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
@@ -187,11 +188,16 @@ class BackupManagerTests(unittest.TestCase):
                 active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
             db.commit()
             db.close()
+            db.execute("CREATE TABLE records(value TEXT)")
+            db.execute("INSERT INTO records VALUES('committed in WAL')")
+            db.commit()
             snapshot = create_snapshot(database, root / "backups")
             wal = Path(str(database) + "-wal")
             shm = Path(str(database) + "-shm")
-            wal.write_bytes(b"original wal sidecar")
-            shm.write_bytes(b"original shm sidecar")
+            self.assertTrue(wal.exists())
+            self.assertTrue(shm.exists())
+            original_wal = wal.read_bytes()
+            original_shm = shm.read_bytes()
 
             real_replace = backup_manager.os.replace
             def fail_final_replace(source, destination):
@@ -203,9 +209,10 @@ class BackupManagerTests(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, "simulated atomic replacement failure"):
                     restore_snapshot(snapshot, database, root / "safety")
 
-            self.assertEqual(wal.read_bytes(), b"original wal sidecar")
-            self.assertEqual(shm.read_bytes(), b"original shm sidecar")
+            self.assertEqual(wal.read_bytes(), original_wal)
+            self.assertEqual(shm.read_bytes(), original_shm)
             self.assertFalse(list(root.glob("live.sqlite3*-restore-*.tmp")))
+            db.close()
 
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
