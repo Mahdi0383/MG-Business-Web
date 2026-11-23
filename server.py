@@ -3001,6 +3001,7 @@ class Handler(SimpleHTTPRequestHandler):
                         return self.send_json(409,{"error":"برای بازیابی پشتیبان قدیمی، ابتدا شیفت فعال صندوق را ببندید؛ این نسخه شناسه دقیق گردش‌های شیفت را نگهداری نمی‌کند."})
                     db.execute("DROP TRIGGER IF EXISTS journal_entries_no_delete")
                     db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                    db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
                     column_map = {}
                     for name in allowed:
                         column_map[name] = {row["name"] for row in db.execute("PRAGMA table_info("+name+")").fetchall()}
@@ -3076,6 +3077,8 @@ class Handler(SimpleHTTPRequestHandler):
                         BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
                     db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
                         BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+                    db.execute("""CREATE TRIGGER journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                        BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
                     audit(db,tenant_id,user["id"],"backup.restored","tenant",tenant_id,{"rows":total_rows})
                     db.commit()
                     return self.send_json(200, {"ok":True,"restoredRows":total_rows})
