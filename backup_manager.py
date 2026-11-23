@@ -319,8 +319,7 @@ def restore_snapshot(
                     quarantined_sidecars.append((sidecar, quarantine))
             os.replace(temp_path, target)
         except Exception:
-            for original, quarantine in reversed(quarantined_sidecars):
-                rollback_errors = []
+            rollback_errors = []
             for original, quarantine in reversed(quarantined_sidecars):
                 if os.path.lexists(quarantine):
                     try:
