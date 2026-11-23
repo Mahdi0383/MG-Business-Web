@@ -2266,6 +2266,39 @@ class ApiIntegrationTests(unittest.TestCase):
                 server.PUBLIC_ORDER_FAILURES.clear()
                 server.PUBLIC_ORDER_FAILURES.update(original)
 
+    def test_login_throttle_reserves_capacity_for_concurrent_attempts(self):
+        with server.LOGIN_LOCK:
+            saved = (server.LOGIN_FAILURES.copy(), server.LOGIN_IP_FAILURES.copy(),
+                     server.LOGIN_INFLIGHT_BY_KEY.copy(), server.LOGIN_INFLIGHT_BY_IP.copy())
+            server.LOGIN_FAILURES.clear()
+            server.LOGIN_IP_FAILURES.clear()
+            server.LOGIN_INFLIGHT_BY_KEY.clear()
+            server.LOGIN_INFLIGHT_BY_IP.clear()
+        key, ip, now = ("127.0.0.1", "parallel-owner"), "127.0.0.1", 5000
+        try:
+            self.assertTrue(all(server.reserve_login_attempt(key, ip, now) for _ in range(8)))
+            self.assertFalse(server.reserve_login_attempt(key, ip, now))
+            self.assertFalse(server.reserve_login_attempt(("127.0.0.1", "other-user"), ip, now))
+            for _ in range(7):
+                server.finish_login_attempt(key, ip, now, failed=True)
+            self.assertTrue(server.reserve_login_attempt(key, ip, now))
+            server.finish_login_attempt(key, ip, now, failed=True)
+            self.assertFalse(server.reserve_login_attempt(key, ip, now))
+            with server.LOGIN_LOCK:
+                self.assertEqual(server.LOGIN_INFLIGHT_BY_KEY, {})
+                self.assertEqual(server.LOGIN_INFLIGHT_BY_IP, {})
+                self.assertEqual(len(server.LOGIN_FAILURES[key]), 8)
+        finally:
+            with server.LOGIN_LOCK:
+                server.LOGIN_FAILURES.clear()
+                server.LOGIN_FAILURES.update(saved[0])
+                server.LOGIN_IP_FAILURES.clear()
+                server.LOGIN_IP_FAILURES.update(saved[1])
+                server.LOGIN_INFLIGHT_BY_KEY.clear()
+                server.LOGIN_INFLIGHT_BY_KEY.update(saved[2])
+                server.LOGIN_INFLIGHT_BY_IP.clear()
+                server.LOGIN_INFLIGHT_BY_IP.update(saved[3])
+
     def test_login_throttle_state_is_bounded(self):
         with server.LOGIN_LOCK:
             original_user = server.LOGIN_FAILURES.copy()
