@@ -1483,8 +1483,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(partial_statement["balance"],319999)
         self.assertEqual(partial_statement["reconciliation"]["controlAccountCode"],"2000")
         self.assertEqual(partial_statement["reconciliation"]["controlAccountBalance"],319999)
-        self.assertEqual(partial_statement["reconciliation"]["unassignedControlLineCount"],0)
-        self.assertTrue(partial_statement["reconciliation"]["reconciled"])
+        # The earlier manual stock purchase has no supplier source; it must
+        # remain explicitly unassigned rather than being guessed onto supplier-1.
+        self.assertEqual(partial_statement["reconciliation"]["unassignedControlLineCount"],1)
+        self.assertEqual(partial_statement["reconciliation"]["unassignedControlBalance"],600000)
+        self.assertFalse(partial_statement["reconciliation"]["reconciled"])
         status, unknown_supplier = self.request("GET", "/api/suppliers/missing-supplier/ledger", token=token)
         self.assertEqual(status,404)
         # A retry must reject invoice totals/status that no longer reconcile to supplier payment rows.
@@ -1567,8 +1570,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(statement["totalPayments"],419999)
         self.assertEqual(statement["balance"],0)
         self.assertEqual(statement["reconciliation"]["controlAccountBalance"],0)
-        self.assertEqual(statement["reconciliation"]["unassignedControlLineCount"],0)
-        self.assertTrue(statement["reconciliation"]["reconciled"])
+        self.assertEqual(statement["reconciliation"]["unassignedControlLineCount"],1)
+        self.assertEqual(statement["reconciliation"]["unassignedControlBalance"],600000)
+        self.assertFalse(statement["reconciliation"]["reconciled"])
         self.assertEqual(len(statement["items"]),3)
         self.assertEqual([row["balanceAfter"] for row in statement["items"]],[0,319999,419999])
         self.assertEqual(statement["items"][0]["sourceType"],"payment")
