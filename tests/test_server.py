@@ -1280,6 +1280,36 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(subledger_balance,control_balance)
         finally:
             db.close()
+        # Returning a credit sale must reverse the customer subledger and the
+        # 1100 control account together, exactly once.
+        status,credit_return=self.request("DELETE","/api/orders/order-credit-1",token=token)
+        self.assertEqual(status,200)
+        self.assertFalse(credit_return["duplicate"])
+        status,credit_return_retry=self.request("DELETE","/api/orders/order-credit-1",token=token)
+        self.assertEqual(status,200)
+        self.assertTrue(credit_return_retry["duplicate"])
+        db=server.connect()
+        try:
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            returned_credit=db.execute("""SELECT debit,credit FROM customer_ledger
+                WHERE tenant_id=? AND source_type='order_reversal' AND source_id='order-credit-1'""",
+                (tenant_id,)).fetchone()
+            self.assertEqual((returned_credit["debit"],returned_credit["credit"]),(0,85000))
+            subledger_balance=db.execute(
+                "SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=?",
+                (tenant_id,)
+            ).fetchone()[0]
+            control_balance=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0)
+                FROM journal_lines l
+                JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE e.tenant_id=? AND a.code='1100'""",(tenant_id,)).fetchone()[0]
+            self.assertEqual(subledger_balance,control_balance)
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM customer_ledger
+                WHERE tenant_id=? AND source_type='order_reversal' AND source_id='order-credit-1'""",
+                (tenant_id,)).fetchone()[0],1)
+        finally:
+            db.close()
         db=server.connect()
         try:
             paid_receivable=db.execute("""SELECT COUNT(*) FROM customer_ledger
