@@ -3097,6 +3097,8 @@ class ApiIntegrationTests(unittest.TestCase):
             status,returned=self.request("DELETE","/api/orders/refund-credit-order",token=owner)
             self.assertEqual(status,200)
             self.assertFalse(returned["duplicate"])
+            status,shift=self.request("POST","/api/cash-register/shifts",{"openingCash":50000},owner)
+            self.assertEqual(status,201)
 
             status,refund=self.request("POST","/api/customers/refund-customer/refunds",{
                 "id":"refund-credit-01","amount":6000,"paymentMethod":"cash"},owner)
@@ -3104,6 +3106,9 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertFalse(refund["duplicate"])
             self.assertEqual(refund["balance"],-4000)
             self.assertEqual(refund["remainingCredit"],4000)
+            status,shifts=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(shifts["active"]["expectedCash"],44000)
             status,duplicate=self.request("POST","/api/customers/refund-customer/refunds",{
                 "id":"refund-credit-01","amount":6000,"paymentMethod":"cash"},owner)
             self.assertEqual(status,200)
