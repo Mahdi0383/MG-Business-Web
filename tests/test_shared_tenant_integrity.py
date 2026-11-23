@@ -454,5 +454,50 @@ class SharedTenantIntegrityTests(unittest.TestCase):
             )
 
 
+    def test_operational_and_accounting_records_cannot_be_reparented(self):
+        now = int(time.time())
+        order_id = self.create_order()
+        session_id = self.create_session()
+        period_id = self.new_id()
+        shift_id = self.new_id()
+        journal_id = self.new_id()
+        self.db.execute(
+            """INSERT INTO accounting_periods
+               (id,tenant_id,start_date,end_date,closed_by,closed_at)
+               VALUES(?,?,'2026-01-01','2026-12-31',?,?)""",
+            (period_id, self.tenant_a, self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO cash_register_shifts
+               (id,tenant_id,opened_by,opened_at,opening_cash,status)
+               VALUES(?,?,?, ?,0,'open')""",
+            (shift_id, self.tenant_a, self.user_a, now),
+        )
+        self.db.execute(
+            """INSERT INTO journal_entries
+               (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+               VALUES(?,?,'2026-11-23','Tenant immutability','manual',?,?,?)""",
+            (journal_id, self.tenant_a, self.new_id(), self.user_a, now),
+        )
+        records = (
+            ("orders", order_id),
+            ("game_sessions", session_id),
+            ("accounting_periods", period_id),
+            ("cash_register_shifts", shift_id),
+            ("journal_entries", journal_id),
+        )
+        for table, record_id in records:
+            with self.subTest(table=table):
+                self.db.execute(
+                    f"UPDATE {table} SET tenant_id=? WHERE id=?",
+                    (self.tenant_a, record_id),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        f"UPDATE {table} SET tenant_id=? WHERE id=?",
+                        (self.tenant_b, record_id),
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
