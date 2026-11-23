@@ -2507,6 +2507,48 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_stale_password_change_cannot_overwrite_concurrent_reset(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "password-race-test.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Password Race Shop", "username": "password-race-owner",
+                "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            token = setup["token"]
+
+            def concurrent_reset(_new_password):
+                db = server.connect()
+                try:
+                    db.execute(
+                        "UPDATE users SET password_hash=? WHERE username=?",
+                        ("administrator-reset-hash", "password-race-owner"),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+                return "requested-new-password-hash"
+
+            with mock.patch.object(server, "password_hash", side_effect=concurrent_reset):
+                status, result = self.request("POST", "/api/account/password", {
+                    "currentPassword": "correct-horse-battery",
+                    "newPassword": "another-secure-password-2026"
+                }, token)
+
+            self.assertEqual(status, 409)
+            db = server.connect()
+            try:
+                stored = db.execute(
+                    "SELECT password_hash FROM users WHERE username=?",
+                    ("password-race-owner",),
+                ).fetchone()["password_hash"]
+                self.assertEqual(stored, "administrator-reset-hash")
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_password_hash_is_salted_and_verified(self):
         encoded = server.password_hash("a-long-test-password")
         self.assertTrue(server.verify_password("a-long-test-password", encoded))
