@@ -2417,7 +2417,7 @@ class Handler(SimpleHTTPRequestHandler):
                     # Unexpected verification/database errors must not leak a reservation.
                     finish_login_attempt(key, ip, now)
                     raise
-                return self.create_session(db, user["id"])
+                return self.create_session(db, user["id"], user["password_hash"])
             if path == "/api/public/orders":
                 ip = self.client_ip()
                 now = time.time()
@@ -4023,17 +4023,25 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(500, {"error": "خطای داخلی سرور رخ داد."})
         finally: db.close()
 
-    def create_session(self, db, user_id):
+    def create_session(self, db, user_id, expected_password_hash=None):
         token = secrets.token_urlsafe(40)
         now = int(time.time())
+        # Serialize pruning and insertion so simultaneous logins cannot exceed
+        # the per-user session cap or create a session after a password reset.
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM users WHERE id=? AND active=1", (user_id,)).fetchone()
+        if not row or (expected_password_hash is not None and
+                       row["password_hash"] != expected_password_hash):
+            db.rollback()
+            return self.send_json(401, {"error": "نشست ورود معتبر نیست؛ دوباره وارد شوید."})
         db.execute("DELETE FROM sessions WHERE expires_at<=?",(now,))
         db.execute("""DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN
-            (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 9)""",
+            (SELECT token_hash FROM sessions WHERE user_id=?
+             ORDER BY created_at DESC, rowid DESC LIMIT 9)""",
             (user_id,user_id))
         db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
                    (hashlib.sha256(token.encode()).hexdigest(), user_id, now + 30 * 60, now))
         db.commit()
-        row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         return self.send_json(200, {"token": token, "expiresAt": now + 30 * 60, "user": public_user(row)})
 
     def log_error(self, message, *args):
