@@ -1244,6 +1244,66 @@ def tag_journal_line_party(db, tenant_id, journal_line_id, customer_id=None, sup
         (journal_line_id,tenant_id,customer_id,supplier_id))
 
 
+def backfill_journal_line_parties(db):
+    """Link only journal rows whose customer/vendor is explicit in source records."""
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='payment' AND cl.source_id=e.source_id
+        WHERE e.source_type='customer_payment' AND a.code='1100' AND l.credit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='order' AND e.source_id='order-'||cl.source_id
+        WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='game_session' AND e.source_id='game-'||cl.source_id
+        WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+        SELECT l.id,l.tenant_id,p.supplier_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN supplier_payments p ON p.tenant_id=e.tenant_id AND p.id=e.source_id
+        WHERE e.source_type='supplier_payment' AND a.code='2000' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+        SELECT l.id,l.tenant_id,i.supplier_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN inventory_movements m ON m.tenant_id=e.tenant_id AND m.id=e.source_id
+        JOIN purchase_invoices i ON i.tenant_id=m.tenant_id
+          AND m.note='فاکتور خرید '||i.invoice_number
+        WHERE e.source_type='inventory_movement' AND m.movement_type='purchase'
+          AND a.code='2000' AND l.credit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties
+        (journal_line_id,tenant_id,customer_id,supplier_id)
+        SELECT reversed_line.id,reversed_line.tenant_id,original_party.customer_id,original_party.supplier_id
+        FROM journal_entries reversal
+        JOIN journal_lines reversed_line
+          ON reversed_line.entry_id=reversal.id AND reversed_line.tenant_id=reversal.tenant_id
+        JOIN journal_entries original ON original.id=reversal.reversal_of
+          AND original.tenant_id=reversal.tenant_id
+        JOIN journal_lines original_line
+          ON original_line.entry_id=original.id AND original_line.tenant_id=original.tenant_id
+          AND original_line.account_id=reversed_line.account_id
+          AND original_line.debit=reversed_line.credit
+          AND original_line.credit=reversed_line.debit
+        JOIN journal_line_parties original_party ON original_party.journal_line_id=original_line.id
+          AND original_party.tenant_id=original_line.tenant_id)
+
+
 def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000', customer_id=None):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
     cash, counterpart = accounts[debit_account_code] if kind == "income" else accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
@@ -1713,6 +1773,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "accounts": "SELECT * FROM accounts WHERE tenant_id=?",
                     "journal_entries": "SELECT rowid AS __rowid,* FROM journal_entries WHERE tenant_id=? ORDER BY rowid",
                     "journal_lines": "SELECT * FROM journal_lines WHERE tenant_id=?",
+                    "journal_line_parties": "SELECT * FROM journal_line_parties WHERE tenant_id=?",
                     "products": "SELECT * FROM products WHERE tenant_id=?",
                     "product_addons": "SELECT * FROM product_addons WHERE tenant_id=?",
                     "customers": "SELECT * FROM customers WHERE tenant_id=?",
@@ -1742,7 +1803,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if total_rows > BACKUP_MAX_ROWS:
                     db.rollback()
                     return self.send_json(413, {"error":"حجم اطلاعات فضای کاری از سقف خروجی پشتیبان بیشتر است؛ از پشتیبان‌گیری محلی پایگاه داده استفاده کنید."})
-                snapshot = {"schema":"mg-business-server-backup","version":4,
+                snapshot = {"schema":"mg-business-server-backup","version":5,
                             "exportedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
                             "tenant":dict(db.execute("SELECT id,name,created_at FROM tenants WHERE id=?",(tenant_id,)).fetchone()),
                             "tables":{}}
@@ -2854,7 +2915,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
                 backup_version=data.get("version")
-                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3,4):
+                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3,4,5):
                     return self.send_json(400, {"error": "نسخه یا ساختار فایل پشتیبان معتبر نیست."})
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
@@ -2866,6 +2927,8 @@ class Handler(SimpleHTTPRequestHandler):
                     allowed=allowed[:-1]+("accounting_periods","audit_log")
                 if backup_version >= 3:
                     allowed=allowed[:-1]+("cash_register_shifts","audit_log")
+                if backup_version >= 5:
+                    allowed=allowed+("journal_line_parties",)
                 # A restore replaces the complete workspace dataset. Missing tables
                 # must never be interpreted as empty lists, or a partial/corrupt
                 # snapshot could silently erase otherwise valid business data.
@@ -2956,7 +3019,7 @@ class Handler(SimpleHTTPRequestHandler):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("tenant_modules","licenses","gamenet_reservations","game_session_segments","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
-                                    "inventory_movements","journal_lines","journal_entries","transactions","customer_loyalty_ledger","loyalty_programs","customer_ledger",
+                                    "inventory_movements","journal_line_parties","journal_lines","journal_entries","transactions","customer_loyalty_ledger","loyalty_programs","customer_ledger",
                                     "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
                     if backup_version >= 2:
                         delete_order=delete_order[:-2]+("accounting_periods","accounts","audit_log")
@@ -2965,7 +3028,7 @@ class Handler(SimpleHTTPRequestHandler):
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
                     insert_order = ("accounts","products","product_addons","customers","loyalty_programs","customer_loyalty_ledger","customer_ledger","suppliers","game_devices","transactions",
-                                    "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
+                                    "journal_entries","journal_lines","journal_line_parties","inventory_movements","purchase_invoices","purchase_invoice_items",
                                     "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","audit_log")
                     if backup_version >= 2:
                         insert_order=insert_order[:-1]+("accounting_periods","audit_log")
@@ -3007,6 +3070,8 @@ class Handler(SimpleHTTPRequestHandler):
                         WHERE s.tenant_id=? AND NOT EXISTS(
                             SELECT 1 FROM game_session_segments g WHERE g.session_id=s.id
                         )""",(tenant_id,))
+                    if backup_version < 5:
+                        backfill_journal_line_parties(db)
                     db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
                         BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
                     db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
