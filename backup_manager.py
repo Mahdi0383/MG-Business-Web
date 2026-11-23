@@ -151,7 +151,7 @@ def create_snapshot(
         result = destination.execute("PRAGMA integrity_check").fetchone()
         if not result or result[0] != "ok":
             raise sqlite3.DatabaseError("SQLite backup integrity check failed.")
-        destination.close()
+        _close_quietly(destination)
         destination = None
         try:
             os.chmod(temp_db, 0o600)
@@ -235,7 +235,7 @@ def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | Non
             try:
                 _validate_mg_database(check)
             finally:
-                check.close()
+                _close_quietly(check)
         finally:
             _unlink_quietly(temporary)
     else:
@@ -243,7 +243,7 @@ def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | Non
         try:
             _validate_mg_database(check)
         finally:
-            check.close()
+            _close_quietly(check)
     return True
 
 
@@ -285,7 +285,7 @@ def restore_snapshot(
         _unlink_quietly(decrypted_path)
         raise
     finally:
-        check.close()
+        _close_quietly(check)
 
     if target.exists():
         backup_dir = Path(safety_backup_dir).expanduser().resolve() if safety_backup_dir else target.parent / "backups"
