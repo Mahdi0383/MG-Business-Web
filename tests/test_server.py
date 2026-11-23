@@ -2022,6 +2022,7 @@ class ApiIntegrationTests(unittest.TestCase):
             db=server.connect()
             try:
                 db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
                 tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='online-addon-owner'").fetchone()["tenant_id"]
                 journal_id=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
                     AND source_type='transaction' AND source_id=?""",
@@ -2029,6 +2030,11 @@ class ApiIntegrationTests(unittest.TestCase):
                 saved_public_lines=[dict(row) for row in db.execute(
                     "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
                 ).fetchall()]
+                saved_public_parties=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id))]
+                db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                    (tenant_id,journal_id))
                 db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
                 db.commit()
             finally:
@@ -2040,8 +2046,13 @@ class ApiIntegrationTests(unittest.TestCase):
                 columns=list(saved_public_lines[0]); placeholders=",".join("?" for _ in columns)
                 db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                     [tuple(row[column] for column in columns) for row in saved_public_lines])
+                db.executemany("""INSERT INTO journal_line_parties
+                    (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                    [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_public_parties])
                 db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
                     BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+                db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                    BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
                 db.commit()
             finally:
                 db.close()
