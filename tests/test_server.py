@@ -3308,7 +3308,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
             status,snapshot=self.request("GET","/api/backup",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(snapshot["version"],4)
+            self.assertEqual(snapshot["version"],5)
             self.assertTrue(all("fulfillment_status" in row for row in snapshot["tables"]["orders"]))
             db=server.connect()
             try:
@@ -3434,6 +3434,7 @@ class ApiIntegrationTests(unittest.TestCase):
             legacy_snapshot["version"]=1
             legacy_snapshot["tables"].pop("accounting_periods")
             legacy_snapshot["tables"].pop("cash_register_shifts")
+            legacy_snapshot["tables"].pop("journal_line_parties")
             for journal in legacy_snapshot["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
             status,legacy_restored=self.request("POST","/api/backup/restore",legacy_snapshot,owner)
