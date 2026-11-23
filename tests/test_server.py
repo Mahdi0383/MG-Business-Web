@@ -3415,3 +3415,54 @@ class ModuleEntitlementRuntimeTests(unittest.TestCase):
         self.assertFalse(self.enabled("hotel"))
 
 
+
+
+class SessionAuthenticationRaceTests(unittest.TestCase):
+    def test_authentication_rejects_session_revoked_before_atomic_refresh(self):
+        from email.message import Message
+
+        now = int(time.time())
+
+        class Cursor:
+            def __init__(self, row=None, rowcount=-1):
+                self._row = row
+                self.rowcount = rowcount
+
+            def fetchone(self):
+                return self._row
+
+        class RevokedSessionDatabase:
+            def __init__(self):
+                self.statements = []
+
+            def execute(self, sql, params=()):
+                self.statements.append((sql, params))
+                if sql.lstrip().startswith("SELECT u.*,s.expires_at"):
+                    return Cursor({
+                        "id": "user-1",
+                        "username": "owner",
+                        "active": 1,
+                        "session_created_at": now - 60,
+                        "expires_at": now + 600,
+                    })
+                if sql.lstrip().startswith("UPDATE sessions SET expires_at"):
+                    # Model logout/password reset winning before the conditional
+                    # refresh obtains its write lock.
+                    return Cursor(rowcount=0)
+                raise AssertionError("Unexpected SQL: " + sql)
+
+            def commit(self):
+                pass
+
+        handler = object.__new__(server.Handler)
+        handler.headers = Message()
+        token = "t" * 48
+        handler.headers["Authorization"] = "Bearer " + token
+        db = RevokedSessionDatabase()
+
+        with mock.patch.object(server.time, "time", return_value=now):
+            self.assertIsNone(handler.authenticate(db))
+
+        self.assertEqual(len(db.statements), 2)
+        self.assertIn("EXISTS (SELECT 1 FROM users", db.statements[1][0])
+        self.assertEqual(db.statements[1][1][1], hashlib.sha256(token.encode()).hexdigest())
