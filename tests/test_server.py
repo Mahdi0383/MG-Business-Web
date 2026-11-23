@@ -20,6 +20,43 @@ from pathlib import Path
 import server
 
 
+
+
+class BoundedHttpServerTests(unittest.TestCase):
+    def test_worker_limit_rejects_excess_connections_and_releases_slots(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingServer(server.BoundedThreadingHTTPServer):
+            def finish_request(self, request, client_address):
+                entered.set()
+                release.wait(timeout=3)
+
+        class DummySocket:
+            def __init__(self):
+                self.closed = False
+            def close(self):
+                self.closed = True
+
+        httpd = BlockingServer(("127.0.0.1", 0), server.Handler, max_workers=1)
+        first = DummySocket()
+        second = DummySocket()
+        try:
+            httpd.process_request(first, ("127.0.0.1", 10001))
+            self.assertTrue(entered.wait(timeout=2))
+            httpd.process_request(second, ("127.0.0.1", 10002))
+            self.assertTrue(second.closed)
+            self.assertFalse(first.closed)
+        finally:
+            release.set()
+            self.assertTrue(httpd._worker_slots.acquire(timeout=2))
+            httpd._worker_slots.release()
+            httpd.server_close()
+
+    def test_worker_limit_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler, max_workers=0)
+
 def make_license(modules, license_id):
     payload = {"license_id": license_id, "modules": modules, "plan": "integration",
                "expires_at": int(time.time()) + 86400}
