@@ -1926,20 +1926,39 @@ class Handler(SimpleHTTPRequestHandler):
                                     (supplier_id,user["tenant_id"])).fetchone()
                 if not supplier:
                     return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
-                rows=db.execute("""SELECT 'invoice' AS sourceType,i.id AS sourceId,i.invoice_number AS reference,
-                    i.invoice_date AS entryDate,i.created_at AS createdAt,i.rowid AS sequence,i.total AS credit,0 AS debit
+                rows=db.execute("""WITH ledger AS (
+                    SELECT 'invoice' AS sourceType,i.id AS sourceId,i.invoice_number AS reference,
+                        i.invoice_date AS entryDate,i.created_at AS createdAt,i.rowid AS sequence,
+                        i.total AS credit,0 AS debit
                     FROM purchase_invoices i WHERE i.tenant_id=? AND i.supplier_id=?
                     UNION ALL
                     SELECT 'payment' AS sourceType,p.id AS sourceId,i.invoice_number AS reference,
-                    NULL AS entryDate,p.created_at AS createdAt,p.rowid AS sequence,0 AS credit,p.amount AS debit
-                    FROM supplier_payments p JOIN purchase_invoices i ON i.id=p.invoice_id AND i.tenant_id=p.tenant_id
+                        NULL AS entryDate,p.created_at AS createdAt,p.rowid AS sequence,
+                        0 AS credit,p.amount AS debit
+                    FROM supplier_payments p JOIN purchase_invoices i
+                      ON i.id=p.invoice_id AND i.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? AND p.supplier_id=?
-                    ORDER BY createdAt,sequence,sourceType""",
+                ), annotated AS (
+                    SELECT *,SUM(credit-debit) OVER(
+                        ORDER BY createdAt,sequence,sourceType
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS balanceAfter,
+                        COUNT(*) OVER() AS totalCount,
+                        SUM(credit) OVER() AS totalPurchases,
+                        SUM(debit) OVER() AS totalPayments
+                    FROM ledger
+                )
+                SELECT * FROM annotated
+                ORDER BY createdAt DESC,sequence DESC,sourceType DESC LIMIT 1000""",
                     (user["tenant_id"],supplier_id,user["tenant_id"],supplier_id)).fetchall()
-                items=[]; balance=total_credit=total_debit=0
+                total_count=rows[0]["totalCount"] if rows else 0
+                total_credit=rows[0]["totalPurchases"] if rows else 0
+                total_debit=rows[0]["totalPayments"] if rows else 0
+                balance=total_credit-total_debit
+                items=[]
                 for row in rows:
-                    item=dict(row); total_credit+=item["credit"]; total_debit+=item["debit"]
-                    balance+=item["credit"]-item["debit"]; item["balanceAfter"]=balance
+                    item=dict(row)
+                    for key in ("totalCount","totalPurchases","totalPayments"):
+                        item.pop(key,None)
                     items.append(item)
                 control=db.execute("""SELECT COALESCE(SUM(l.credit-l.debit),0) AS balance
                     FROM journal_line_parties p
@@ -1955,7 +1974,8 @@ class Handler(SimpleHTTPRequestHandler):
                     LEFT JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
                     WHERE l.tenant_id=? AND a.code='2000' AND p.journal_line_id IS NULL""",
                     (user["tenant_id"],)).fetchone()
-                return self.send_json(200,{"supplier":dict(supplier),"items":list(reversed(items)),
+                return self.send_json(200,{"supplier":dict(supplier),"items":items,
+                    "totalCount":total_count,"hasMore":total_count>len(items),
                     "totalPurchases":total_credit,"totalPayments":total_debit,"balance":balance,
                     "reconciliation":{"controlAccountCode":"2000","controlAccountBalance":control,
                         "unassignedControlLineCount":unassigned["count"],
