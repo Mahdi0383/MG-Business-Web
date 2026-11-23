@@ -142,6 +142,40 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_json_routes_reject_missing_or_non_json_content_type(self):
+        body = json.dumps({"username": "owner", "password": "irrelevant"}).encode("utf-8")
+        for content_type in (None, "text/plain", "application/jsonp"):
+            with self.subTest(content_type=content_type):
+                connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+                try:
+                    connection.putrequest("POST", "/api/login")
+                    if content_type is not None:
+                        connection.putheader("Content-Type", content_type)
+                    connection.putheader("Content-Length", str(len(body)))
+                    connection.endheaders(body)
+                    response = connection.getresponse()
+                    payload = json.loads(response.read())
+                    self.assertEqual(response.status, 400)
+                    self.assertIn("application/json", payload["error"])
+                finally:
+                    connection.close()
+
+    def test_json_routes_reject_ambiguous_content_length_headers(self):
+        body = b'{"username":"owner","password":"irrelevant"}'
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+        try:
+            connection.putrequest("POST", "/api/login")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", str(len(body)))
+            connection.putheader("Content-Length", str(len(body)))
+            connection.endheaders(body)
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertIn("طول درخواست", payload["error"])
+        finally:
+            connection.close()
+
     def test_public_routes_fail_closed_when_multiple_tenants_exist(self):
         tenant_ids = ("tenant-public-a", "tenant-public-b")
         db = server.connect()
