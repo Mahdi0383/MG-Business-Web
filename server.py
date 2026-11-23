@@ -3459,13 +3459,14 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400,{"error":"رمز فعلی و رمز جدید معتبر الزامی است؛ رمز جدید باید ۱۲ تا ۲۵۶ نویسه باشد."})
                 if not verify_password(current_password,user["password_hash"]):
                     return self.send_json(403,{"error":"رمز عبور فعلی صحیح نیست."})
+                new_password_hash = password_hash(new_password)
                 db.execute("BEGIN IMMEDIATE")
                 db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
-                           (password_hash(new_password),user["id"],user["tenant_id"]))
+                           (new_password_hash,user["id"],user["tenant_id"]))
                 db.execute("DELETE FROM sessions WHERE user_id=?",(user["id"],))
                 audit(db,user["tenant_id"],user["id"],"user.password.changed","user",user["id"])
                 db.commit()
-                return self.create_session(db,user["id"])
+                return self.create_session(db,user["id"],new_password_hash)
             if path.startswith("/api/users/") and path.endswith("/role"):
                 if user["role"] != "owner":
                     return self.send_json(403,{"error":"فقط مالک می‌تواند نقش کاربران را تغییر دهد."})
