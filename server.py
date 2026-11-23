@@ -1111,6 +1111,14 @@ def connect():
             JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
             JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
             JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='refund' AND cl.source_id=e.source_id
+            WHERE e.source_type='customer_refund' AND a.code='1100' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
               AND cl.source_type='order' AND e.source_id='order-'||cl.source_id
             WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
         db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
@@ -1267,6 +1275,14 @@ def backfill_journal_line_parties(db):
         JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
         JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
         JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='refund' AND cl.source_id=e.source_id
+        WHERE e.source_type='customer_refund' AND a.code='1100' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
           AND cl.source_type='order' AND e.source_id='order-'||cl.source_id
         WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
     db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
@@ -1367,6 +1383,23 @@ def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_i
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"دریافت از مشتری "+customer_id,
                                       "customer_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts[cash_code],amount,0),(accounts["1100"],0,amount)):
+        line_id=secrets.token_urlsafe(16)
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if account_id==accounts["1100"]:
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=customer_id)
+
+
+def post_customer_refund_journal(db, tenant_id, user_id, refund_id, customer_id, amount, payment_method):
+    accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    cash_code = {"cash":"1000","card":"1010","online":"1020"}[payment_method]
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"بازپرداخت اعتبار مشتری "+customer_id,
+                                      "customer_refund",refund_id,user_id,now))
+    for account_id,debit,credit in ((accounts["1100"],amount,0),(accounts[cash_code],0,amount)):
         line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
                    (line_id,tenant_id,entry_id,account_id,debit,credit))
