@@ -25,6 +25,16 @@ def _unlink_quietly(path: Path) -> None:
         pass
 
 
+def _close_quietly(connection: sqlite3.Connection | None) -> None:
+    """Close a best-effort cleanup connection without masking the primary result."""
+    if connection is None:
+        return
+    try:
+        connection.close()
+    except sqlite3.Error:
+        pass
+
+
 def decode_encryption_key(value: str | bytes | None) -> bytes | None:
     if value is None or value == "":
         return None
@@ -162,16 +172,14 @@ def create_snapshot(
         except OSError:
             pass
     except Exception:
-        if destination is not None:
-            destination.close()
+        _close_quietly(destination)
         for temporary in (temp_db, temp_output):
             _unlink_quietly(temporary)
         if key:
             _unlink_quietly(final_path)
         raise
     finally:
-        if source is not None:
-            source.close()
+        _close_quietly(source)
 
     snapshots = sorted(
         (p for p in target_dir.glob("mg-business-*") if p.is_file()
@@ -344,13 +352,11 @@ def restore_snapshot(
         except OSError:
             pass
     except Exception:
-        if destination is not None:
-            destination.close()
+        _close_quietly(destination)
         _unlink_quietly(temp_path)
         raise
     finally:
-        if source is not None:
-            source.close()
+        _close_quietly(source)
         _unlink_quietly(decrypted_path)
     return target
 
