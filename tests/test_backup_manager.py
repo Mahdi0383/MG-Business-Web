@@ -171,6 +171,42 @@ class BackupManagerTests(unittest.TestCase):
                              "must survive retention")
             db.close()
 
+    def test_restore_rename_failure_preserves_existing_sqlite_sidecars(self):
+        from unittest import mock
+        import backup_manager
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "live.sqlite3"
+            db = sqlite3.connect(database)
+            db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO schema_migrations VALUES(1,1)")
+            db.execute("CREATE TABLE tenants(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execute("""CREATE TABLE users(id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id),
+                username TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL,
+                active INTEGER NOT NULL, created_at INTEGER NOT NULL)""")
+            db.commit()
+            db.close()
+            snapshot = create_snapshot(database, root / "backups")
+            wal = Path(str(database) + "-wal")
+            shm = Path(str(database) + "-shm")
+            wal.write_bytes(b"original wal sidecar")
+            shm.write_bytes(b"original shm sidecar")
+
+            real_replace = backup_manager.os.replace
+            def fail_final_replace(source, destination):
+                if Path(destination) == database and ".restore-" in Path(source).name:
+                    raise OSError("simulated atomic replacement failure")
+                return real_replace(source, destination)
+
+            with mock.patch.object(backup_manager.os, "replace", side_effect=fail_final_replace):
+                with self.assertRaisesRegex(OSError, "simulated atomic replacement failure"):
+                    restore_snapshot(snapshot, database, root / "safety")
+
+            self.assertEqual(wal.read_bytes(), b"original wal sidecar")
+            self.assertEqual(shm.read_bytes(), b"original shm sidecar")
+            self.assertFalse(list(root.glob("live.sqlite3*-restore-*.tmp")))
+
     def test_invalid_retention_and_missing_database_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
