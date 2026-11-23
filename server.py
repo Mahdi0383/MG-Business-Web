@@ -1755,9 +1755,13 @@ class Handler(SimpleHTTPRequestHandler):
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
                 customer_id = path.split("/")[-2]
+                customer = db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",
+                    (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    return self.send_json(404, {"error":"مشتری پیدا نشد."})
                 rows = db.execute("""SELECT id,source_type AS sourceType,source_id AS sourceId,
                     debit,credit,note,created_at AS createdAt FROM customer_ledger
-                    WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 1000""",
+                    WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC,id DESC LIMIT 1000""",
                     (user["tenant_id"],customer_id)).fetchall()
                 return self.send_json(200, {"items":[dict(row) for row in rows]})
             if path.startswith("/api/orders/"):
