@@ -1064,32 +1064,30 @@ def connect():
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_journal_line_parties_customer ON journal_line_parties(tenant_id,customer_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_journal_line_parties_supplier ON journal_line_parties(tenant_id,supplier_id)")
-        db.executescript("""
-        CREATE TRIGGER IF NOT EXISTS journal_line_parties_customer_account
-        BEFORE INSERT ON journal_line_parties WHEN NEW.customer_id IS NOT NULL
-        BEGIN
-          SELECT CASE WHEN NOT EXISTS(
-            SELECT 1 FROM journal_lines l JOIN accounts a
-              ON a.id=l.account_id AND a.tenant_id=l.tenant_id
-            WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='1100'
-          ) THEN RAISE(ABORT,'customer party must tag receivables account 1100') END;
-        END;
-        CREATE TRIGGER IF NOT EXISTS journal_line_parties_supplier_account
-        BEFORE INSERT ON journal_line_parties WHEN NEW.supplier_id IS NOT NULL
-        BEGIN
-          SELECT CASE WHEN NOT EXISTS(
-            SELECT 1 FROM journal_lines l JOIN accounts a
-              ON a.id=l.account_id AND a.tenant_id=l.tenant_id
-            WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='2000'
-          ) THEN RAISE(ABORT,'supplier party must tag payables account 2000') END;
-        END;
-        CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_update
-        BEFORE UPDATE ON journal_line_parties
-        BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END;
-        CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete
-        BEFORE DELETE ON journal_line_parties
-        BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END;
-        """)
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_customer_account
+            BEFORE INSERT ON journal_line_parties WHEN NEW.customer_id IS NOT NULL
+            BEGIN
+              SELECT CASE WHEN NOT EXISTS(
+                SELECT 1 FROM journal_lines l JOIN accounts a
+                  ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='1100'
+              ) THEN RAISE(ABORT,'customer party must tag receivables account 1100') END;
+            END""")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_supplier_account
+            BEFORE INSERT ON journal_line_parties WHEN NEW.supplier_id IS NOT NULL
+            BEGIN
+              SELECT CASE WHEN NOT EXISTS(
+                SELECT 1 FROM journal_lines l JOIN accounts a
+                  ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='2000'
+              ) THEN RAISE(ABORT,'supplier party must tag payables account 2000') END;
+            END""")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_update
+            BEFORE UPDATE ON journal_line_parties
+            BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete
+            BEFORE DELETE ON journal_line_parties
+            BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
         # Backfill only from explicit business relationships. Never infer a
         # party from free-form journal memos or supplier invoice descriptions.
         db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
@@ -1366,8 +1364,6 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,reversal_of,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,reversal_date,"برگشت تراکنش "+tx_id,
                                        "transaction_reversal",tx_id,original["id"],user_id,now))
-    lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
-                       (tenant_id,original["id"])).fetchall()
     for line in lines:
         line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
