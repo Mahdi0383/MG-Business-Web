@@ -3544,9 +3544,11 @@ class SessionIssuanceTests(unittest.TestCase):
         )
         self.db.commit()
 
-        with mock.patch.object(server.time, "time", return_value=1000), \\
-             mock.patch.object(server.secrets, "token_urlsafe", return_value="new-secret"), \\
-             mock.patch.object(server, "public_user", return_value={"id": "user-1"}):
+        with (
+            mock.patch.object(server.time, "time", return_value=1000),
+            mock.patch.object(server.secrets, "token_urlsafe", return_value="new-secret"),
+            mock.patch.object(server, "public_user", return_value={"id": "user-1"}),
+        ):
             status, payload = self.handler.create_session(self.db, "user-1", "verified-hash")
 
         self.assertEqual(status, 200)
