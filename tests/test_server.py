@@ -1262,6 +1262,24 @@ class ApiIntegrationTests(unittest.TestCase):
             db.close()
         status, customers_after_card = self.request("GET","/api/customers",token=token)
         self.assertEqual(next(x for x in customers_after_card["items"] if x["id"]=="customer-1")["balance"],35000+game_charge)
+        # The customer subledger must reconcile to the 1100 control account:
+        # credit orders, customer receipts, and GameNet credit settlements all
+        # affect both ledgers, while card settlements affect neither receivable.
+        db=server.connect()
+        try:
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            subledger_balance=db.execute(
+                "SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=?",
+                (tenant_id,)
+            ).fetchone()[0]
+            control_balance=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0)
+                FROM journal_lines l
+                JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE e.tenant_id=? AND a.code='1100'""",(tenant_id,)).fetchone()[0]
+            self.assertEqual(subledger_balance,control_balance)
+        finally:
+            db.close()
         db=server.connect()
         try:
             paid_receivable=db.execute("""SELECT COUNT(*) FROM customer_ledger
