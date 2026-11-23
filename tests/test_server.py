@@ -1035,7 +1035,7 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["schema"], "mg-business-server-backup")
-        self.assertEqual(result["version"], 4)
+        self.assertEqual(result["version"], 5)
         self.assertIn("transactions", result["tables"])
         self.assertIn("suppliers", result["tables"])
         self.assertIn("purchase_invoices", result["tables"])
