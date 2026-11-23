@@ -484,7 +484,6 @@ class SharedTenantIntegrityTests(unittest.TestCase):
             ("game_sessions", session_id),
             ("accounting_periods", period_id),
             ("cash_register_shifts", shift_id),
-            ("journal_entries", journal_id),
         )
         for table, record_id in records:
             with self.subTest(table=table):
@@ -497,6 +496,13 @@ class SharedTenantIntegrityTests(unittest.TestCase):
                         f"UPDATE {table} SET tenant_id=? WHERE id=?",
                         (self.tenant_b, record_id),
                     )
+        # Journal entries have a separate append-only lifecycle guard: even
+        # a no-op UPDATE is rejected, so assert that invariant independently.
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "UPDATE journal_entries SET tenant_id=? WHERE id=?",
+                (self.tenant_a, journal_id),
+            )
 
 
 if __name__ == "__main__":
