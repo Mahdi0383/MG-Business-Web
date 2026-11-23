@@ -853,7 +853,7 @@ class ApiIntegrationTests(unittest.TestCase):
             journal_id=db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='customer_payment' AND source_id=?""",
                 (tenant_id,"customer-payment-01")).fetchone()["id"]
-                        db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
+            db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
             saved_party_rows=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
                 JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
                 WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id)).fetchall()]
