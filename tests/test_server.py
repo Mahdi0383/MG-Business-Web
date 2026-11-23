@@ -3060,6 +3060,81 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_customer_credit_refunds_are_capped_idempotent_and_reconciled(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"customer-credit-refunds.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Customer Refunds","username":"refund-owner",
+                "password":"refund-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            status,customer=self.request("POST","/api/customers",{
+                "id":"refund-customer","fullName":"Refund Customer"},owner)
+            self.assertEqual(status,201)
+            status,product=self.request("POST","/api/products",{
+                "id":"refund-product","name":"Refund Test Product","sellPrice":10000,"costPrice":0},owner)
+            self.assertEqual(status,201)
+            status,movement=self.request("POST","/api/inventory/movements",{
+                "id":"refund-stock","productId":"refund-product","movementType":"purchase",
+                "quantityDelta":5,"unitCost":0,"note":"refund test stock"},owner)
+            self.assertEqual(status,201)
+            status,order=self.request("POST","/api/orders",{
+                "id":"refund-credit-order","customerId":"refund-customer","paymentMethod":"credit",
+                "items":[{"productId":"refund-product","quantity":1}]},owner)
+            self.assertEqual(status,201)
+            status,payment=self.request("POST","/api/customers/refund-customer/payments",{
+                "id":"refund-credit-payment","amount":10000,"paymentMethod":"card"},owner)
+            self.assertEqual(status,201)
+            self.assertEqual(payment["remainingBalance"],0)
+            status,returned=self.request("DELETE","/api/orders/refund-credit-order",token=owner)
+            self.assertEqual(status,200)
+            self.assertFalse(returned["duplicate"])
+
+            status,refund=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-01","amount":6000,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,201)
+            self.assertFalse(refund["duplicate"])
+            self.assertEqual(refund["balance"],-4000)
+            self.assertEqual(refund["remainingCredit"],4000)
+            status,duplicate=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-01","amount":6000,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,200)
+            self.assertTrue(duplicate["duplicate"])
+            self.assertEqual(duplicate["remainingCredit"],4000)
+            status,changed_method=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-01","amount":6000,"paymentMethod":"card"},owner)
+            self.assertEqual(status,409)
+            status,over_refund=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-02","amount":5000,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,409)
+
+            status,ledger=self.request("GET","/api/customers/refund-customer/ledger",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(ledger["balance"],-4000)
+            self.assertEqual(ledger["reconciliation"]["controlAccountBalance"],-4000)
+            self.assertEqual(ledger["reconciliation"]["unassignedControlLineCount"],0)
+            self.assertTrue(ledger["reconciliation"]["reconciled"])
+            db=server.connect()
+            try:
+                tenant_id=setup["user"]["tenantId"]
+                refund_rows=db.execute("""SELECT COUNT(*) FROM customer_ledger
+                    WHERE tenant_id=? AND customer_id='refund-customer'
+                      AND source_type='refund' AND source_id='refund-credit-01'""",(tenant_id,)).fetchone()[0]
+                party_rows=db.execute("""SELECT COUNT(*) FROM journal_line_parties p
+                    JOIN journal_entries e ON e.id=(SELECT entry_id FROM journal_lines WHERE id=p.journal_line_id)
+                    WHERE p.tenant_id=? AND p.customer_id='refund-customer'
+                      AND e.source_type='customer_refund' AND e.source_id='refund-credit-01'""",(tenant_id,)).fetchone()[0]
+                debit,credit=db.execute("""SELECT COALESCE(SUM(debit),0),COALESCE(SUM(credit),0)
+                    FROM journal_lines WHERE tenant_id=?""",(tenant_id,)).fetchone()
+                self.assertEqual(refund_rows,1)
+                self.assertEqual(party_rows,1)
+                self.assertEqual(debit,credit)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_cash_register_shift_reconciles_cash_and_survives_versioned_backup(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"cash-register-shifts.sqlite3"
