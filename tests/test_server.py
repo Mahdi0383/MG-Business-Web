@@ -3097,7 +3097,7 @@ class ApiIntegrationTests(unittest.TestCase):
             status,returned=self.request("DELETE","/api/orders/refund-credit-order",token=owner)
             self.assertEqual(status,200)
             self.assertFalse(returned["duplicate"])
-            status,shift=self.request("POST","/api/cash-register/shifts",{"openingCash":50000},owner)
+            status,shift=self.request("POST","/api/cash-register/shifts/open",{"openingCash":50000},owner)
             self.assertEqual(status,201)
 
             status,refund=self.request("POST","/api/customers/refund-customer/refunds",{
