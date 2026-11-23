@@ -1301,7 +1301,7 @@ def backfill_journal_line_parties(db):
           AND original_line.debit=reversed_line.credit
           AND original_line.credit=reversed_line.debit
         JOIN journal_line_parties original_party ON original_party.journal_line_id=original_line.id
-          AND original_party.tenant_id=original_line.tenant_id)
+          AND original_party.tenant_id=original_line.tenant_id""")
 
 
 def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000', customer_id=None):
