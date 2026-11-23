@@ -2859,6 +2859,9 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/customers/missing-viewer-customer/payments", {
                     "amount": 10000, "paymentMethod": "cash"
                 }),
+                ("POST", "/api/customers/missing-viewer-customer/refunds", {
+                    "amount": 1, "paymentMethod": "cash"
+                }),
                 ("POST", "/api/transactions", {
                     "id": "unauthorized-transaction", "title": "Unauthorized",
                     "amount": 1, "kind": "income", "category": "test"
