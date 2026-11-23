@@ -3122,13 +3122,21 @@ class ApiIntegrationTests(unittest.TestCase):
                     WHERE tenant_id=? AND customer_id='refund-customer'
                       AND source_type='refund' AND source_id='refund-credit-01'""",(tenant_id,)).fetchone()[0]
                 party_rows=db.execute("""SELECT COUNT(*) FROM journal_line_parties p
-                    JOIN journal_entries e ON e.id=(SELECT entry_id FROM journal_lines WHERE id=p.journal_line_id)
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
                     WHERE p.tenant_id=? AND p.customer_id='refund-customer'
                       AND e.source_type='customer_refund' AND e.source_id='refund-credit-01'""",(tenant_id,)).fetchone()[0]
+                refund_lines=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                    JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    WHERE e.tenant_id=? AND e.source_type='customer_refund' AND e.source_id='refund-credit-01'""",
+                    (tenant_id,)).fetchall()
                 debit,credit=db.execute("""SELECT COALESCE(SUM(debit),0),COALESCE(SUM(credit),0)
                     FROM journal_lines WHERE tenant_id=?""",(tenant_id,)).fetchone()
                 self.assertEqual(refund_rows,1)
                 self.assertEqual(party_rows,1)
+                self.assertEqual(sorted((row["code"],row["debit"],row["credit"]) for row in refund_lines),
+                    [("1000",0,6000),("1100",6000,0)])
                 self.assertEqual(debit,credit)
             finally:
                 db.close()
