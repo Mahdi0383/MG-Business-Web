@@ -301,11 +301,31 @@ def restore_snapshot(
             os.chmod(temp_path, 0o600)
         except OSError:
             pass
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(str(target) + suffix)
-            if sidecar.exists():
-                sidecar.unlink()
-        os.replace(temp_path, target)
+        # Preserve SQLite sidecars until the replacement is committed. If the
+        # final atomic rename fails, restore the original sidecars so the live
+        # database remains recoverable. The service must be stopped by caller.
+        quarantined_sidecars: list[tuple[Path, Path]] = []
+        try:
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(target) + suffix)
+                if os.path.lexists(sidecar):
+                    quarantine = target.parent / (
+                        target.name + suffix + ".restore-" + secrets.token_hex(6) + ".tmp"
+                    )
+                    os.replace(sidecar, quarantine)
+                    quarantined_sidecars.append((sidecar, quarantine))
+            os.replace(temp_path, target)
+        except Exception:
+            for original, quarantine in reversed(quarantined_sidecars):
+                if os.path.lexists(quarantine):
+                    os.replace(quarantine, original)
+            raise
+        else:
+            for _, quarantine in quarantined_sidecars:
+                try:
+                    quarantine.unlink()
+                except FileNotFoundError:
+                    pass
         try:
             os.chmod(target, 0o600)
         except OSError:
