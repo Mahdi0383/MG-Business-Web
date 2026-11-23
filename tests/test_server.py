@@ -2280,8 +2280,14 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertFalse(server.reserve_login_attempt(key, ip, now))
             for _ in range(7):
                 server.finish_login_attempt(key, ip, now, failed=True)
+            # The eighth in-flight attempt succeeds: it releases its slot and clears
+            # only this username's prior failures without clearing the IP-wide count.
+            server.finish_login_attempt(key, ip, now, clear_key=True)
             self.assertTrue(server.reserve_login_attempt(key, ip, now))
             server.finish_login_attempt(key, ip, now, failed=True)
+            for _ in range(7):
+                self.assertTrue(server.reserve_login_attempt(key, ip, now))
+                server.finish_login_attempt(key, ip, now, failed=True)
             self.assertFalse(server.reserve_login_attempt(key, ip, now))
 
             ip_keys = [(ip, "account-" + str(index)) for index in range(30)]
