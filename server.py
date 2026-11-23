@@ -3461,8 +3461,12 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(403,{"error":"رمز عبور فعلی صحیح نیست."})
                 new_password_hash = password_hash(new_password)
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
-                           (new_password_hash,user["id"],user["tenant_id"]))
+                changed = db.execute("""UPDATE users SET password_hash=?
+                    WHERE id=? AND tenant_id=? AND active=1 AND password_hash=?""",
+                    (new_password_hash,user["id"],user["tenant_id"],user["password_hash"]))
+                if changed.rowcount != 1:
+                    db.rollback()
+                    return self.send_json(409,{"error":"رمز عبور هم‌زمان تغییر کرده است؛ دوباره وارد شوید."})
                 db.execute("DELETE FROM sessions WHERE user_id=?",(user["id"],))
                 audit(db,user["tenant_id"],user["id"],"user.password.changed","user",user["id"])
                 db.commit()
