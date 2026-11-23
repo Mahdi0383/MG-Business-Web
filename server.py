@@ -31,6 +31,8 @@ SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 2 * 1024 * 1024
 MAX_BACKUP_BODY = 50 * 1024 * 1024
+MAX_HTTP_WORKERS = 64
+HTTP_SOCKET_TIMEOUT_SECONDS = 15
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
 LOGIN_LOCK = threading.Lock()
@@ -1284,8 +1286,43 @@ def audit(db, tenant_id, actor_id, action, entity_type, entity_id=None, details=
     db.execute("INSERT INTO audit_log(tenant_id,actor_id,action,entity_type,entity_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)",
                (tenant_id, actor_id, action, entity_type, entity_id, json.dumps(details or {}, ensure_ascii=False), int(time.time())))
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server with a hard cap on concurrent client handlers."""
+    daemon_threads = True
+    block_on_close = False
+    request_queue_size = 64
+
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True,
+                 max_workers=MAX_HTTP_WORKERS):
+        if type(max_workers) is not int or max_workers < 1:
+            raise ValueError("max_workers must be a positive integer")
+        self._worker_slots = threading.BoundedSemaphore(max_workers)
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+
+    def process_request(self, request, client_address):
+        if not self._worker_slots.acquire(blocking=False):
+            # Do not create an unbounded number of threads under connection floods.
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
+
 class Handler(SimpleHTTPRequestHandler):
     server_version = "MGBusiness/1.0"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(HTTP_SOCKET_TIMEOUT_SECONDS)
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
@@ -3985,7 +4022,7 @@ def main():
     connect().close()
     threading.Thread(target=backup_scheduler, name="mg-backup-scheduler", daemon=True).start()
     print("MG Business listening on http://%s:%s (database: %s)" % (HOST, PORT, DB_PATH), flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    BoundedThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 if __name__ == "__main__":
     main()
