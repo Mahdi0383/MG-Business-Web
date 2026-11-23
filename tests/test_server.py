@@ -1,3 +1,4 @@
+import sqlite3
 import base64
 import hashlib
 import hmac
@@ -3466,3 +3467,63 @@ class SessionAuthenticationRaceTests(unittest.TestCase):
         self.assertEqual(len(db.statements), 2)
         self.assertIn("EXISTS (SELECT 1 FROM users", db.statements[1][0])
         self.assertEqual(db.statements[1][1][1], hashlib.sha256(token.encode()).hexdigest())
+
+
+class SessionIssuanceTests(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript("""
+            CREATE TABLE users(
+                id TEXT PRIMARY KEY, active INTEGER NOT NULL,
+                password_hash TEXT NOT NULL, username TEXT NOT NULL,
+                role TEXT NOT NULL, tenant_id TEXT NOT NULL
+            );
+            CREATE TABLE sessions(
+                token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+            );
+        """)
+        self.db.execute(
+            "INSERT INTO users VALUES(?,?,?,?,?,?)",
+            ("user-1", 1, "verified-hash", "owner", "owner", "tenant-1"),
+        )
+        self.db.commit()
+        self.handler = object.__new__(server.Handler)
+        self.handler.send_json = lambda status, payload: (status, payload)
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_concurrent_safe_issuance_prunes_to_nine_existing_plus_new(self):
+        self.db.executemany(
+            "INSERT INTO sessions VALUES(?,?,?,?)",
+            [(f"old-{n}", "user-1", 5000, 100 + n) for n in range(12)],
+        )
+        self.db.commit()
+
+        with mock.patch.object(server.time, "time", return_value=1000), \\
+             mock.patch.object(server.secrets, "token_urlsafe", return_value="new-secret"), \\
+             mock.patch.object(server, "public_user", return_value={"id": "user-1"}):
+            status, payload = self.handler.create_session(self.db, "user-1", "verified-hash")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["token"], "new-secret")
+        rows = self.db.execute(
+            "SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at,rowid",
+            ("user-1",),
+        ).fetchall()
+        self.assertEqual(len(rows), 10)
+        hashes = {row["token_hash"] for row in rows}
+        self.assertTrue({f"old-{n}" for n in range(3, 12)}.issubset(hashes))
+        self.assertIn(hashlib.sha256(b"new-secret").hexdigest(), hashes)
+        self.assertNotIn("old-0", hashes)
+
+    def test_issuance_rejects_password_changed_after_login_verification(self):
+        with mock.patch.object(server.time, "time", return_value=1000):
+            status, payload = self.handler.create_session(
+                self.db, "user-1", "stale-password-hash"
+            )
+
+        self.assertEqual(status, 401)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
