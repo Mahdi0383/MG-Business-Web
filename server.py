@@ -169,6 +169,12 @@ def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normal
         (tenant_id,tx_id)).fetchall()
     expected_sales=sorted([("1100",existing["total"],0),("4000",0,existing["total"])])
     actual_sales=sorted((row["code"],row["debit"],row["credit"]) for row in sales_rows)
+    party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+        WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?
+          AND a.code='1100'""",(tenant_id,tx_id)).fetchall()
     stored_lines=db.execute("""SELECT product_id,quantity,unit_cost FROM order_items
         WHERE tenant_id=? AND order_id=?""",(tenant_id,order_id)).fetchall()
     expected_cost=sum(row["quantity"]*row["unit_cost"] for row in stored_lines)
@@ -200,6 +206,7 @@ def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normal
     if not (transaction is not None and transaction["amount"]==existing["total"] and
         transaction["kind"]=="income" and transaction["category"]=="سفارش آنلاین" and
         len(sales_rows)==2 and actual_sales==expected_sales and stock_valid and
+        len(party_rows)==1 and party_rows[0]["customer_id"]==existing["customer_id"] and
         len(ledger_rows)==1 and ledger_rows[0]["customer_id"]==existing["customer_id"] and
         ledger_rows[0]["debit"]==existing["total"] and ledger_rows[0]["credit"]==0 and
         ((expected_cost==0 and cogs_entry is None) or
