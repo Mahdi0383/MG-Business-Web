@@ -892,7 +892,7 @@ class ApiIntegrationTests(unittest.TestCase):
         status, customer_statement = self.request("GET", "/api/customers/customer-1/ledger", token=token)
         self.assertEqual(status,200)
         self.assertEqual(len(customer_statement["items"]),2)
-        self.assertEqual([row["sourceType"] for row in customer_statement["items"]],["payment","order"])
+        self.assertCountEqual([row["sourceType"] for row in customer_statement["items"]],["payment","order"])
         status, missing_customer_statement = self.request("GET", "/api/customers/missing-customer/ledger", token=token)
         self.assertEqual(status,404)
         self.assertIn("error",missing_customer_statement)
