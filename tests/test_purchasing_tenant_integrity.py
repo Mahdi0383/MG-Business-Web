@@ -218,5 +218,41 @@ class PurchasingTenantIntegrityTests(unittest.TestCase):
             )
 
 
+    def test_purchase_records_cannot_be_reparented_between_tenants(self):
+        invoice_id = self._invoice()
+        item_id = self._id()
+        payment_id = self._id()
+        now = int(time.time())
+        self.db.execute(
+            """INSERT INTO purchase_invoice_items
+               (id,tenant_id,invoice_id,product_id,product_name,quantity,unit_cost,line_total)
+               VALUES(?,?,?,?,?,1,50,50)""",
+            (item_id, self.a, invoice_id, self.product_a, "Product A"),
+        )
+        self.db.execute(
+            """INSERT INTO supplier_payments
+               (id,tenant_id,invoice_id,supplier_id,created_by,payment_method,amount,created_at)
+               VALUES(?,?,?,?,?,'cash',10,?)""",
+            (payment_id, self.a, invoice_id, self.supplier_a, self.user_a, now),
+        )
+        records = (
+            ("purchase_invoices", invoice_id),
+            ("purchase_invoice_items", item_id),
+            ("supplier_payments", payment_id),
+        )
+        for table, record_id in records:
+            with self.subTest(table=table):
+                # A no-op tenant assignment remains valid for maintenance tooling.
+                self.db.execute(
+                    f"UPDATE {table} SET tenant_id=? WHERE id=?",
+                    (self.a, record_id),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self.db.execute(
+                        f"UPDATE {table} SET tenant_id=? WHERE id=?",
+                        (self.b, record_id),
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
