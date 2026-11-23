@@ -116,6 +116,10 @@ class ApiIntegrationTests(unittest.TestCase):
             "/tests/test_server.py",
             "/README.md",
             "/backup_manager.py",
+            # URL-encoded traversal must not escape the static web root.
+            "/%2e%2e/server.py",
+            "/%2e%2e/%2e%2e/etc/passwd",
+            "/%2e%2e%2fserver.py",
         )
         for path in paths:
             with self.subTest(path=path):
