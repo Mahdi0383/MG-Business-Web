@@ -1348,8 +1348,11 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
                           (tenant_id,tx_id)).fetchone()
     if not original:
         raise sqlite3.IntegrityError("Posted transaction is missing its original journal entry.")
-    lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
-                       (tenant_id,original["id"])).fetchall()
+    lines = db.execute("""SELECT l.account_id,l.debit,l.credit,p.customer_id,p.supplier_id
+        FROM journal_lines l LEFT JOIN journal_line_parties p
+          ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+        WHERE l.tenant_id=? AND l.entry_id=?""",
+        (tenant_id,original["id"])).fetchall()
     if len(lines) < 2:
         raise sqlite3.IntegrityError("Original transaction journal is incomplete.")
     debit_total = sum(line["debit"] for line in lines)
@@ -1366,8 +1369,13 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
     lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
                        (tenant_id,original["id"])).fetchall()
     for line in lines:
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
+                   (line_id,tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
+        if line["customer_id"] is not None:
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=line["customer_id"])
+        elif line["supplier_id"] is not None:
+            tag_journal_line_party(db,tenant_id,line_id,supplier_id=line["supplier_id"])
 
 def module_enabled(db, tenant_id, module_key):
     now = int(time.time())
@@ -1836,8 +1844,26 @@ class Handler(SimpleHTTPRequestHandler):
                     item=dict(row); total_credit+=item["credit"]; total_debit+=item["debit"]
                     balance+=item["credit"]-item["debit"]; item["balanceAfter"]=balance
                     items.append(item)
+                control=db.execute("""SELECT COALESCE(SUM(l.credit-l.debit),0) AS balance
+                    FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    WHERE p.tenant_id=? AND p.supplier_id=? AND a.code='2000'""",
+                    (user["tenant_id"],supplier_id)).fetchone()["balance"]
+                unassigned=db.execute("""SELECT COUNT(*) AS count,
+                    COALESCE(SUM(l.credit-l.debit),0) AS balance
+                    FROM journal_lines l
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    LEFT JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                    WHERE l.tenant_id=? AND a.code='2000' AND p.journal_line_id IS NULL""",
+                    (user["tenant_id"],)).fetchone()
                 return self.send_json(200,{"supplier":dict(supplier),"items":list(reversed(items)),
-                    "totalPurchases":total_credit,"totalPayments":total_debit,"balance":balance})
+                    "totalPurchases":total_credit,"totalPayments":total_debit,"balance":balance,
+                    "reconciliation":{"controlAccountCode":"2000","controlAccountBalance":control,
+                        "unassignedControlLineCount":unassigned["count"],
+                        "unassignedControlBalance":unassigned["balance"],
+                        "reconciled":control==balance and unassigned["count"]==0}})
             if path == "/api/purchase-invoices":
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
@@ -1893,10 +1919,29 @@ class Handler(SimpleHTTPRequestHandler):
                     debit,credit,note,created_at AS createdAt FROM customer_ledger
                     WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC,id DESC LIMIT 1000""",
                     (user["tenant_id"],customer_id)).fetchall()
+                subledger_balance=totals["totalDebit"]-totals["totalCredit"]
+                control=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) AS balance
+                    FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    WHERE p.tenant_id=? AND p.customer_id=? AND a.code='1100'""",
+                    (user["tenant_id"],customer_id)).fetchone()["balance"]
+                unassigned=db.execute("""SELECT COUNT(*) AS count,
+                    COALESCE(SUM(l.debit-l.credit),0) AS balance
+                    FROM journal_lines l
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    LEFT JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                    WHERE l.tenant_id=? AND a.code='1100' AND p.journal_line_id IS NULL""",
+                    (user["tenant_id"],)).fetchone()
                 return self.send_json(200, {"items":[dict(row) for row in rows],
                     "totalCount":totals["totalCount"],"totalDebit":totals["totalDebit"],
-                    "totalCredit":totals["totalCredit"],"balance":totals["totalDebit"]-totals["totalCredit"],
-                    "hasMore":totals["totalCount"]>len(rows)})
+                    "totalCredit":totals["totalCredit"],"balance":subledger_balance,
+                    "hasMore":totals["totalCount"]>len(rows),
+                    "reconciliation":{"controlAccountCode":"1100","controlAccountBalance":control,
+                        "unassignedControlLineCount":unassigned["count"],
+                        "unassignedControlBalance":unassigned["balance"],
+                        "reconciled":control==subledger_balance and unassigned["count"]==0}})
             if path.startswith("/api/orders/"):
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403,{"error":"ماژول کافه در لایسنس فعال نیست."})
