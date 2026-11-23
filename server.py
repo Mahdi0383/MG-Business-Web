@@ -3954,9 +3954,15 @@ class Handler(SimpleHTTPRequestHandler):
                             JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                             WHERE l.tenant_id=? AND l.entry_id=?""",
                             (user["tenant_id"],entries[0]["id"])).fetchall()
+                        party_rows=db.execute("""SELECT p.supplier_id FROM journal_lines l
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                            WHERE l.tenant_id=? AND l.entry_id=? AND a.code='2000'
+                              AND l.credit=?""",(user["tenant_id"],entries[0]["id"],amount)).fetchall()
                         if not (len(lines)==2 and
                             any(row["code"]=="1200" and row["debit"]==amount and row["credit"]==0 for row in lines) and
-                            any(row["code"]=="2000" and row["debit"]==0 and row["credit"]==amount for row in lines)):
+                            any(row["code"]=="2000" and row["debit"]==0 and row["credit"]==amount for row in lines) and
+                            len(party_rows)==1 and party_rows[0]["supplier_id"]==existing["supplier_id"]):
                             movement_journals_valid=False
                     if (existing["id"]==invoice_id and existing["supplier_id"]==sid and
                         existing["invoice_number"]==number.strip() and existing["invoice_date"]==inv_date and
@@ -4009,9 +4015,16 @@ class Handler(SimpleHTTPRequestHandler):
                         WHERE tenant_id=? AND source_type='supplier_payment' AND source_id=?""",
                         (user["tenant_id"],payid)).fetchone()["count"]
                     expected_account={"cash":"1000","card":"1010","online":"1020"}[method]
+                    party_rows=db.execute("""SELECT p.supplier_id FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='supplier_payment' AND e.source_id=?
+                          AND a.code='2000'""",(user["tenant_id"],payid)).fetchall()
                     journal_matches=(journal_entries==1 and len(journal_rows)==2 and
                         any(row["code"]==expected_account and row["debit"]==0 and row["credit"]==amount for row in journal_rows) and
-                        any(row["code"]=="2000" and row["debit"]==amount and row["credit"]==0 for row in journal_rows))
+                        any(row["code"]=="2000" and row["debit"]==amount and row["credit"]==0 for row in journal_rows) and
+                        len(party_rows)==1 and party_rows[0]["supplier_id"]==existing["supplier_id"])
                     if (existing["invoice_id"]==iid and existing["supplier_id"]==inv["supplier_id"] and
                         existing["amount"]==amount and existing["payment_method"]==method and journal_matches):
                         db.commit()
@@ -4138,7 +4151,14 @@ class Handler(SimpleHTTPRequestHandler):
                     expected_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
                     expected_rows=sorted([(expected_account,amount,0),("1100",0,amount)])
                     actual_rows=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
-                    payment_matches=(journal_entries==1 and len(journal_rows)==2 and actual_rows==expected_rows)
+                    party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_payment' AND e.source_id=?
+                          AND a.code='1100'""",(user["tenant_id"],payment_id)).fetchall()
+                    payment_matches=(journal_entries==1 and len(journal_rows)==2 and actual_rows==expected_rows
+                        and len(party_rows)==1 and party_rows[0]["customer_id"]==customer_id)
                     if (ledger_count==1 and existing["customer_id"]==customer_id and existing["debit"]==0 and
                         existing["credit"]==amount and payment_matches):
                         balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
