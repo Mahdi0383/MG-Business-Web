@@ -1992,6 +1992,79 @@ class Handler(SimpleHTTPRequestHandler):
                 balance=db.execute("SELECT COALESCE(SUM(points_delta),0) FROM customer_loyalty_ledger WHERE tenant_id=? AND customer_id=?",
                     (user["tenant_id"],customer_id)).fetchone()[0]
                 return self.send_json(200, {"customerId":customer_id,"balance":balance,"items":[dict(row) for row in rows]})
+            if path.startswith("/api/customers/") and path.endswith("/refunds"):
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی بازپرداخت به مشتری ندارید."})
+                customer_id=path.split("/")[-2]
+                amount,payment_method=data.get("amount"),data.get("paymentMethod","cash")
+                refund_id=str(data.get("id") or secrets.token_urlsafe(18))
+                if type(amount) is not int or amount<=0 or amount>9007199254740991 or payment_method not in ("cash","card","online"):
+                    return self.send_json(400,{"error":"مبلغ یا روش بازپرداخت معتبر نیست."})
+                if not 1<=len(refund_id)<=100:
+                    return self.send_json(400,{"error":"شناسه بازپرداخت معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                customer=db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",
+                    (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    db.rollback()
+                    return self.send_json(404,{"error":"مشتری پیدا نشد."})
+                existing=db.execute("""SELECT customer_id,debit,credit FROM customer_ledger
+                    WHERE tenant_id=? AND source_type='refund' AND source_id=?""",
+                    (user["tenant_id"],refund_id)).fetchone()
+                if existing:
+                    ledger_count=db.execute("""SELECT COUNT(*) FROM customer_ledger
+                        WHERE tenant_id=? AND source_type='refund' AND source_id=?""",
+                        (user["tenant_id"],refund_id)).fetchone()[0]
+                    journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_refund' AND e.source_id=?""",
+                        (user["tenant_id"],refund_id)).fetchall()
+                    journal_count=db.execute("""SELECT COUNT(*) FROM journal_entries
+                        WHERE tenant_id=? AND source_type='customer_refund' AND source_id=?""",
+                        (user["tenant_id"],refund_id)).fetchone()[0]
+                    party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_refund' AND e.source_id=?
+                          AND a.code='1100'""",(user["tenant_id"],refund_id)).fetchall()
+                    cash_code={"cash":"1000","card":"1010","online":"1020"}[payment_method]
+                    expected=sorted([("1100",amount,0),(cash_code,0,amount)])
+                    actual=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                    valid=(ledger_count==1 and journal_count==1 and existing["customer_id"]==customer_id
+                        and existing["debit"]==amount and existing["credit"]==0 and actual==expected
+                        and len(journal_rows)==2 and len(party_rows)==1
+                        and party_rows[0]["customer_id"]==customer_id)
+                    if valid:
+                        balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                            (user["tenant_id"],customer_id)).fetchone()[0]
+                        db.commit()
+                        return self.send_json(200,{"ok":True,"refundId":refund_id,"balance":balance,
+                            "remainingCredit":max(0,-balance),"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه بازپرداخت قبلاً با اطلاعات متفاوت یا سوابق مالی ناقص استفاده شده است."})
+                balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                    (user["tenant_id"],customer_id)).fetchone()[0]
+                available_credit=max(0,-balance)
+                if amount>available_credit:
+                    db.rollback()
+                    return self.send_json(409,{"error":"مبلغ بازپرداخت از اعتبار بستانکاری مشتری بیشتر است."})
+                now=int(time.time())
+                db.execute("""INSERT INTO customer_ledger
+                    (id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                    VALUES(?,?,?,?, 'refund',?,?,0,?,?)""",
+                    (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],refund_id,amount,
+                     "بازپرداخت اعتبار مشتری",now))
+                post_customer_refund_journal(db,user["tenant_id"],user["id"],refund_id,customer_id,amount,payment_method)
+                audit(db,user["tenant_id"],user["id"],"customer.credit.refunded","customer",customer_id,
+                    {"amount":amount,"paymentMethod":payment_method,"refundId":refund_id})
+                db.commit()
+                remaining_balance=balance+amount
+                return self.send_json(201,{"ok":True,"refundId":refund_id,"balance":remaining_balance,
+                    "remainingCredit":max(0,-remaining_balance),"duplicate":False})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
