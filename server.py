@@ -35,6 +35,8 @@ MAX_HTTP_WORKERS = 64
 HTTP_SOCKET_TIMEOUT_SECONDS = 15
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
+LOGIN_INFLIGHT_BY_KEY = {}
+LOGIN_INFLIGHT_BY_IP = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
@@ -66,6 +68,40 @@ def remember_login_failure(key, ip, now):
         LOGIN_FAILURES.pop(next(iter(LOGIN_FAILURES)))
     while len(LOGIN_IP_FAILURES) > 2048:
         LOGIN_IP_FAILURES.pop(next(iter(LOGIN_IP_FAILURES)))
+
+def reserve_login_attempt(key, ip, now):
+    """Atomically reserve rate-limit capacity before expensive password verification."""
+    with LOGIN_LOCK:
+        attempts = [stamp for stamp in LOGIN_FAILURES.get(key, []) if now - stamp < 900]
+        ip_attempts = [stamp for stamp in LOGIN_IP_FAILURES.get(ip, []) if now - stamp < 900]
+        LOGIN_FAILURES[key] = attempts
+        LOGIN_IP_FAILURES[ip] = ip_attempts
+        if (len(attempts) + LOGIN_INFLIGHT_BY_KEY.get(key, 0) >= 8
+                or len(ip_attempts) + LOGIN_INFLIGHT_BY_IP.get(ip, 0) >= 30):
+            return False
+        LOGIN_INFLIGHT_BY_KEY[key] = LOGIN_INFLIGHT_BY_KEY.get(key, 0) + 1
+        LOGIN_INFLIGHT_BY_IP[ip] = LOGIN_INFLIGHT_BY_IP.get(ip, 0) + 1
+        return True
+
+
+def finish_login_attempt(key, ip, now, *, failed=False, clear_key=False):
+    """Release a reservation and atomically record failure or clear account failures."""
+    with LOGIN_LOCK:
+        key_count = LOGIN_INFLIGHT_BY_KEY.get(key, 0)
+        ip_count = LOGIN_INFLIGHT_BY_IP.get(ip, 0)
+        if key_count <= 1:
+            LOGIN_INFLIGHT_BY_KEY.pop(key, None)
+        else:
+            LOGIN_INFLIGHT_BY_KEY[key] = key_count - 1
+        if ip_count <= 1:
+            LOGIN_INFLIGHT_BY_IP.pop(ip, None)
+        else:
+            LOGIN_INFLIGHT_BY_IP[ip] = ip_count - 1
+        if failed:
+            remember_login_failure(key, ip, now)
+        elif clear_key:
+            LOGIN_FAILURES.pop(key, None)
+
 
 def remember_public_order_attempt(ip, now):
     attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip, []) if now - stamp < 900]
@@ -2361,22 +2397,19 @@ class Handler(SimpleHTTPRequestHandler):
                 ip = self.client_ip()
                 key = (ip, username.casefold())
                 now = time.time()
-                with LOGIN_LOCK:
-                    attempts = [stamp for stamp in LOGIN_FAILURES.get(key, []) if now - stamp < 900]
-                    ip_attempts = [stamp for stamp in LOGIN_IP_FAILURES.get(ip, []) if now - stamp < 900]
-                    LOGIN_FAILURES[key] = attempts
-                    LOGIN_IP_FAILURES[ip] = ip_attempts
-                    if len(attempts) >= 8 or len(ip_attempts) >= 30:
-                        return self.send_json(429, {"error": "تلاش‌های ورود بیش از حد است؛ ۱۵ دقیقه بعد دوباره امتحان کنید."})
-                user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
-                if not user or not isinstance(password, str) or not verify_password(password, user["password_hash"]):
-                    with LOGIN_LOCK:
-                        remember_login_failure(key, ip, now)
-                    return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
-                with LOGIN_LOCK:
-                    # A successful login for one account must not erase failures
-                    # accumulated against other accounts from the same source IP.
-                    LOGIN_FAILURES.pop(key, None)
+                if not reserve_login_attempt(key, ip, now):
+                    return self.send_json(429, {"error": "تلاش‌های ورود بیش از حد است؛ ۱۵ دقیقه بعد دوباره امتحان کنید."})
+                try:
+                    user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
+                    if not user or not verify_password(password, user["password_hash"]):
+                        finish_login_attempt(key, ip, now, failed=True)
+                        return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
+                    # Clear failures for this account only; IP-wide failures remain.
+                    finish_login_attempt(key, ip, now, clear_key=True)
+                except Exception:
+                    # Unexpected verification/database errors must not leak a reservation.
+                    finish_login_attempt(key, ip, now)
+                    raise
                 return self.create_session(db, user["id"])
             if path == "/api/public/orders":
                 ip = self.client_ip()
