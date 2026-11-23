@@ -853,6 +853,12 @@ class ApiIntegrationTests(unittest.TestCase):
             journal_id=db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='customer_payment' AND source_id=?""",
                 (tenant_id,"customer-payment-01")).fetchone()["id"]
+                        db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
+            saved_party_rows=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id)).fetchall()]
+            db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                (tenant_id,journal_id))
             saved_customer_payment_lines=[dict(row) for row in db.execute(
                 "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
             ).fetchall()]
@@ -870,6 +876,13 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_customer_payment_lines])
+            db.executemany("""INSERT INTO journal_line_parties
+                (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_party_rows])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
             db.commit()
         finally:
             db.close()
@@ -1409,6 +1422,7 @@ class ApiIntegrationTests(unittest.TestCase):
         db=server.connect()
         try:
             db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
             tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
             movement_id=db.execute("""SELECT id FROM inventory_movements WHERE tenant_id=?
                 AND movement_type='purchase' AND note='فاکتور خرید PI-1001' LIMIT 1""",(tenant_id,)).fetchone()["id"]
@@ -1416,6 +1430,11 @@ class ApiIntegrationTests(unittest.TestCase):
                 AND source_type='inventory_movement' AND source_id=?""",(tenant_id,movement_id)).fetchone()["id"]
             saved_movement_lines=[dict(row) for row in db.execute(
                 "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,movement_journal))]
+            saved_movement_parties=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,movement_journal))]
+            db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                (tenant_id,movement_journal))
             db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,movement_journal))
             db.commit()
         finally:
@@ -1432,6 +1451,13 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_movement_lines])
+            db.executemany("""INSERT INTO journal_line_parties
+                (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_movement_parties])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
             db.commit()
         finally:
             db.close()
@@ -1488,6 +1514,7 @@ class ApiIntegrationTests(unittest.TestCase):
         db=server.connect()
         try:
             db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
             tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
             journal_id=db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='supplier_payment' AND source_id=?""",
@@ -1495,6 +1522,11 @@ class ApiIntegrationTests(unittest.TestCase):
             saved_payment_lines=[dict(row) for row in db.execute(
                 "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
             ).fetchall()]
+            saved_payment_parties=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id))]
+            db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                (tenant_id,journal_id))
             db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
             db.commit()
         finally:
@@ -1509,6 +1541,13 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_payment_lines])
+            db.executemany("""INSERT INTO journal_line_parties
+                (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_payment_parties])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
             db.commit()
         finally:
             db.close()
