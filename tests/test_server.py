@@ -3150,6 +3150,43 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_supplier_ledger_paginates_without_truncating_totals(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"supplier-ledger-pagination.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Supplier Ledger Paging","username":"supplier-page-owner",
+                "password":"supplier-page-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            status,supplier=self.request("POST","/api/suppliers",{
+                "id":"supplier-page-1","name":"Paging Supplier"},owner)
+            self.assertEqual(status,201)
+            tenant_id=setup["user"]["tenantId"]
+            db=server.connect()
+            try:
+                db.executemany("""INSERT INTO purchase_invoices
+                    (id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,
+                     subtotal,discount,total,paid_amount,status,created_at)
+                    VALUES(?,?,?,?,?,?,1,0,1,0,'unpaid',?)""",
+                    [(f"supplier-page-invoice-{i}",tenant_id,"supplier-page-1",setup["user"]["id"],
+                      f"PAGE-{i:04d}","2026-01-01",1000+i) for i in range(1001)])
+                db.commit()
+            finally:
+                db.close()
+            status,statement=self.request("GET","/api/suppliers/supplier-page-1/ledger",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(statement["totalCount"],1001)
+            self.assertTrue(statement["hasMore"])
+            self.assertEqual(len(statement["items"]),1000)
+            self.assertEqual(statement["totalPurchases"],1001)
+            self.assertEqual(statement["totalPayments"],0)
+            self.assertEqual(statement["balance"],1001)
+            self.assertEqual(statement["items"][0]["balanceAfter"],1001)
+            self.assertEqual(statement["items"][-1]["balanceAfter"],2)
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_cash_register_shift_reconciles_cash_and_survives_versioned_backup(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"cash-register-shifts.sqlite3"
