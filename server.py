@@ -2381,6 +2381,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not 1 <= len(tenant_name) <= 120: return self.send_json(400, {"error": "نام کسب‌وکار معتبر نیست."})
                 if not 3 <= len(username) <= 64: return self.send_json(400, {"error": "نام کاربری باید ۳ تا ۶۴ نویسه باشد."})
                 if not isinstance(password, str) or not 12 <= len(password) <= 256: return self.send_json(400, {"error": "رمز عبور باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
+                initial_password_hash = password_hash(password)
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
                     db.rollback(); return self.send_json(409, {"error": "راه‌اندازی اولیه قبلاً انجام شده است."})
@@ -2388,7 +2389,7 @@ class Handler(SimpleHTTPRequestHandler):
                 now = int(time.time())
                 db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", (tenant_id, tenant_name, now))
                 db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                           (user_id, tenant_id, username, password_hash(password), "owner", now))
+                           (user_id, tenant_id, username, initial_password_hash, "owner", now))
                 seed_accounts(db, tenant_id)
                 seed_trial_modules(db, tenant_id)
                 audit(db, tenant_id, user_id, "tenant.created", "tenant", tenant_id)
@@ -3503,6 +3504,7 @@ class Handler(SimpleHTTPRequestHandler):
                 new_password=data.get("password")
                 if not isinstance(new_password,str) or len(new_password)<12 or len(new_password)>256:
                     return self.send_json(400,{"error":"رمز جدید باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
+                new_password_hash = password_hash(new_password)
                 db.execute("BEGIN IMMEDIATE")
                 target=db.execute("SELECT id,active,role FROM users WHERE id=? AND tenant_id=?",
                                   (target_id,user["tenant_id"])).fetchone()
@@ -3513,7 +3515,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if target["role"] == "owner":
                     db.rollback(); return self.send_json(403,{"error":"بازنشانی رمز حساب مالک از این مسیر مجاز نیست."})
                 db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
-                           (password_hash(new_password),target_id,user["tenant_id"]))
+                           (new_password_hash,target_id,user["tenant_id"]))
                 db.execute("DELETE FROM sessions WHERE user_id=?",(target_id,))
                 audit(db,user["tenant_id"],user["id"],"user.password.reset","user",target_id)
                 db.commit()
@@ -3530,10 +3532,11 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "نقش کاربر معتبر نیست."})
                 normalized_username=username.strip()
                 target_id, now = secrets.token_urlsafe(18), int(time.time())
+                new_user_password_hash = password_hash(password)
                 db.execute("BEGIN IMMEDIATE")
                 try:
                     db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                               (target_id,user["tenant_id"],normalized_username,password_hash(password),role,now))
+                               (target_id,user["tenant_id"],normalized_username,new_user_password_hash,role,now))
                 except sqlite3.IntegrityError:
                     db.rollback()
                     return self.send_json(409, {"error":"این نام کاربری قبلاً در سامانه ثبت شده است."})
