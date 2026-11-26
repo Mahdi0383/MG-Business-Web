@@ -31,12 +31,16 @@ SESSION_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ROUNDS = 310_000
 MAX_BODY = 2 * 1024 * 1024
 MAX_BACKUP_BODY = 50 * 1024 * 1024
+MAX_HTTP_WORKERS = 64
+HTTP_SOCKET_TIMEOUT_SECONDS = 15
 LOGIN_FAILURES = {}
 LOGIN_IP_FAILURES = {}
+LOGIN_INFLIGHT_BY_KEY = {}
+LOGIN_INFLIGHT_BY_IP = {}
 LOGIN_LOCK = threading.Lock()
 PUBLIC_ORDER_FAILURES = {}
 BACKUP_MAX_ROWS = 500000
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 def allocate_proportional_discount(amounts, discount):
     """Allocate a whole-order discount to lines with deterministic largest remainders."""
@@ -64,6 +68,40 @@ def remember_login_failure(key, ip, now):
         LOGIN_FAILURES.pop(next(iter(LOGIN_FAILURES)))
     while len(LOGIN_IP_FAILURES) > 2048:
         LOGIN_IP_FAILURES.pop(next(iter(LOGIN_IP_FAILURES)))
+
+def reserve_login_attempt(key, ip, now):
+    """Atomically reserve rate-limit capacity before expensive password verification."""
+    with LOGIN_LOCK:
+        attempts = [stamp for stamp in LOGIN_FAILURES.get(key, []) if now - stamp < 900]
+        ip_attempts = [stamp for stamp in LOGIN_IP_FAILURES.get(ip, []) if now - stamp < 900]
+        LOGIN_FAILURES[key] = attempts
+        LOGIN_IP_FAILURES[ip] = ip_attempts
+        if (len(attempts) + LOGIN_INFLIGHT_BY_KEY.get(key, 0) >= 8
+                or len(ip_attempts) + LOGIN_INFLIGHT_BY_IP.get(ip, 0) >= 30):
+            return False
+        LOGIN_INFLIGHT_BY_KEY[key] = LOGIN_INFLIGHT_BY_KEY.get(key, 0) + 1
+        LOGIN_INFLIGHT_BY_IP[ip] = LOGIN_INFLIGHT_BY_IP.get(ip, 0) + 1
+        return True
+
+
+def finish_login_attempt(key, ip, now, *, failed=False, clear_key=False):
+    """Release a reservation and atomically record failure or clear account failures."""
+    with LOGIN_LOCK:
+        key_count = LOGIN_INFLIGHT_BY_KEY.get(key, 0)
+        ip_count = LOGIN_INFLIGHT_BY_IP.get(ip, 0)
+        if key_count <= 1:
+            LOGIN_INFLIGHT_BY_KEY.pop(key, None)
+        else:
+            LOGIN_INFLIGHT_BY_KEY[key] = key_count - 1
+        if ip_count <= 1:
+            LOGIN_INFLIGHT_BY_IP.pop(ip, None)
+        else:
+            LOGIN_INFLIGHT_BY_IP[ip] = ip_count - 1
+        if failed:
+            remember_login_failure(key, ip, now)
+        elif clear_key:
+            LOGIN_FAILURES.pop(key, None)
+
 
 def remember_public_order_attempt(ip, now):
     attempts = [stamp for stamp in PUBLIC_ORDER_FAILURES.get(ip, []) if now - stamp < 900]
@@ -131,6 +169,12 @@ def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normal
         (tenant_id,tx_id)).fetchall()
     expected_sales=sorted([("1100",existing["total"],0),("4000",0,existing["total"])])
     actual_sales=sorted((row["code"],row["debit"],row["credit"]) for row in sales_rows)
+    party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+        WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?
+          AND a.code='1100'""",(tenant_id,tx_id)).fetchall()
     stored_lines=db.execute("""SELECT product_id,quantity,unit_cost FROM order_items
         WHERE tenant_id=? AND order_id=?""",(tenant_id,order_id)).fetchall()
     expected_cost=sum(row["quantity"]*row["unit_cost"] for row in stored_lines)
@@ -162,6 +206,7 @@ def public_order_duplicate(db, order_id, tenant_id, customer_name, phone, normal
     if not (transaction is not None and transaction["amount"]==existing["total"] and
         transaction["kind"]=="income" and transaction["category"]=="سفارش آنلاین" and
         len(sales_rows)==2 and actual_sales==expected_sales and stock_valid and
+        len(party_rows)==1 and party_rows[0]["customer_id"]==existing["customer_id"] and
         len(ledger_rows)==1 and ledger_rows[0]["customer_id"]==existing["customer_id"] and
         ledger_rows[0]["debit"]==existing["total"] and ledger_rows[0]["credit"]==0 and
         ((expected_cost==0 and cogs_entry is None) or
@@ -299,6 +344,9 @@ CREATE TABLE IF NOT EXISTS supplier_payments(id TEXT PRIMARY KEY,tenant_id TEXT 
 CREATE INDEX IF NOT EXISTS idx_purchase_invoices_tenant_date ON purchase_invoices(tenant_id,invoice_date DESC);
 CREATE INDEX IF NOT EXISTS idx_purchase_invoice_items_invoice ON purchase_invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_payments_invoice ON supplier_payments(tenant_id,invoice_id,created_at DESC);
+
+
+
 CREATE TABLE IF NOT EXISTS customers(
  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
  full_name TEXT NOT NULL CHECK(length(full_name) BETWEEN 1 AND 160),
@@ -426,6 +474,414 @@ CREATE TABLE IF NOT EXISTS audit_log(
  created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_log(tenant_id, created_at DESC);
+CREATE TRIGGER IF NOT EXISTS purchase_invoices_tenant_insert
+BEFORE INSERT ON purchase_invoices
+WHEN NOT EXISTS (
+ SELECT 1 FROM suppliers s JOIN users u ON u.id=NEW.created_by
+ WHERE s.id=NEW.supplier_id AND s.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoices_tenant_update
+BEFORE UPDATE OF tenant_id,supplier_id,created_by ON purchase_invoices
+WHEN NOT EXISTS (
+ SELECT 1 FROM suppliers s JOIN users u ON u.id=NEW.created_by
+ WHERE s.id=NEW.supplier_id AND s.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoice_items_tenant_insert
+BEFORE INSERT ON purchase_invoice_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i JOIN products p ON p.id=NEW.product_id
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice item tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoice_items_tenant_update
+BEFORE UPDATE OF tenant_id,invoice_id,product_id ON purchase_invoice_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i JOIN products p ON p.id=NEW.product_id
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'purchase invoice item tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_insert
+BEFORE INSERT ON supplier_payments
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i
+ JOIN suppliers s ON s.id=NEW.supplier_id
+ JOIN users u ON u.id=NEW.created_by
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND s.tenant_id=NEW.tenant_id AND i.supplier_id=NEW.supplier_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS inventory_movements_tenant_insert
+BEFORE INSERT ON inventory_movements
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p JOIN users u ON u.id=NEW.created_by
+ WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'inventory movement tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS inventory_movements_tenant_update
+BEFORE UPDATE OF tenant_id,product_id,created_by ON inventory_movements
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p JOIN users u ON u.id=NEW.created_by
+ WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'inventory movement tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS orders_tenant_insert
+BEFORE INSERT ON orders
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'order tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS orders_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON orders
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'order tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS order_items_tenant_insert
+BEFORE INSERT ON order_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM orders o JOIN products p ON p.id=NEW.product_id
+ WHERE o.id=NEW.order_id AND o.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'order item tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS order_items_tenant_update
+BEFORE UPDATE OF tenant_id,order_id,product_id ON order_items
+WHEN NOT EXISTS (
+ SELECT 1 FROM orders o JOIN products p ON p.id=NEW.product_id
+ WHERE o.id=NEW.order_id AND o.tenant_id=NEW.tenant_id
+   AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'order item tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS game_sessions_tenant_insert
+BEFORE INSERT ON game_sessions
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.started_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game session tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS game_sessions_tenant_update
+BEFORE UPDATE OF tenant_id,device_id,customer_id,started_by ON game_sessions
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.started_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game session tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS game_session_segments_tenant_insert
+BEFORE INSERT ON game_session_segments
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_sessions s JOIN game_devices d ON d.id=NEW.device_id
+ WHERE s.id=NEW.session_id AND s.tenant_id=NEW.tenant_id
+   AND d.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'game session segment tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS game_session_segments_tenant_update
+BEFORE UPDATE OF tenant_id,session_id,device_id ON game_session_segments
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_sessions s JOIN game_devices d ON d.id=NEW.device_id
+ WHERE s.id=NEW.session_id AND s.tenant_id=NEW.tenant_id
+   AND d.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'game session segment tenant mismatch'); END;
+
+
+
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_insert
+BEFORE INSERT ON customer_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON customer_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer ledger tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_update
+BEFORE UPDATE OF tenant_id,invoice_id,supplier_id,created_by ON supplier_payments
+WHEN NOT EXISTS (
+ SELECT 1 FROM purchase_invoices i
+ JOIN suppliers s ON s.id=NEW.supplier_id
+ JOIN users u ON u.id=NEW.created_by
+ WHERE i.id=NEW.invoice_id AND i.tenant_id=NEW.tenant_id
+   AND s.tenant_id=NEW.tenant_id AND i.supplier_id=NEW.supplier_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'supplier payment tenant mismatch'); END;
+
+
+CREATE TRIGGER IF NOT EXISTS product_addons_tenant_insert
+BEFORE INSERT ON product_addons
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'product addon tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS product_addons_tenant_update
+BEFORE UPDATE OF tenant_id,product_id ON product_addons
+WHEN NOT EXISTS (
+ SELECT 1 FROM products p WHERE p.id=NEW.product_id AND p.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'product addon tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS gamenet_reservations_tenant_insert
+BEFORE INSERT ON gamenet_reservations
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.created_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game reservation tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS gamenet_reservations_tenant_update
+BEFORE UPDATE OF tenant_id,device_id,customer_id,created_by ON gamenet_reservations
+WHEN NOT EXISTS (
+ SELECT 1 FROM game_devices d JOIN users u ON u.id=NEW.created_by
+ WHERE d.id=NEW.device_id AND d.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+) OR (NEW.customer_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM customers c WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'game reservation tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS customer_loyalty_ledger_tenant_insert
+BEFORE INSERT ON customer_loyalty_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer loyalty tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS customer_loyalty_ledger_tenant_update
+BEFORE UPDATE OF tenant_id,customer_id,created_by ON customer_loyalty_ledger
+WHEN NOT EXISTS (
+ SELECT 1 FROM customers c JOIN users u ON u.id=NEW.created_by
+ WHERE c.id=NEW.customer_id AND c.tenant_id=NEW.tenant_id
+   AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'customer loyalty tenant mismatch'); END;
+
+
+CREATE TRIGGER IF NOT EXISTS transactions_tenant_insert
+BEFORE INSERT ON transactions
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.voided_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.voided_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'transaction tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS transactions_tenant_update
+BEFORE UPDATE OF tenant_id,created_by,voided_by ON transactions
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.voided_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.voided_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'transaction tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS journal_entries_tenant_insert
+BEFORE INSERT ON journal_entries
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.created_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.reversal_of IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM journal_entries original
+ WHERE original.id=NEW.reversal_of AND original.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'journal entry tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS accounting_periods_tenant_insert
+BEFORE INSERT ON accounting_periods
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'accounting period tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_periods_tenant_update
+BEFORE UPDATE OF tenant_id,closed_by ON accounting_periods
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'accounting period tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS cash_register_shifts_tenant_insert
+BEFORE INSERT ON cash_register_shifts
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.opened_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.closed_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'cash register shift tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS cash_register_shifts_tenant_update
+BEFORE UPDATE OF tenant_id,opened_by,closed_by ON cash_register_shifts
+WHEN NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.opened_by AND u.tenant_id=NEW.tenant_id
+) OR (NEW.closed_by IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.tenant_id=NEW.tenant_id
+))
+BEGIN SELECT RAISE(ABORT,'cash register shift tenant mismatch'); END;
+
+CREATE TRIGGER IF NOT EXISTS audit_log_tenant_insert
+BEFORE INSERT ON audit_log
+WHEN NEW.actor_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.actor_id AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'audit log tenant mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_tenant_update
+BEFORE UPDATE OF tenant_id,actor_id ON audit_log
+WHEN NEW.actor_id IS NOT NULL AND NOT EXISTS (
+ SELECT 1 FROM users u WHERE u.id=NEW.actor_id AND u.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'audit log tenant mismatch'); END;
+
+
+CREATE TRIGGER IF NOT EXISTS tenant_modules_license_insert
+BEFORE INSERT ON tenant_modules
+WHEN NEW.license_id IS NOT NULL AND NEW.license_id <> 'trial' AND NOT EXISTS (
+ SELECT 1 FROM licenses l
+ WHERE l.id=NEW.license_id AND l.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'tenant module license mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS tenant_modules_license_update
+BEFORE UPDATE OF tenant_id,license_id ON tenant_modules
+WHEN NEW.license_id IS NOT NULL AND NEW.license_id <> 'trial' AND NOT EXISTS (
+ SELECT 1 FROM licenses l
+ WHERE l.id=NEW.license_id AND l.tenant_id=NEW.tenant_id
+)
+BEGIN SELECT RAISE(ABORT,'tenant module license mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS licenses_tenant_immutable
+BEFORE UPDATE OF tenant_id ON licenses
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'license tenant is immutable'); END;
+
+CREATE TRIGGER IF NOT EXISTS products_tenant_immutable
+BEFORE UPDATE OF tenant_id ON products
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'product tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS suppliers_tenant_immutable
+BEFORE UPDATE OF tenant_id ON suppliers
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'supplier tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS customers_tenant_immutable
+BEFORE UPDATE OF tenant_id ON customers
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'customer tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS game_devices_tenant_immutable
+BEFORE UPDATE OF tenant_id ON game_devices
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'game device tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS accounts_tenant_immutable
+BEFORE UPDATE OF tenant_id ON accounts
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'account tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoices_tenant_immutable
+BEFORE UPDATE OF tenant_id ON purchase_invoices
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'purchase_invoices tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS purchase_invoice_items_tenant_immutable
+BEFORE UPDATE OF tenant_id ON purchase_invoice_items
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'purchase_invoice_items tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS supplier_payments_tenant_immutable
+BEFORE UPDATE OF tenant_id ON supplier_payments
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'supplier_payments tenant is immutable'); END;
+
+CREATE TRIGGER IF NOT EXISTS transactions_tenant_immutable
+BEFORE UPDATE OF tenant_id ON transactions
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'transactions tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_entries_tenant_immutable
+BEFORE UPDATE OF tenant_id ON journal_entries
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'journal_entries tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS journal_lines_tenant_immutable
+BEFORE UPDATE OF tenant_id ON journal_lines
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'journal_lines tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS accounting_periods_tenant_immutable
+BEFORE UPDATE OF tenant_id ON accounting_periods
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'accounting_periods tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS cash_register_shifts_tenant_immutable
+BEFORE UPDATE OF tenant_id ON cash_register_shifts
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'cash_register_shifts tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS product_addons_tenant_immutable
+BEFORE UPDATE OF tenant_id ON product_addons
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'product_addons tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS inventory_movements_tenant_immutable
+BEFORE UPDATE OF tenant_id ON inventory_movements
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'inventory_movements tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS customer_ledger_tenant_immutable
+BEFORE UPDATE OF tenant_id ON customer_ledger
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'customer_ledger tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS loyalty_programs_tenant_immutable
+BEFORE UPDATE OF tenant_id ON loyalty_programs
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'loyalty_programs tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS customer_loyalty_ledger_tenant_immutable
+BEFORE UPDATE OF tenant_id ON customer_loyalty_ledger
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'customer_loyalty_ledger tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS orders_tenant_immutable
+BEFORE UPDATE OF tenant_id ON orders
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'orders tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS game_sessions_tenant_immutable
+BEFORE UPDATE OF tenant_id ON game_sessions
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'game_sessions tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS game_session_segments_tenant_immutable
+BEFORE UPDATE OF tenant_id ON game_session_segments
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'game_session_segments tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS gamenet_reservations_tenant_immutable
+BEFORE UPDATE OF tenant_id ON gamenet_reservations
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'gamenet_reservations tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS order_items_tenant_immutable
+BEFORE UPDATE OF tenant_id ON order_items
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'order_items tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS tenant_modules_tenant_immutable
+BEFORE UPDATE OF tenant_id ON tenant_modules
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'tenant_modules tenant is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_tenant_immutable
+BEFORE UPDATE OF tenant_id ON audit_log
+WHEN NEW.tenant_id <> OLD.tenant_id
+BEGIN SELECT RAISE(ABORT,'audit_log tenant is immutable'); END;
+
+
 """
 
 def parse_report_dates(raw_query, allow_from=True):
@@ -596,6 +1052,118 @@ def connect():
         db.execute("""CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_queue
             ON orders(tenant_id,fulfillment_status,created_at DESC)""")
         db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(17,?)", (int(time.time()),))
+    if not db.execute("SELECT 1 FROM schema_migrations WHERE version=18").fetchone():
+        # A party dimension is separate from immutable journal_lines so that
+        # historical journal rows can be linked without rewriting posted entries.
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_journal_lines_id_tenant ON journal_lines(id,tenant_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_customers_id_tenant ON customers(id,tenant_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_suppliers_id_tenant ON suppliers(id,tenant_id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS journal_line_parties(
+            journal_line_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            customer_id TEXT,
+            supplier_id TEXT,
+            CHECK((customer_id IS NOT NULL AND supplier_id IS NULL) OR
+                  (customer_id IS NULL AND supplier_id IS NOT NULL)),
+            FOREIGN KEY(journal_line_id,tenant_id) REFERENCES journal_lines(id,tenant_id),
+            FOREIGN KEY(customer_id,tenant_id) REFERENCES customers(id,tenant_id),
+            FOREIGN KEY(supplier_id,tenant_id) REFERENCES suppliers(id,tenant_id)
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_journal_line_parties_customer ON journal_line_parties(tenant_id,customer_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_journal_line_parties_supplier ON journal_line_parties(tenant_id,supplier_id)")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_customer_account
+            BEFORE INSERT ON journal_line_parties WHEN NEW.customer_id IS NOT NULL
+            BEGIN
+              SELECT CASE WHEN NOT EXISTS(
+                SELECT 1 FROM journal_lines l JOIN accounts a
+                  ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='1100'
+              ) THEN RAISE(ABORT,'customer party must tag receivables account 1100') END;
+            END""")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_supplier_account
+            BEFORE INSERT ON journal_line_parties WHEN NEW.supplier_id IS NOT NULL
+            BEGIN
+              SELECT CASE WHEN NOT EXISTS(
+                SELECT 1 FROM journal_lines l JOIN accounts a
+                  ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.id=NEW.journal_line_id AND l.tenant_id=NEW.tenant_id AND a.code='2000'
+              ) THEN RAISE(ABORT,'supplier party must tag payables account 2000') END;
+            END""")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_update
+            BEFORE UPDATE ON journal_line_parties
+            BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
+        db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete
+            BEFORE DELETE ON journal_line_parties
+            BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
+        # Backfill only from explicit business relationships. Never infer a
+        # party from free-form journal memos or supplier invoice descriptions.
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='payment' AND cl.source_id=e.source_id
+            WHERE e.source_type='customer_payment' AND a.code='1100' AND l.credit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='refund' AND cl.source_id=e.source_id
+            WHERE e.source_type='customer_refund' AND a.code='1100' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='order' AND e.source_id='order-'||cl.source_id
+            WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+            SELECT l.id,l.tenant_id,cl.customer_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+              AND cl.source_type='game_session' AND e.source_id='game-'||cl.source_id
+            WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+            SELECT l.id,l.tenant_id,p.supplier_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN supplier_payments p ON p.tenant_id=e.tenant_id AND p.id=e.source_id
+            WHERE e.source_type='supplier_payment' AND a.code='2000' AND l.debit>0""")
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+            SELECT l.id,l.tenant_id,i.supplier_id
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            JOIN inventory_movements m ON m.tenant_id=e.tenant_id AND m.id=e.source_id
+            JOIN purchase_invoices i ON i.tenant_id=m.tenant_id
+              AND m.note='فاکتور خرید '||i.invoice_number
+            WHERE e.source_type='inventory_movement' AND m.movement_type='purchase'
+              AND a.code='2000' AND l.credit>0""")
+        # Reversal lines inherit the party from their exact reversed account
+        # line; this preserves identity without editing the original journal.
+        db.execute("""INSERT OR IGNORE INTO journal_line_parties
+            (journal_line_id,tenant_id,customer_id,supplier_id)
+            SELECT reversed_line.id,reversed_line.tenant_id,original_party.customer_id,original_party.supplier_id
+            FROM journal_entries reversal
+            JOIN journal_lines reversed_line
+              ON reversed_line.entry_id=reversal.id AND reversed_line.tenant_id=reversal.tenant_id
+            JOIN journal_entries original ON original.id=reversal.reversal_of
+              AND original.tenant_id=reversal.tenant_id
+            JOIN journal_lines original_line
+              ON original_line.entry_id=original.id AND original_line.tenant_id=original.tenant_id
+              AND original_line.account_id=reversed_line.account_id
+              AND original_line.debit=reversed_line.credit
+              AND original_line.credit=reversed_line.debit
+            JOIN journal_line_parties original_party ON original_party.journal_line_id=original_line.id
+              AND original_party.tenant_id=original_line.tenant_id""")
+        db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(18,?)", (int(time.time()),))
     db.commit()
     return db
 
@@ -683,7 +1251,83 @@ def cash_register_expected_cash(db, tenant_id, opened_at, opening_cash, journal_
     return int(opening_cash)+int(movement)
 
 
-def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000'):
+def tag_journal_line_party(db, tenant_id, journal_line_id, customer_id=None, supplier_id=None):
+    if (customer_id is None) == (supplier_id is None):
+        raise ValueError("Exactly one customer or supplier party is required.")
+    db.execute("""INSERT INTO journal_line_parties
+        (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+        (journal_line_id,tenant_id,customer_id,supplier_id))
+
+
+def backfill_journal_line_parties(db):
+    """Link only journal rows whose customer/vendor is explicit in source records."""
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='payment' AND cl.source_id=e.source_id
+        WHERE e.source_type='customer_payment' AND a.code='1100' AND l.credit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='refund' AND cl.source_id=e.source_id
+        WHERE e.source_type='customer_refund' AND a.code='1100' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='order' AND e.source_id='order-'||cl.source_id
+        WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,customer_id)
+        SELECT l.id,l.tenant_id,cl.customer_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN customer_ledger cl ON cl.tenant_id=e.tenant_id
+          AND cl.source_type='game_session' AND e.source_id='game-'||cl.source_id
+        WHERE e.source_type='transaction' AND a.code='1100' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+        SELECT l.id,l.tenant_id,p.supplier_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN supplier_payments p ON p.tenant_id=e.tenant_id AND p.id=e.source_id
+        WHERE e.source_type='supplier_payment' AND a.code='2000' AND l.debit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties(journal_line_id,tenant_id,supplier_id)
+        SELECT l.id,l.tenant_id,i.supplier_id
+        FROM journal_lines l
+        JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        JOIN inventory_movements m ON m.tenant_id=e.tenant_id AND m.id=e.source_id
+        JOIN purchase_invoices i ON i.tenant_id=m.tenant_id
+          AND m.note='فاکتور خرید '||i.invoice_number
+        WHERE e.source_type='inventory_movement' AND m.movement_type='purchase'
+          AND a.code='2000' AND l.credit>0""")
+    db.execute("""INSERT OR IGNORE INTO journal_line_parties
+        (journal_line_id,tenant_id,customer_id,supplier_id)
+        SELECT reversed_line.id,reversed_line.tenant_id,original_party.customer_id,original_party.supplier_id
+        FROM journal_entries reversal
+        JOIN journal_lines reversed_line
+          ON reversed_line.entry_id=reversal.id AND reversed_line.tenant_id=reversal.tenant_id
+        JOIN journal_entries original ON original.id=reversal.reversal_of
+          AND original.tenant_id=reversal.tenant_id
+        JOIN journal_lines original_line
+          ON original_line.entry_id=original.id AND original_line.tenant_id=original.tenant_id
+          AND original_line.account_id=reversed_line.account_id
+          AND original_line.debit=reversed_line.credit
+          AND original_line.credit=reversed_line.debit
+        JOIN journal_line_parties original_party ON original_party.journal_line_id=original_line.id
+          AND original_party.tenant_id=original_line.tenant_id""")
+
+
+def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind, occurred_at, debit_account_code='1000', customer_id=None):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
     cash, counterpart = accounts[debit_account_code] if kind == "income" else accounts["1000"], accounts["4000"] if kind == "income" else accounts["5000"]
     entry_date=occurred_at[:10]
@@ -693,10 +1337,13 @@ def post_transaction_journal(db, tenant_id, user_id, tx_id, title, amount, kind,
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,title,"transaction",tx_id,user_id,now))
     lines = ((cash,amount,0),(counterpart,0,amount)) if kind == "income" else ((counterpart,amount,0),(cash,0,amount))
     for account_id, debit, credit in lines:
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if customer_id and account_id==accounts.get("1100"):
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=customer_id)
 
-def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost, note=''):
+def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movement_type, quantity_delta, unit_cost, note='', supplier_id=None):
     entry_date=time.strftime("%Y-%m-%d")
     assert_accounting_period_open(db,tenant_id,entry_date)
     amount = abs(quantity_delta) * unit_cost
@@ -720,8 +1367,11 @@ def post_inventory_movement_journal(db, tenant_id, user_id, movement_id, movemen
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"گردش انبار "+movement_id,
                                       "inventory_movement",movement_id,user_id,now))
     for account_id,debit,credit in lines:
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if supplier_id and movement_type=="purchase" and account_id==accounts.get("2000"):
+            tag_journal_line_party(db,tenant_id,line_id,supplier_id=supplier_id)
 
 def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_id, amount, payment_method):
     accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
@@ -733,8 +1383,28 @@ def post_customer_payment_journal(db, tenant_id, user_id, payment_id, customer_i
         VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"دریافت از مشتری "+customer_id,
                                       "customer_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts[cash_code],amount,0),(accounts["1100"],0,amount)):
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if account_id==accounts["1100"]:
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=customer_id)
+
+
+def post_customer_refund_journal(db, tenant_id, user_id, refund_id, customer_id, amount, payment_method):
+    accounts = {row["code"]: row["id"] for row in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1", (tenant_id,))}
+    cash_code = {"cash":"1000","card":"1010","online":"1020"}[payment_method]
+    entry_date=time.strftime("%Y-%m-%d")
+    assert_accounting_period_open(db,tenant_id,entry_date)
+    entry_id, now = secrets.token_urlsafe(18), int(time.time())
+    db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,entry_date,"بازپرداخت اعتبار مشتری "+customer_id,
+                                      "customer_refund",refund_id,user_id,now))
+    for account_id,debit,credit in ((accounts["1100"],amount,0),(accounts[cash_code],0,amount)):
+        line_id=secrets.token_urlsafe(16)
+        db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
+                   (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if account_id==accounts["1100"]:
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=customer_id)
 
 
 def award_customer_loyalty_points(db, tenant_id, customer_id, actor_id, order_id, amount, now):
@@ -776,8 +1446,11 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
                           (tenant_id,tx_id)).fetchone()
     if not original:
         raise sqlite3.IntegrityError("Posted transaction is missing its original journal entry.")
-    lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
-                       (tenant_id,original["id"])).fetchall()
+    lines = db.execute("""SELECT l.account_id,l.debit,l.credit,p.customer_id,p.supplier_id
+        FROM journal_lines l LEFT JOIN journal_line_parties p
+          ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+        WHERE l.tenant_id=? AND l.entry_id=?""",
+        (tenant_id,original["id"])).fetchall()
     if len(lines) < 2:
         raise sqlite3.IntegrityError("Original transaction journal is incomplete.")
     debit_total = sum(line["debit"] for line in lines)
@@ -791,11 +1464,14 @@ def reverse_transaction_journal(db, tenant_id, user_id, tx_id):
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,reversal_of,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?,?)""", (entry_id,tenant_id,reversal_date,"برگشت تراکنش "+tx_id,
                                        "transaction_reversal",tx_id,original["id"],user_id,now))
-    lines = db.execute("SELECT account_id,debit,credit FROM journal_lines WHERE tenant_id=? AND entry_id=?",
-                       (tenant_id,original["id"])).fetchall()
     for line in lines:
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-                   (secrets.token_urlsafe(16),tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
+                   (line_id,tenant_id,entry_id,line["account_id"],line["credit"],line["debit"]))
+        if line["customer_id"] is not None:
+            tag_journal_line_party(db,tenant_id,line_id,customer_id=line["customer_id"])
+        elif line["supplier_id"] is not None:
+            tag_journal_line_party(db,tenant_id,line_id,supplier_id=line["supplier_id"])
 
 def module_enabled(db, tenant_id, module_key):
     now = int(time.time())
@@ -848,7 +1524,7 @@ def verify_license_code(code):
     return {"license_id":license_id,"modules":modules,"expires_at":expires_at,
             "plan":str(payload.get("plan","custom"))[:80]}
 
-def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, method):
+def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, supplier_id, amount, method):
     accounts={r["code"]:r["id"] for r in db.execute("SELECT id,code FROM accounts WHERE tenant_id=? AND active=1",(tenant_id,))}
     cash_code={"cash":"1000","card":"1010","online":"1020"}[method]
     entry_date=time.strftime("%Y-%m-%d")
@@ -857,8 +1533,11 @@ def post_supplier_payment_journal(db, tenant_id, user_id, payment_id, amount, me
     db.execute("""INSERT INTO journal_entries(id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
         VALUES(?,?,?,?,?,?,?,?)""",(entry_id,tenant_id,entry_date,"پرداخت به تأمین‌کننده","supplier_payment",payment_id,user_id,now))
     for account_id,debit,credit in ((accounts["2000"],amount,0),(accounts[cash_code],0,amount)):
+        line_id=secrets.token_urlsafe(16)
         db.execute("INSERT INTO journal_lines(id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)",
-            (secrets.token_urlsafe(16),tenant_id,entry_id,account_id,debit,credit))
+            (line_id,tenant_id,entry_id,account_id,debit,credit))
+        if account_id==accounts["2000"]:
+            tag_journal_line_party(db,tenant_id,line_id,supplier_id=supplier_id)
 
 def seed_trial_modules(db, tenant_id):
     expires = int(time.time()) + 14*24*60*60
@@ -873,8 +1552,57 @@ def audit(db, tenant_id, actor_id, action, entity_type, entity_id=None, details=
     db.execute("INSERT INTO audit_log(tenant_id,actor_id,action,entity_type,entity_id,details_json,created_at) VALUES(?,?,?,?,?,?,?)",
                (tenant_id, actor_id, action, entity_type, entity_id, json.dumps(details or {}, ensure_ascii=False), int(time.time())))
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server with a hard cap on concurrent client handlers."""
+    daemon_threads = True
+    block_on_close = False
+    request_queue_size = 64
+
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True,
+                 max_workers=MAX_HTTP_WORKERS):
+        if type(max_workers) is not int or max_workers < 1:
+            raise ValueError("max_workers must be a positive integer")
+        self._worker_slots = threading.BoundedSemaphore(max_workers)
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+
+    def process_request(self, request, client_address):
+        if not self._worker_slots.acquire(blocking=False):
+            # Reject saturation explicitly without allocating another worker.
+            # A short timeout keeps a non-reading client from stalling accept().
+            try:
+                request.settimeout(0.2)
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Connection: close\r\n"
+                    b"Content-Length: 0\r\n"
+                    b"Retry-After: 1\r\n"
+                    b"Cache-Control: no-store\r\n\r\n"
+                )
+            except (AttributeError, OSError, TimeoutError):
+                # A client may disconnect or stop reading while saturated.
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._worker_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._worker_slots.release()
+
+
 class Handler(SimpleHTTPRequestHandler):
     server_version = "MGBusiness/1.0"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(HTTP_SOCKET_TIMEOUT_SECONDS)
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
@@ -926,14 +1654,34 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def read_json(self):
-        try: length = int(self.headers.get("Content-Length", "0"))
-        except ValueError: raise ValueError("طول درخواست نامعتبر است.")
+        content_types = self.headers.get_all("Content-Type", [])
+        if len(content_types) != 1:
+            raise ValueError("نوع محتوای درخواست باید application/json باشد.")
+        media_type, *parameters = content_types[0].split(";")
+        if media_type.strip().lower() != "application/json":
+            raise ValueError("نوع محتوای درخواست باید application/json باشد.")
+        for parameter in parameters:
+            key, separator, value = parameter.strip().partition("=")
+            if not separator or key.strip().lower() != "charset" or value.strip().strip('"').lower() != "utf-8":
+                raise ValueError("کدگذاری JSON درخواست باید UTF-8 باشد.")
+        if self.headers.get_all("Transfer-Encoding"):
+            raise ValueError("ارسال بدنه با Transfer-Encoding پشتیبانی نمی‌شود.")
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if len(content_lengths) != 1 or not content_lengths[0].strip().isdigit():
+            raise ValueError("طول درخواست نامعتبر است.")
+        length = int(content_lengths[0].strip())
         body_limit = MAX_BACKUP_BODY if self.route() == "/api/backup/restore" else MAX_BODY
-        if length <= 0 or length > body_limit: raise ValueError("حجم درخواست نامعتبر است.")
+        if length <= 0 or length > body_limit:
+            raise ValueError("حجم درخواست نامعتبر است.")
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("بدنه درخواست ناقص است.")
         try:
-            value = json.loads(self.rfile.read(length))
-        except (json.JSONDecodeError, UnicodeDecodeError): raise ValueError("JSON درخواست معتبر نیست.")
-        if not isinstance(value, dict): raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
+            value = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ValueError("JSON درخواست معتبر نیست.")
+        if not isinstance(value, dict):
+            raise ValueError("بدنه درخواست باید یک شیء JSON باشد.")
         return value
 
     def route(self):
@@ -980,9 +1728,16 @@ class Handler(SimpleHTTPRequestHandler):
             db.commit()
             return None
         refreshed_expiry = min(row["session_created_at"] + SESSION_SECONDS, now + 30 * 60)
-        if refreshed_expiry - row["expires_at"] >= 60:
-            db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (refreshed_expiry, token_hash))
-            db.commit()
+        # Revalidate and refresh in one write statement. A concurrent logout,
+        # password reset, role change, or account deactivation must win if it
+        # removed the session before this statement acquires the write lock.
+        refreshed = db.execute("""UPDATE sessions SET expires_at=?
+            WHERE token_hash=? AND expires_at>?
+              AND EXISTS (SELECT 1 FROM users WHERE users.id=sessions.user_id AND users.active=1)""",
+            (refreshed_expiry, token_hash, now))
+        db.commit()
+        if refreshed.rowcount != 1:
+            return None
         return row
 
     def do_GET(self):
@@ -996,7 +1751,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "service": "mg-business", "database": "sqlite"})
             if path == "/api/ready":
                 required_tables={"tenants","users","sessions","orders","order_items","products",
-                    "inventory_movements","accounts","journal_entries","journal_lines","accounting_periods","cash_register_shifts","schema_migrations"}
+                    "inventory_movements","accounts","journal_entries","journal_lines","journal_line_parties","accounting_periods","cash_register_shifts","schema_migrations"}
                 present={row["name"] for row in db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
                 missing=sorted(required_tables-present)
@@ -1072,6 +1827,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "accounts": "SELECT * FROM accounts WHERE tenant_id=?",
                     "journal_entries": "SELECT rowid AS __rowid,* FROM journal_entries WHERE tenant_id=? ORDER BY rowid",
                     "journal_lines": "SELECT * FROM journal_lines WHERE tenant_id=?",
+                    "journal_line_parties": "SELECT * FROM journal_line_parties WHERE tenant_id=?",
                     "products": "SELECT * FROM products WHERE tenant_id=?",
                     "product_addons": "SELECT * FROM product_addons WHERE tenant_id=?",
                     "customers": "SELECT * FROM customers WHERE tenant_id=?",
@@ -1101,7 +1857,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if total_rows > BACKUP_MAX_ROWS:
                     db.rollback()
                     return self.send_json(413, {"error":"حجم اطلاعات فضای کاری از سقف خروجی پشتیبان بیشتر است؛ از پشتیبان‌گیری محلی پایگاه داده استفاده کنید."})
-                snapshot = {"schema":"mg-business-server-backup","version":4,
+                snapshot = {"schema":"mg-business-server-backup","version":5,
                             "exportedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
                             "tenant":dict(db.execute("SELECT id,name,created_at FROM tenants WHERE id=?",(tenant_id,)).fetchone()),
                             "tables":{}}
@@ -1184,23 +1940,61 @@ class Handler(SimpleHTTPRequestHandler):
                                     (supplier_id,user["tenant_id"])).fetchone()
                 if not supplier:
                     return self.send_json(404,{"error":"تأمین‌کننده پیدا نشد."})
-                rows=db.execute("""SELECT 'invoice' AS sourceType,i.id AS sourceId,i.invoice_number AS reference,
-                    i.invoice_date AS entryDate,i.created_at AS createdAt,i.rowid AS sequence,i.total AS credit,0 AS debit
+                rows=db.execute("""WITH ledger AS (
+                    SELECT 'invoice' AS sourceType,i.id AS sourceId,i.invoice_number AS reference,
+                        i.invoice_date AS entryDate,i.created_at AS createdAt,i.rowid AS sequence,
+                        i.total AS credit,0 AS debit
                     FROM purchase_invoices i WHERE i.tenant_id=? AND i.supplier_id=?
                     UNION ALL
                     SELECT 'payment' AS sourceType,p.id AS sourceId,i.invoice_number AS reference,
-                    NULL AS entryDate,p.created_at AS createdAt,p.rowid AS sequence,0 AS credit,p.amount AS debit
-                    FROM supplier_payments p JOIN purchase_invoices i ON i.id=p.invoice_id AND i.tenant_id=p.tenant_id
+                        NULL AS entryDate,p.created_at AS createdAt,p.rowid AS sequence,
+                        0 AS credit,p.amount AS debit
+                    FROM supplier_payments p JOIN purchase_invoices i
+                      ON i.id=p.invoice_id AND i.tenant_id=p.tenant_id
                     WHERE p.tenant_id=? AND p.supplier_id=?
-                    ORDER BY createdAt,sequence,sourceType""",
+                ), annotated AS (
+                    SELECT *,SUM(credit-debit) OVER(
+                        ORDER BY createdAt,sequence,sourceType
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS balanceAfter,
+                        COUNT(*) OVER() AS totalCount,
+                        SUM(credit) OVER() AS totalPurchases,
+                        SUM(debit) OVER() AS totalPayments
+                    FROM ledger
+                )
+                SELECT * FROM annotated
+                ORDER BY createdAt DESC,sequence DESC,sourceType DESC LIMIT 1000""",
                     (user["tenant_id"],supplier_id,user["tenant_id"],supplier_id)).fetchall()
-                items=[]; balance=total_credit=total_debit=0
+                total_count=rows[0]["totalCount"] if rows else 0
+                total_credit=rows[0]["totalPurchases"] if rows else 0
+                total_debit=rows[0]["totalPayments"] if rows else 0
+                balance=total_credit-total_debit
+                items=[]
                 for row in rows:
-                    item=dict(row); total_credit+=item["credit"]; total_debit+=item["debit"]
-                    balance+=item["credit"]-item["debit"]; item["balanceAfter"]=balance
+                    item=dict(row)
+                    for key in ("totalCount","totalPurchases","totalPayments"):
+                        item.pop(key,None)
                     items.append(item)
-                return self.send_json(200,{"supplier":dict(supplier),"items":list(reversed(items)),
-                    "totalPurchases":total_credit,"totalPayments":total_debit,"balance":balance})
+                control=db.execute("""SELECT COALESCE(SUM(l.credit-l.debit),0) AS balance
+                    FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    WHERE p.tenant_id=? AND p.supplier_id=? AND a.code='2000'""",
+                    (user["tenant_id"],supplier_id)).fetchone()["balance"]
+                unassigned=db.execute("""SELECT COUNT(*) AS count,
+                    COALESCE(SUM(l.credit-l.debit),0) AS balance
+                    FROM journal_lines l
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    LEFT JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                    WHERE l.tenant_id=? AND a.code='2000' AND p.journal_line_id IS NULL""",
+                    (user["tenant_id"],)).fetchone()
+                return self.send_json(200,{"supplier":dict(supplier),"items":items,
+                    "totalCount":total_count,"hasMore":total_count>len(items),
+                    "totalPurchases":total_credit,"totalPayments":total_debit,"balance":balance,
+                    "reconciliation":{"controlAccountCode":"2000","controlAccountBalance":control,
+                        "unassignedControlLineCount":unassigned["count"],
+                        "unassignedControlBalance":unassigned["balance"],
+                        "reconciled":control==balance and unassigned["count"]==0}})
             if path == "/api/purchase-invoices":
                 if not module_enabled(db,user["tenant_id"],"inventory"):
                     return self.send_json(403,{"error":"ماژول انبار فعال نیست."})
@@ -1244,11 +2038,41 @@ class Handler(SimpleHTTPRequestHandler):
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
                 customer_id = path.split("/")[-2]
+                customer = db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",
+                    (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    return self.send_json(404, {"error":"مشتری پیدا نشد."})
+                totals = db.execute("""SELECT COUNT(*) AS totalCount,
+                    COALESCE(SUM(debit),0) AS totalDebit,COALESCE(SUM(credit),0) AS totalCredit
+                    FROM customer_ledger WHERE tenant_id=? AND customer_id=?""",
+                    (user["tenant_id"],customer_id)).fetchone()
                 rows = db.execute("""SELECT id,source_type AS sourceType,source_id AS sourceId,
                     debit,credit,note,created_at AS createdAt FROM customer_ledger
-                    WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 1000""",
+                    WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC,id DESC LIMIT 1000""",
                     (user["tenant_id"],customer_id)).fetchall()
-                return self.send_json(200, {"items":[dict(row) for row in rows]})
+                subledger_balance=totals["totalDebit"]-totals["totalCredit"]
+                control=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0) AS balance
+                    FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    WHERE p.tenant_id=? AND p.customer_id=? AND a.code='1100'""",
+                    (user["tenant_id"],customer_id)).fetchone()["balance"]
+                unassigned=db.execute("""SELECT COUNT(*) AS count,
+                    COALESCE(SUM(l.debit-l.credit),0) AS balance
+                    FROM journal_lines l
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    LEFT JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                    WHERE l.tenant_id=? AND a.code='1100' AND p.journal_line_id IS NULL""",
+                    (user["tenant_id"],)).fetchone()
+                return self.send_json(200, {"items":[dict(row) for row in rows],
+                    "totalCount":totals["totalCount"],"totalDebit":totals["totalDebit"],
+                    "totalCredit":totals["totalCredit"],"balance":subledger_balance,
+                    "hasMore":totals["totalCount"]>len(rows),
+                    "reconciliation":{"controlAccountCode":"1100","controlAccountBalance":control,
+                        "unassignedControlLineCount":unassigned["count"],
+                        "unassignedControlBalance":unassigned["balance"],
+                        "reconciled":control==subledger_balance and unassigned["count"]==0}})
             if path.startswith("/api/orders/"):
                 if not module_enabled(db,user["tenant_id"],"cafe"):
                     return self.send_json(403,{"error":"ماژول کافه در لایسنس فعال نیست."})
@@ -1870,6 +2694,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not 1 <= len(tenant_name) <= 120: return self.send_json(400, {"error": "نام کسب‌وکار معتبر نیست."})
                 if not 3 <= len(username) <= 64: return self.send_json(400, {"error": "نام کاربری باید ۳ تا ۶۴ نویسه باشد."})
                 if not isinstance(password, str) or not 12 <= len(password) <= 256: return self.send_json(400, {"error": "رمز عبور باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
+                initial_password_hash = password_hash(password)
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
                     db.rollback(); return self.send_json(409, {"error": "راه‌اندازی اولیه قبلاً انجام شده است."})
@@ -1877,7 +2702,7 @@ class Handler(SimpleHTTPRequestHandler):
                 now = int(time.time())
                 db.execute("INSERT INTO tenants(id,name,created_at) VALUES(?,?,?)", (tenant_id, tenant_name, now))
                 db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                           (user_id, tenant_id, username, password_hash(password), "owner", now))
+                           (user_id, tenant_id, username, initial_password_hash, "owner", now))
                 seed_accounts(db, tenant_id)
                 seed_trial_modules(db, tenant_id)
                 audit(db, tenant_id, user_id, "tenant.created", "tenant", tenant_id)
@@ -1893,23 +2718,20 @@ class Handler(SimpleHTTPRequestHandler):
                 ip = self.client_ip()
                 key = (ip, username.casefold())
                 now = time.time()
-                with LOGIN_LOCK:
-                    attempts = [stamp for stamp in LOGIN_FAILURES.get(key, []) if now - stamp < 900]
-                    ip_attempts = [stamp for stamp in LOGIN_IP_FAILURES.get(ip, []) if now - stamp < 900]
-                    LOGIN_FAILURES[key] = attempts
-                    LOGIN_IP_FAILURES[ip] = ip_attempts
-                    if len(attempts) >= 8 or len(ip_attempts) >= 30:
-                        return self.send_json(429, {"error": "تلاش‌های ورود بیش از حد است؛ ۱۵ دقیقه بعد دوباره امتحان کنید."})
-                user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
-                if not user or not isinstance(password, str) or not verify_password(password, user["password_hash"]):
-                    with LOGIN_LOCK:
-                        remember_login_failure(key, ip, now)
-                    return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
-                with LOGIN_LOCK:
-                    # A successful login for one account must not erase failures
-                    # accumulated against other accounts from the same source IP.
-                    LOGIN_FAILURES.pop(key, None)
-                return self.create_session(db, user["id"])
+                if not reserve_login_attempt(key, ip, now):
+                    return self.send_json(429, {"error": "تلاش‌های ورود بیش از حد است؛ ۱۵ دقیقه بعد دوباره امتحان کنید."})
+                try:
+                    user = db.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1", (username,)).fetchone()
+                    if not user or not verify_password(password, user["password_hash"]):
+                        finish_login_attempt(key, ip, now, failed=True)
+                        return self.send_json(401, {"error": "نام کاربری یا رمز عبور اشتباه است."})
+                    # Clear failures for this account only; IP-wide failures remain.
+                    finish_login_attempt(key, ip, now, clear_key=True)
+                except Exception:
+                    # Unexpected verification/database errors must not leak a reservation.
+                    finish_login_attempt(key, ip, now)
+                    raise
+                return self.create_session(db, user["id"], user["password_hash"])
             if path == "/api/public/orders":
                 ip = self.client_ip()
                 now = time.time()
@@ -2034,7 +2856,7 @@ class Handler(SimpleHTTPRequestHandler):
                 occurred_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(created))
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,'income','سفارش آنلاین',?,?)""", (tx_id,tenant_id,actor["id"],title,subtotal,occurred_at,created))
-                post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100")
+                post_transaction_journal(db,tenant_id,actor["id"],tx_id,title,subtotal,"income",occurred_at,"1100",customer_id=customer_id)
                 audit(db,tenant_id,actor["id"],"online_order.created","order",order_id,{"total":subtotal,"items":len(order_lines)})
                 db.commit()
                 return self.send_json(201, {"ok":True,"orderNumber":order_number,"total":subtotal})
@@ -2167,7 +2989,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if user["role"] != "owner":
                     return self.send_json(403, {"error": "فقط مالک می‌تواند نسخه پشتیبان را بازیابی کند."})
                 backup_version=data.get("version")
-                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3,4):
+                if data.get("schema") != "mg-business-server-backup" or type(backup_version) is not int or backup_version not in (1,2,3,4,5):
                     return self.send_json(400, {"error": "نسخه یا ساختار فایل پشتیبان معتبر نیست."})
                 tenant = data.get("tenant"); tables = data.get("tables")
                 if not isinstance(tenant,dict) or tenant.get("id") != user["tenant_id"] or not isinstance(tables,dict):
@@ -2179,6 +3001,8 @@ class Handler(SimpleHTTPRequestHandler):
                     allowed=allowed[:-1]+("accounting_periods","audit_log")
                 if backup_version >= 3:
                     allowed=allowed[:-1]+("cash_register_shifts","audit_log")
+                if backup_version >= 5:
+                    allowed=allowed+("journal_line_parties",)
                 # A restore replaces the complete workspace dataset. Missing tables
                 # must never be interpreted as empty lists, or a partial/corrupt
                 # snapshot could silently erase otherwise valid business data.
@@ -2251,6 +3075,7 @@ class Handler(SimpleHTTPRequestHandler):
                         return self.send_json(409,{"error":"برای بازیابی پشتیبان قدیمی، ابتدا شیفت فعال صندوق را ببندید؛ این نسخه شناسه دقیق گردش‌های شیفت را نگهداری نمی‌کند."})
                     db.execute("DROP TRIGGER IF EXISTS journal_entries_no_delete")
                     db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                    db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
                     column_map = {}
                     for name in allowed:
                         column_map[name] = {row["name"] for row in db.execute("PRAGMA table_info("+name+")").fetchall()}
@@ -2269,7 +3094,7 @@ class Handler(SimpleHTTPRequestHandler):
                                 db.rollback()
                                 return self.send_json(400, {"error": "ساختار یکی از رکوردهای پشتیبان با نسخه فعلی سازگار نیست."})
                     delete_order = ("tenant_modules","licenses","gamenet_reservations","game_session_segments","game_sessions","order_items","orders","supplier_payments","purchase_invoice_items","purchase_invoices",
-                                    "inventory_movements","journal_lines","journal_entries","transactions","customer_loyalty_ledger","loyalty_programs","customer_ledger",
+                                    "inventory_movements","journal_line_parties","journal_lines","journal_entries","transactions","customer_loyalty_ledger","loyalty_programs","customer_ledger",
                                     "product_addons","products","customers","suppliers","game_devices","accounts","audit_log")
                     if backup_version >= 2:
                         delete_order=delete_order[:-2]+("accounting_periods","accounts","audit_log")
@@ -2278,7 +3103,7 @@ class Handler(SimpleHTTPRequestHandler):
                     for name in delete_order:
                         db.execute("DELETE FROM "+name+" WHERE tenant_id=?", (tenant_id,))
                     insert_order = ("accounts","products","product_addons","customers","loyalty_programs","customer_loyalty_ledger","customer_ledger","suppliers","game_devices","transactions",
-                                    "journal_entries","journal_lines","inventory_movements","purchase_invoices","purchase_invoice_items",
+                                    "journal_entries","journal_lines","journal_line_parties","inventory_movements","purchase_invoices","purchase_invoice_items",
                                     "supplier_payments","orders","order_items","game_sessions","game_session_segments","gamenet_reservations","licenses","tenant_modules","audit_log")
                     if backup_version >= 2:
                         insert_order=insert_order[:-1]+("accounting_periods","audit_log")
@@ -2320,10 +3145,14 @@ class Handler(SimpleHTTPRequestHandler):
                         WHERE s.tenant_id=? AND NOT EXISTS(
                             SELECT 1 FROM game_session_segments g WHERE g.session_id=s.id
                         )""",(tenant_id,))
+                    if backup_version < 5:
+                        backfill_journal_line_parties(db)
                     db.execute("""CREATE TRIGGER journal_entries_no_delete BEFORE DELETE ON journal_entries
                         BEGIN SELECT RAISE(ABORT,'journal entries are immutable'); END""")
                     db.execute("""CREATE TRIGGER journal_lines_no_delete BEFORE DELETE ON journal_lines
                         BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+                    db.execute("""CREATE TRIGGER journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                        BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
                     audit(db,tenant_id,user["id"],"backup.restored","tenant",tenant_id,{"rows":total_rows})
                     db.commit()
                     return self.send_json(200, {"ok":True,"restoredRows":total_rows})
@@ -2644,9 +3473,16 @@ class Handler(SimpleHTTPRequestHandler):
                         account={"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment_method]
                         expected=sorted([(account,amount,0),("4000",0,amount)])
                         actual=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                        party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+                            JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                            WHERE e.tenant_id=? AND e.source_type='transaction' AND e.source_id=?
+                              AND a.code='1100'""",(user["tenant_id"],tx_id)).fetchall()
                         ledger_valid=((payment_method=="credit" and len(ledger_rows)==1 and
-                                       ledger_rows[0]["debit"]==amount and ledger_rows[0]["credit"]==0) or
-                                      (payment_method!="credit" and not ledger_rows))
+                                       ledger_rows[0]["debit"]==amount and ledger_rows[0]["credit"]==0 and
+                                       len(party_rows)==1 and party_rows[0]["customer_id"]==session["customer_id"]) or
+                                      (payment_method!="credit" and not ledger_rows and not party_rows))
                         journal_valid=(tx is not None and tx["amount"]==amount and tx["kind"]=="income" and tx["status"]=="posted" and
                             len(journal_entries)==1 and len(journal_rows)==2 and actual==expected and ledger_valid)
                     if not journal_valid:
@@ -2698,7 +3534,7 @@ class Handler(SimpleHTTPRequestHandler):
                         db.execute("""INSERT INTO customer_ledger(id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
                             VALUES(?,?,?,?,?,?,?,0,?,?)""", (secrets.token_urlsafe(16),user["tenant_id"],session["customer_id"],user["id"],
                             "game_session",session_id,amount,"هزینه بازی "+session_id,now))
-                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,"1100")
+                        post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,"1100",customer_id=session["customer_id"])
                     else:
                         payment_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
                         post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,amount,"income",occurred_at,payment_account)
@@ -2940,7 +3776,7 @@ class Handler(SimpleHTTPRequestHandler):
                 db.execute("""INSERT INTO transactions(id,tenant_id,created_by,title,amount,kind,category,occurred_at,created_at)
                     VALUES(?,?,?,?,?,'income','فروش کافه',?,?)""", (tx_id,user["tenant_id"],user["id"],title,total,occurred_at,now))
                 payment_account = {"cash":"1000","card":"1010","online":"1020","credit":"1100"}[payment]
-                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at,payment_account)
+                post_transaction_journal(db,user["tenant_id"],user["id"],tx_id,title,total,"income",occurred_at,payment_account,customer_id=customer_id if payment=="credit" else None)
                 audit(db,user["tenant_id"],user["id"],"order.created","order",order_id,{"total":total,"items":len(order_lines)})
                 db.commit()
                 return self.send_json(201, {"id":order_id,"orderNumber":order_number,"subtotal":subtotal,"discount":discount,"total":total})
@@ -2951,13 +3787,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400,{"error":"رمز فعلی و رمز جدید معتبر الزامی است؛ رمز جدید باید ۱۲ تا ۲۵۶ نویسه باشد."})
                 if not verify_password(current_password,user["password_hash"]):
                     return self.send_json(403,{"error":"رمز عبور فعلی صحیح نیست."})
+                new_password_hash = password_hash(new_password)
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
-                           (password_hash(new_password),user["id"],user["tenant_id"]))
+                changed = db.execute("""UPDATE users SET password_hash=?
+                    WHERE id=? AND tenant_id=? AND active=1 AND password_hash=?""",
+                    (new_password_hash,user["id"],user["tenant_id"],user["password_hash"]))
+                if changed.rowcount != 1:
+                    db.rollback()
+                    return self.send_json(409,{"error":"رمز عبور هم‌زمان تغییر کرده است؛ دوباره وارد شوید."})
                 db.execute("DELETE FROM sessions WHERE user_id=?",(user["id"],))
                 audit(db,user["tenant_id"],user["id"],"user.password.changed","user",user["id"])
                 db.commit()
-                return self.create_session(db,user["id"])
+                return self.create_session(db,user["id"],new_password_hash)
             if path.startswith("/api/users/") and path.endswith("/role"):
                 if user["role"] != "owner":
                     return self.send_json(403,{"error":"فقط مالک می‌تواند نقش کاربران را تغییر دهد."})
@@ -2990,6 +3831,7 @@ class Handler(SimpleHTTPRequestHandler):
                 new_password=data.get("password")
                 if not isinstance(new_password,str) or len(new_password)<12 or len(new_password)>256:
                     return self.send_json(400,{"error":"رمز جدید باید بین ۱۲ تا ۲۵۶ نویسه باشد."})
+                new_password_hash = password_hash(new_password)
                 db.execute("BEGIN IMMEDIATE")
                 target=db.execute("SELECT id,active,role FROM users WHERE id=? AND tenant_id=?",
                                   (target_id,user["tenant_id"])).fetchone()
@@ -3000,7 +3842,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if target["role"] == "owner":
                     db.rollback(); return self.send_json(403,{"error":"بازنشانی رمز حساب مالک از این مسیر مجاز نیست."})
                 db.execute("UPDATE users SET password_hash=? WHERE id=? AND tenant_id=?",
-                           (password_hash(new_password),target_id,user["tenant_id"]))
+                           (new_password_hash,target_id,user["tenant_id"]))
                 db.execute("DELETE FROM sessions WHERE user_id=?",(target_id,))
                 audit(db,user["tenant_id"],user["id"],"user.password.reset","user",target_id)
                 db.commit()
@@ -3017,10 +3859,11 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(400, {"error": "نقش کاربر معتبر نیست."})
                 normalized_username=username.strip()
                 target_id, now = secrets.token_urlsafe(18), int(time.time())
+                new_user_password_hash = password_hash(password)
                 db.execute("BEGIN IMMEDIATE")
                 try:
                     db.execute("INSERT INTO users(id,tenant_id,username,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                               (target_id,user["tenant_id"],normalized_username,password_hash(password),role,now))
+                               (target_id,user["tenant_id"],normalized_username,new_user_password_hash,role,now))
                 except sqlite3.IntegrityError:
                     db.rollback()
                     return self.send_json(409, {"error":"این نام کاربری قبلاً در سامانه ثبت شده است."})
@@ -3192,9 +4035,15 @@ class Handler(SimpleHTTPRequestHandler):
                             JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                             WHERE l.tenant_id=? AND l.entry_id=?""",
                             (user["tenant_id"],entries[0]["id"])).fetchall()
+                        party_rows=db.execute("""SELECT p.supplier_id FROM journal_lines l
+                            JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                            JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                            WHERE l.tenant_id=? AND l.entry_id=? AND a.code='2000'
+                              AND l.credit=?""",(user["tenant_id"],entries[0]["id"],amount)).fetchall()
                         if not (len(lines)==2 and
                             any(row["code"]=="1200" and row["debit"]==amount and row["credit"]==0 for row in lines) and
-                            any(row["code"]=="2000" and row["debit"]==0 and row["credit"]==amount for row in lines)):
+                            any(row["code"]=="2000" and row["debit"]==0 and row["credit"]==amount for row in lines) and
+                            len(party_rows)==1 and party_rows[0]["supplier_id"]==existing["supplier_id"]):
                             movement_journals_valid=False
                     if (existing["id"]==invoice_id and existing["supplier_id"]==sid and
                         existing["invoice_number"]==number.strip() and existing["invoice_date"]==inv_date and
@@ -3214,7 +4063,7 @@ class Handler(SimpleHTTPRequestHandler):
                     mid=secrets.token_urlsafe(16); note="فاکتور خرید "+number.strip()
                     db.execute("INSERT INTO inventory_movements(id,tenant_id,product_id,created_by,movement_type,quantity_delta,unit_cost,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                         (mid,user["tenant_id"],product["id"],user["id"],"purchase",qty,cost,note,now))
-                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note)
+                    post_inventory_movement_journal(db,user["tenant_id"],user["id"],mid,"purchase",qty,cost,note,supplier_id=sid)
                 audit(db,user["tenant_id"],user["id"],"purchase_invoice.created","purchase_invoice",invoice_id,{"total":total,"items":len(prepared)})
                 db.commit(); return self.send_json(201,{"id":invoice_id,"subtotal":subtotal,"discount":discount,"total":total,"paidAmount":0,"status":"unpaid"})
             if path.startswith("/api/purchase-invoices/") and path.endswith("/payments"):
@@ -3247,9 +4096,16 @@ class Handler(SimpleHTTPRequestHandler):
                         WHERE tenant_id=? AND source_type='supplier_payment' AND source_id=?""",
                         (user["tenant_id"],payid)).fetchone()["count"]
                     expected_account={"cash":"1000","card":"1010","online":"1020"}[method]
+                    party_rows=db.execute("""SELECT p.supplier_id FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='supplier_payment' AND e.source_id=?
+                          AND a.code='2000'""",(user["tenant_id"],payid)).fetchall()
                     journal_matches=(journal_entries==1 and len(journal_rows)==2 and
                         any(row["code"]==expected_account and row["debit"]==0 and row["credit"]==amount for row in journal_rows) and
-                        any(row["code"]=="2000" and row["debit"]==amount and row["credit"]==0 for row in journal_rows))
+                        any(row["code"]=="2000" and row["debit"]==amount and row["credit"]==0 for row in journal_rows) and
+                        len(party_rows)==1 and party_rows[0]["supplier_id"]==existing["supplier_id"])
                     if (existing["invoice_id"]==iid and existing["supplier_id"]==inv["supplier_id"] and
                         existing["amount"]==amount and existing["payment_method"]==method and journal_matches):
                         db.commit()
@@ -3267,7 +4123,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if updated.rowcount != 1:
                     db.rollback()
                     return self.send_json(409,{"error":"وضعیت فاکتور برای ثبت پرداخت تغییر کرده است؛ دوباره تلاش کنید."})
-                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,amount,method)
+                post_supplier_payment_journal(db,user["tenant_id"],user["id"],payid,inv["supplier_id"],amount,method)
                 audit(db,user["tenant_id"],user["id"],"supplier.payment.created","purchase_invoice",iid,{"amount":amount})
                 db.commit(); return self.send_json(201,{"paymentId":payid,"paidAmount":paid,"remainingBalance":inv["total"]-paid,"status":status})
             if path == "/api/inventory/movements":
@@ -3376,7 +4232,14 @@ class Handler(SimpleHTTPRequestHandler):
                     expected_account={"cash":"1000","card":"1010","online":"1020"}[payment_method]
                     expected_rows=sorted([(expected_account,amount,0),("1100",0,amount)])
                     actual_rows=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
-                    payment_matches=(journal_entries==1 and len(journal_rows)==2 and actual_rows==expected_rows)
+                    party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_payment' AND e.source_id=?
+                          AND a.code='1100'""",(user["tenant_id"],payment_id)).fetchall()
+                    payment_matches=(journal_entries==1 and len(journal_rows)==2 and actual_rows==expected_rows
+                        and len(party_rows)==1 and party_rows[0]["customer_id"]==customer_id)
                     if (ledger_count==1 and existing["customer_id"]==customer_id and existing["debit"]==0 and
                         existing["credit"]==amount and payment_matches):
                         balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
@@ -3398,6 +4261,79 @@ class Handler(SimpleHTTPRequestHandler):
                 audit(db,user["tenant_id"],user["id"],"customer.payment.received","customer",customer_id,{"amount":amount})
                 db.commit()
                 return self.send_json(201, {"ok":True,"paymentId":payment_id,"remainingBalance":balance-amount})
+            if path.startswith("/api/customers/") and path.endswith("/refunds"):
+                if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
+                    return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
+                if user["role"] not in ("owner","manager","cashier"):
+                    return self.send_json(403, {"error": "دسترسی بازپرداخت به مشتری ندارید."})
+                customer_id=path.split("/")[-2]
+                amount,payment_method=data.get("amount"),data.get("paymentMethod","cash")
+                refund_id=str(data.get("id") or secrets.token_urlsafe(18))
+                if type(amount) is not int or amount<=0 or amount>9007199254740991 or payment_method not in ("cash","card","online"):
+                    return self.send_json(400,{"error":"مبلغ یا روش بازپرداخت معتبر نیست."})
+                if not 1<=len(refund_id)<=100:
+                    return self.send_json(400,{"error":"شناسه بازپرداخت معتبر نیست."})
+                db.execute("BEGIN IMMEDIATE")
+                customer=db.execute("SELECT id FROM customers WHERE id=? AND tenant_id=?",
+                    (customer_id,user["tenant_id"])).fetchone()
+                if not customer:
+                    db.rollback()
+                    return self.send_json(404,{"error":"مشتری پیدا نشد."})
+                existing=db.execute("""SELECT customer_id,debit,credit FROM customer_ledger
+                    WHERE tenant_id=? AND source_type='refund' AND source_id=?""",
+                    (user["tenant_id"],refund_id)).fetchone()
+                if existing:
+                    ledger_count=db.execute("""SELECT COUNT(*) FROM customer_ledger
+                        WHERE tenant_id=? AND source_type='refund' AND source_id=?""",
+                        (user["tenant_id"],refund_id)).fetchone()[0]
+                    journal_rows=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_refund' AND e.source_id=?""",
+                        (user["tenant_id"],refund_id)).fetchall()
+                    journal_count=db.execute("""SELECT COUNT(*) FROM journal_entries
+                        WHERE tenant_id=? AND source_type='customer_refund' AND source_id=?""",
+                        (user["tenant_id"],refund_id)).fetchone()[0]
+                    party_rows=db.execute("""SELECT p.customer_id FROM journal_entries e
+                        JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                        JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                        JOIN journal_line_parties p ON p.journal_line_id=l.id AND p.tenant_id=l.tenant_id
+                        WHERE e.tenant_id=? AND e.source_type='customer_refund' AND e.source_id=?
+                          AND a.code='1100'""",(user["tenant_id"],refund_id)).fetchall()
+                    cash_code={"cash":"1000","card":"1010","online":"1020"}[payment_method]
+                    expected=sorted([("1100",amount,0),(cash_code,0,amount)])
+                    actual=sorted((row["code"],row["debit"],row["credit"]) for row in journal_rows)
+                    valid=(ledger_count==1 and journal_count==1 and existing["customer_id"]==customer_id
+                        and existing["debit"]==amount and existing["credit"]==0 and actual==expected
+                        and len(journal_rows)==2 and len(party_rows)==1
+                        and party_rows[0]["customer_id"]==customer_id)
+                    if valid:
+                        balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                            (user["tenant_id"],customer_id)).fetchone()[0]
+                        db.commit()
+                        return self.send_json(200,{"ok":True,"refundId":refund_id,"balance":balance,
+                            "remainingCredit":max(0,-balance),"duplicate":True})
+                    db.rollback()
+                    return self.send_json(409,{"error":"شناسه بازپرداخت قبلاً با اطلاعات متفاوت یا سوابق مالی ناقص استفاده شده است."})
+                balance=db.execute("SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=? AND customer_id=?",
+                    (user["tenant_id"],customer_id)).fetchone()[0]
+                available_credit=max(0,-balance)
+                if amount>available_credit:
+                    db.rollback()
+                    return self.send_json(409,{"error":"مبلغ بازپرداخت از اعتبار بستانکاری مشتری بیشتر است."})
+                now=int(time.time())
+                db.execute("""INSERT INTO customer_ledger
+                    (id,tenant_id,customer_id,created_by,source_type,source_id,debit,credit,note,created_at)
+                    VALUES(?,?,?,?, 'refund',?,?,0,?,?)""",
+                    (secrets.token_urlsafe(16),user["tenant_id"],customer_id,user["id"],refund_id,amount,
+                     "بازپرداخت اعتبار مشتری",now))
+                post_customer_refund_journal(db,user["tenant_id"],user["id"],refund_id,customer_id,amount,payment_method)
+                audit(db,user["tenant_id"],user["id"],"customer.credit.refunded","customer",customer_id,
+                    {"amount":amount,"paymentMethod":payment_method,"refundId":refund_id})
+                db.commit()
+                remaining_balance=balance+amount
+                return self.send_json(201,{"ok":True,"refundId":refund_id,"balance":remaining_balance,
+                    "remainingCredit":max(0,-remaining_balance),"duplicate":False})
             if path == "/api/customers":
                 if not require_any_module(db,user["tenant_id"],"customers","cafe","gamenet"):
                     return self.send_json(403, {"error": "ماژول مشتریان در لایسنس فعال نیست."})
@@ -3515,17 +4451,25 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(500, {"error": "خطای داخلی سرور رخ داد."})
         finally: db.close()
 
-    def create_session(self, db, user_id):
+    def create_session(self, db, user_id, expected_password_hash=None):
         token = secrets.token_urlsafe(40)
         now = int(time.time())
+        # Serialize pruning and insertion so simultaneous logins cannot exceed
+        # the per-user session cap or create a session after a password reset.
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM users WHERE id=? AND active=1", (user_id,)).fetchone()
+        if not row or (expected_password_hash is not None and
+                       row["password_hash"] != expected_password_hash):
+            db.rollback()
+            return self.send_json(401, {"error": "نشست ورود معتبر نیست؛ دوباره وارد شوید."})
         db.execute("DELETE FROM sessions WHERE expires_at<=?",(now,))
         db.execute("""DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN
-            (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 9)""",
+            (SELECT token_hash FROM sessions WHERE user_id=?
+             ORDER BY created_at DESC, rowid DESC LIMIT 9)""",
             (user_id,user_id))
         db.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
                    (hashlib.sha256(token.encode()).hexdigest(), user_id, now + 30 * 60, now))
         db.commit()
-        row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         return self.send_json(200, {"token": token, "expiresAt": now + 30 * 60, "user": public_user(row)})
 
     def log_error(self, message, *args):
@@ -3554,7 +4498,7 @@ def main():
     connect().close()
     threading.Thread(target=backup_scheduler, name="mg-backup-scheduler", daemon=True).start()
     print("MG Business listening on http://%s:%s (database: %s)" % (HOST, PORT, DB_PATH), flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    BoundedThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 
 if __name__ == "__main__":
     main()

@@ -200,7 +200,7 @@ if "تاریخ شروع نمی‌تواند بعد از تاریخ پایان ب
     raise SystemExit("Report date filters must reject reversed date ranges before requesting data")
 if "def make_license" not in (root / "tests/test_server.py").read_text(encoding="utf-8"):
     raise SystemExit("signed license integration tests are missing")
-if 'CREATE TABLE IF NOT EXISTS accounting_periods' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'CREATE TABLE IF NOT EXISTS accounting_periods' not in server or 'SCHEMA_VERSION = 18' not in server:
     raise SystemExit("Accounting period lock schema migration is missing")
 if 'assert_accounting_period_open' not in server or 'Accounting period is closed' not in server:
     raise SystemExit("Journal posting and reversal must reject dates inside closed accounting periods")
@@ -208,13 +208,13 @@ if 'if path == "/api/accounting/periods/close":' not in server or 'accounting.pe
     raise SystemExit("Owner-only audited accounting period close API is missing")
 if 'if path == "/api/accounting/periods":' not in server or 'accounting_periods' not in server[server.find('if path == "/api/backup":'):]:
     raise SystemExit("Accounting period listing and backup integration are missing")
-if '"version":4' not in server or 'backup_version not in (1,2,3,4)' not in server:
+if '"version":5' not in server or 'backup_version not in (1,2,3,4,5)' not in server:
     raise SystemExit("Workspace backup v2 export and backward-compatible v1 restore are missing")
 if 'if backup_version >= 2:' not in server or 'accounting_periods' not in server:
     raise SystemExit("Legacy backup restore must preserve accounting period locks")
 if "accountingPeriodCloseForm" not in app or "data-accounting-period-close" in app:
     raise SystemExit("Accounting period close form is missing")
-if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'CREATE TABLE IF NOT EXISTS cash_register_shifts' not in server or 'SCHEMA_VERSION = 18' not in server:
     raise SystemExit("Cash register shift schema migration is missing")
 if 'cash_register_expected_cash' not in server or 'a.code=\'1000\'' not in server:
     raise SystemExit("Cash register reconciliation must use posted cash-account journal movements")
@@ -234,7 +234,7 @@ if "renderKitchenQueue" not in app or "data-order-fulfillment" not in app:
     raise SystemExit("Cafe kitchen queue UI and staged order actions are missing")
 if "cashShiftOpenForm" not in app or "cashShiftCloseForm" not in app or "renderCashRegisterPanel" not in app:
     raise SystemExit("Cash register opening and reconciliation UI is missing")
-if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'SCHEMA_VERSION = 17' not in server:
+if 'fulfillment_status TEXT NOT NULL DEFAULT \'served\'' not in server or 'SCHEMA_VERSION = 18' not in server:
     raise SystemExit("Cafe kitchen fulfillment migration is missing")
 if 'if path.startswith("/api/orders/") and path.endswith("/fulfillment"):' not in server or 'cafe.order.fulfillment.updated' not in server:
     raise SystemExit("Audited kitchen order fulfillment API is missing")

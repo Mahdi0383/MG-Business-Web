@@ -17,6 +17,24 @@ TAG_BYTES = 16
 CHUNK_BYTES = 1024 * 1024
 
 
+def _unlink_quietly(path: Path) -> None:
+    """Best-effort cleanup that never hides the operation's original result."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _close_quietly(connection: sqlite3.Connection | None) -> None:
+    """Close a best-effort cleanup connection without masking the primary result."""
+    if connection is None:
+        return
+    try:
+        connection.close()
+    except sqlite3.Error:
+        pass
+
+
 def decode_encryption_key(value: str | bytes | None) -> bytes | None:
     if value is None or value == "":
         return None
@@ -133,7 +151,7 @@ def create_snapshot(
         result = destination.execute("PRAGMA integrity_check").fetchone()
         if not result or result[0] != "ok":
             raise sqlite3.DatabaseError("SQLite backup integrity check failed.")
-        destination.close()
+        _close_quietly(destination)
         destination = None
         try:
             os.chmod(temp_db, 0o600)
@@ -154,17 +172,14 @@ def create_snapshot(
         except OSError:
             pass
     except Exception:
-        if destination is not None:
-            destination.close()
+        _close_quietly(destination)
         for temporary in (temp_db, temp_output):
-            if temporary.exists():
-                temporary.unlink()
-        if key and final_path.exists():
-            final_path.unlink()
+            _unlink_quietly(temporary)
+        if key:
+            _unlink_quietly(final_path)
         raise
     finally:
-        if source is not None:
-            source.close()
+        _close_quietly(source)
 
     snapshots = sorted(
         (p for p in target_dir.glob("mg-business-*") if p.is_file()
@@ -220,16 +235,15 @@ def verify_snapshot(snapshot_path: str | Path, encryption_key: str | bytes | Non
             try:
                 _validate_mg_database(check)
             finally:
-                check.close()
+                _close_quietly(check)
         finally:
-            if temporary.exists():
-                temporary.unlink()
+            _unlink_quietly(temporary)
     else:
         check = sqlite3.connect(str(snapshot), timeout=30)
         try:
             _validate_mg_database(check)
         finally:
-            check.close()
+            _close_quietly(check)
     return True
 
 
@@ -261,27 +275,24 @@ def restore_snapshot(
                 pass
             restore_source = decrypted_path
         except Exception:
-            if decrypted_path.exists():
-                decrypted_path.unlink()
+            _unlink_quietly(decrypted_path)
             raise
 
     check = sqlite3.connect(str(restore_source), timeout=30)
     try:
         _validate_mg_database(check)
     except Exception:
-        if decrypted_path.exists():
-            decrypted_path.unlink()
+        _unlink_quietly(decrypted_path)
         raise
     finally:
-        check.close()
+        _close_quietly(check)
 
     if target.exists():
         backup_dir = Path(safety_backup_dir).expanduser().resolve() if safety_backup_dir else target.parent / "backups"
         try:
             create_snapshot(target, backup_dir, retention=365, encryption_key=key)
         except Exception:
-            if decrypted_path.exists():
-                decrypted_path.unlink()
+            _unlink_quietly(decrypted_path)
             raise
 
     temp_path = target.parent / (target.name + ".restore-" + secrets.token_hex(6) + ".tmp")
@@ -301,26 +312,52 @@ def restore_snapshot(
             os.chmod(temp_path, 0o600)
         except OSError:
             pass
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(str(target) + suffix)
-            if sidecar.exists():
-                sidecar.unlink()
-        os.replace(temp_path, target)
+        # Preserve SQLite sidecars until the replacement is committed. If the
+        # final atomic rename fails, restore the original sidecars so the live
+        # database remains recoverable. The service must be stopped by caller.
+        quarantined_sidecars: list[tuple[Path, Path]] = []
+        try:
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(target) + suffix)
+                if os.path.lexists(sidecar):
+                    quarantine = target.parent / (
+                        target.name + suffix + ".restore-" + secrets.token_hex(6) + ".tmp"
+                    )
+                    os.replace(sidecar, quarantine)
+                    quarantined_sidecars.append((sidecar, quarantine))
+            os.replace(temp_path, target)
+        except Exception:
+            rollback_errors = []
+            for original, quarantine in reversed(quarantined_sidecars):
+                if os.path.lexists(quarantine):
+                    try:
+                        os.replace(quarantine, original)
+                    except OSError as rollback_error:
+                        rollback_errors.append((str(quarantine), str(rollback_error)))
+            if rollback_errors:
+                details = "; ".join(f"{path}: {error}" for path, error in rollback_errors)
+                raise RuntimeError(
+                    "Database replacement failed and one or more SQLite sidecars "
+                    f"could not be restored; recovery files remain in place: {details}"
+                ) from None
+            raise
+        else:
+            # The database replacement is already committed. A sidecar cleanup
+            # failure must not report restore failure after the live DB changed;
+            # leave the uniquely named quarantine file for operator cleanup.
+            for _, quarantine in quarantined_sidecars:
+                _unlink_quietly(quarantine)
         try:
             os.chmod(target, 0o600)
         except OSError:
             pass
     except Exception:
-        if destination is not None:
-            destination.close()
-        if temp_path.exists():
-            temp_path.unlink()
+        _close_quietly(destination)
+        _unlink_quietly(temp_path)
         raise
     finally:
-        if source is not None:
-            source.close()
-        if decrypted_path.exists():
-            decrypted_path.unlink()
+        _close_quietly(source)
+        _unlink_quietly(decrypted_path)
     return target
 
 

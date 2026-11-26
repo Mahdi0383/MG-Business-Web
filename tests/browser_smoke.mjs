@@ -6,19 +6,23 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
   const accountingNetwork = [];
+  const apiNetwork = [];
   const consoleErrors = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("request", request => {
     const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/")) apiNetwork.push({ event: "request", method: request.method(), url: url.pathname });
     if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "request", method: request.method(), url: url.pathname + url.search });
   });
   page.on("response", response => {
     const url = new URL(response.url());
+    if (url.pathname.startsWith("/api/")) apiNetwork.push({ event: "response", status: response.status(), method: response.request().method(), url: url.pathname });
     if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "response", status: response.status(), url: url.pathname + url.search });
   });
   page.on("requestfailed", request => {
     const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/")) apiNetwork.push({ event: "requestfailed", method: request.method(), error: request.failure()?.errorText, url: url.pathname });
     if (url.pathname.startsWith("/api/accounting/")) accountingNetwork.push({ event: "requestfailed", error: request.failure()?.errorText, url: url.pathname + url.search });
   });
   await page.goto("http://127.0.0.1:8080", { waitUntil: "networkidle" });
@@ -102,7 +106,28 @@ try {
     response.url().endsWith("/api/products") && response.request().method() === "POST"
   );
   await page.locator("#productForm button.primary").click();
-  const productResponse = await productResponsePromise;
+  let productResponse;
+  try {
+    productResponse = await productResponsePromise;
+  } catch (error) {
+    console.error("Product creation browser diagnostic:", JSON.stringify({
+      error: error.message,
+      formVisible: await page.locator("#productForm").isVisible(),
+      formValidity: await page.locator("#productForm").evaluate(form => ({
+        valid: form.checkValidity(),
+        fields: [...form.elements].filter(element => element.name).map(element => ({
+          name: element.name, value: element.value, valid: element.checkValidity(),
+          validationMessage: element.validationMessage
+        }))
+      })),
+      submitDisabled: await page.locator("#productForm button.primary").isDisabled(),
+      toast: await page.locator("#toastRegion").innerText(),
+      apiNetwork,
+      pageErrors: errors,
+      consoleErrors
+    }, null, 2));
+    throw error;
+  }
   const productBody = await productResponse.json();
   assert.equal(productResponse.status(), 201, "product API response: " + JSON.stringify(productBody));
   const stockResult = await page.evaluate(async productId => {
@@ -241,8 +266,12 @@ try {
     const now = new Date();
     return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
   });
-  await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
-  await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
+  const accountingFromInput = page.locator('#accountingDateFilter input[name="fromDate"]');
+  const accountingToInput = page.locator('#accountingDateFilter input[name="toDate"]');
+  await accountingFromInput.fill(accountingToday);
+  await accountingToInput.fill(accountingToday);
+  assert.equal(await accountingFromInput.inputValue(), accountingToday, "accounting start-date control must retain the selected date");
+  assert.equal(await accountingToInput.inputValue(), accountingToday, "accounting end-date control must retain the selected date");
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
   const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
     const url = new URL(response.url());

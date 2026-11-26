@@ -16,6 +16,13 @@ It is not a collection of unrelated mini-apps. It consists of a mandatory accoun
 
 The accounting core is the financial system of record. Industry modules must never maintain a parallel authoritative ledger.
 
+
+### Subledger-to-control-account identity (release blocker)
+
+A tenant-wide balance check is necessary but insufficient for customer/vendor subledger integrity. Schema migration 18 introduces the immutable `journal_line_parties` dimension, with composite tenant-scoped foreign keys to journal lines, customers and suppliers, plus account-code guards (customer → 1100, supplier → 2000). Credit cafe/QR orders, GameNet credit sessions, customer receipts and customer-credit refunds, supplier purchase movements and supplier payments now attach explicit party identity; reversal entries inherit the original line's party. Customer-credit refunds are capped at the customer's net credit balance and post a balanced debit to receivables against the selected cash/bank account. Migration backfill uses typed source relationships only and deliberately leaves ambiguous historical lines unassigned.
+
+Customer and supplier ledger endpoints now compare each party's subledger balance to its tagged control-account balance and report unassigned control-account line counts/balances. Workspace JSON backup format v5 preserves the party dimension; restore remains compatible with v1–v4 by rebuilding only mappings supported by explicit source records. A green aggregate total is not enough: release acceptance still requires migration/restore drills on representative legacy data, source-by-source completeness checks, and explicit handling for supplier credits/purchase returns (not yet implemented). Any historical control-account line without a defensible party remains visibly unreconciled; the system must never infer identity from memo text.
+
 Commercial-release capabilities:
 - double-entry general ledger, immutable posted entries and linked reversal entries;
 - chart of accounts, journals, subledgers, opening balances and period controls;

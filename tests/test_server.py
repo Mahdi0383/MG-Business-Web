@@ -1,3 +1,4 @@
+import sqlite3
 import base64
 import hashlib
 import hmac
@@ -19,6 +20,57 @@ from pathlib import Path
 
 import server
 
+
+
+
+class BoundedHttpServerTests(unittest.TestCase):
+    def test_worker_limit_rejects_excess_connections_and_releases_slots(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingServer(server.BoundedThreadingHTTPServer):
+            def finish_request(self, request, client_address):
+                entered.set()
+                release.wait(timeout=3)
+
+            def shutdown_request(self, request):
+                request.close()
+
+        class DummySocket:
+            def __init__(self):
+                self.closed = False
+                self.response = b""
+                self.timeout = None
+            def settimeout(self, value):
+                self.timeout = value
+            def sendall(self, payload):
+                self.response += payload
+            def close(self):
+                self.closed = True
+
+        httpd = BlockingServer(("127.0.0.1", 0), server.Handler, max_workers=1)
+        first = DummySocket()
+        second = DummySocket()
+        try:
+            httpd.process_request(first, ("127.0.0.1", 10001))
+            self.assertTrue(entered.wait(timeout=2))
+            httpd.process_request(second, ("127.0.0.1", 10002))
+            self.assertTrue(second.closed)
+            self.assertFalse(first.closed)
+            self.assertTrue(second.response.startswith(b"HTTP/1.1 503 Service Unavailable\r\n"))
+            self.assertIn(b"Retry-After: 1\r\n", second.response)
+            self.assertIn(b"Cache-Control: no-store\r\n", second.response)
+            self.assertTrue(second.response.endswith(b"\r\n\r\n"))
+            self.assertEqual(second.timeout, 0.2)
+        finally:
+            release.set()
+            self.assertTrue(httpd._worker_slots.acquire(timeout=2))
+            httpd._worker_slots.release()
+            httpd.server_close()
+
+    def test_worker_limit_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler, max_workers=0)
 
 def make_license(modules, license_id):
     payload = {"license_id": license_id, "modules": modules, "plan": "integration",
@@ -116,6 +168,10 @@ class ApiIntegrationTests(unittest.TestCase):
             "/tests/test_server.py",
             "/README.md",
             "/backup_manager.py",
+            # URL-encoded traversal must not escape the static web root.
+            "/%2e%2e/server.py",
+            "/%2e%2e/%2e%2e/etc/passwd",
+            "/%2e%2e%2fserver.py",
         )
         for path in paths:
             with self.subTest(path=path):
@@ -135,6 +191,40 @@ class ApiIntegrationTests(unittest.TestCase):
             payload = json.loads(response.read())
             self.assertEqual(response.status, 400)
             self.assertIn("حجم درخواست", payload["error"])
+        finally:
+            connection.close()
+
+    def test_json_routes_reject_missing_or_non_json_content_type(self):
+        body = json.dumps({"username": "owner", "password": "irrelevant"}).encode("utf-8")
+        for content_type in (None, "text/plain", "application/jsonp"):
+            with self.subTest(content_type=content_type):
+                connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+                try:
+                    connection.putrequest("POST", "/api/login")
+                    if content_type is not None:
+                        connection.putheader("Content-Type", content_type)
+                    connection.putheader("Content-Length", str(len(body)))
+                    connection.endheaders(body)
+                    response = connection.getresponse()
+                    payload = json.loads(response.read())
+                    self.assertEqual(response.status, 400)
+                    self.assertIn("application/json", payload["error"])
+                finally:
+                    connection.close()
+
+    def test_json_routes_reject_ambiguous_content_length_headers(self):
+        body = b'{"username":"owner","password":"irrelevant"}'
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+        try:
+            connection.putrequest("POST", "/api/login")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", str(len(body)))
+            connection.putheader("Content-Length", str(len(body)))
+            connection.endheaders(body)
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertIn("طول درخواست", payload["error"])
         finally:
             connection.close()
 
@@ -774,6 +864,12 @@ class ApiIntegrationTests(unittest.TestCase):
             journal_id=db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='customer_payment' AND source_id=?""",
                 (tenant_id,"customer-payment-01")).fetchone()["id"]
+            db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
+            saved_party_rows=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id)).fetchall()]
+            db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                (tenant_id,journal_id))
             saved_customer_payment_lines=[dict(row) for row in db.execute(
                 "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
             ).fetchall()]
@@ -791,6 +887,13 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_customer_payment_lines])
+            db.executemany("""INSERT INTO journal_line_parties
+                (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_party_rows])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
             db.commit()
         finally:
             db.close()
@@ -810,6 +913,22 @@ class ApiIntegrationTests(unittest.TestCase):
             "amount": 40000, "paymentMethod": "cash"
         }, token)
         self.assertEqual(status, 409)
+        status, customer_statement = self.request("GET", "/api/customers/customer-1/ledger", token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(len(customer_statement["items"]),2)
+        self.assertCountEqual([row["sourceType"] for row in customer_statement["items"]],["payment","order"])
+        self.assertEqual(customer_statement["totalCount"],2)
+        self.assertEqual(customer_statement["totalDebit"],85000)
+        self.assertEqual(customer_statement["totalCredit"],50000)
+        self.assertEqual(customer_statement["balance"],35000)
+        self.assertFalse(customer_statement["hasMore"])
+        self.assertEqual(customer_statement["reconciliation"]["controlAccountCode"],"1100")
+        self.assertEqual(customer_statement["reconciliation"]["controlAccountBalance"],35000)
+        self.assertEqual(customer_statement["reconciliation"]["unassignedControlLineCount"],0)
+        self.assertTrue(customer_statement["reconciliation"]["reconciled"])
+        status, missing_customer_statement = self.request("GET", "/api/customers/missing-customer/ledger", token=token)
+        self.assertEqual(status,404)
+        self.assertIn("error",missing_customer_statement)
         status, result = self.request("GET", "/api/customers", token=token)
         self.assertEqual(next(x for x in result["items"] if x["id"]=="customer-1")["balance"], 35000)
         status, trial = self.request("GET", "/api/accounting/trial-balance", token=token)
@@ -927,7 +1046,7 @@ class ApiIntegrationTests(unittest.TestCase):
         status, result = self.request("GET", "/api/backup", token=token)
         self.assertEqual(status, 200)
         self.assertEqual(result["schema"], "mg-business-server-backup")
-        self.assertEqual(result["version"], 4)
+        self.assertEqual(result["version"], 5)
         self.assertIn("transactions", result["tables"])
         self.assertIn("suppliers", result["tables"])
         self.assertIn("purchase_invoices", result["tables"])
@@ -1171,6 +1290,82 @@ class ApiIntegrationTests(unittest.TestCase):
             db.close()
         status, customers_after_card = self.request("GET","/api/customers",token=token)
         self.assertEqual(next(x for x in customers_after_card["items"] if x["id"]=="customer-1")["balance"],35000+game_charge)
+        # The customer subledger must reconcile to the 1100 control account:
+        # credit orders, customer receipts, and GameNet credit settlements all
+        # affect both ledgers, while card settlements affect neither receivable.
+        db=server.connect()
+        try:
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            subledger_balance=db.execute(
+                "SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=?",
+                (tenant_id,)
+            ).fetchone()[0]
+            control_balance=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0)
+                FROM journal_lines l
+                JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE e.tenant_id=? AND a.code='1100'""",(tenant_id,)).fetchone()[0]
+            self.assertEqual(subledger_balance,control_balance)
+        finally:
+            db.close()
+        # Returning a credit sale must reverse the customer subledger and the
+        # 1100 control account together, exactly once.
+        status,credit_return=self.request("DELETE","/api/orders/order-credit-1",token=token)
+        self.assertEqual(status,200)
+        self.assertFalse(credit_return["duplicate"])
+        status,credit_return_retry=self.request("DELETE","/api/orders/order-credit-1",token=token)
+        self.assertEqual(status,200)
+        self.assertTrue(credit_return_retry["duplicate"])
+        db=server.connect()
+        try:
+            tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='owner'").fetchone()["tenant_id"]
+            returned_credit=db.execute("""SELECT debit,credit FROM customer_ledger
+                WHERE tenant_id=? AND source_type='order_reversal' AND source_id='order-credit-1'""",
+                (tenant_id,)).fetchone()
+            self.assertEqual((returned_credit["debit"],returned_credit["credit"]),(0,85000))
+            subledger_balance=db.execute(
+                "SELECT COALESCE(SUM(debit-credit),0) FROM customer_ledger WHERE tenant_id=?",
+                (tenant_id,)
+            ).fetchone()[0]
+            control_balance=db.execute("""SELECT COALESCE(SUM(l.debit-l.credit),0)
+                FROM journal_lines l
+                JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE e.tenant_id=? AND a.code='1100'""",(tenant_id,)).fetchone()[0]
+            self.assertEqual(subledger_balance,control_balance)
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                WHERE e.tenant_id=? AND e.source_type='transaction_reversal'
+                  AND e.source_id='order-order-credit-1' AND p.customer_id='customer-1'""",
+                (tenant_id,)).fetchone()[0],1)
+            self.assertEqual(db.execute("""SELECT COUNT(*) FROM customer_ledger
+                WHERE tenant_id=? AND source_type='order_reversal' AND source_id='order-credit-1'""",
+                (tenant_id,)).fetchone()[0],1)
+        finally:
+            db.close()
+        # Re-run the v18 migration against already-posted records to prove the
+        # party links are backfilled from typed source relationships only.
+        db=server.connect()
+        try:
+            db.execute("DROP TABLE journal_line_parties")
+            db.execute("DELETE FROM schema_migrations WHERE version=18")
+            db.commit()
+        finally:
+            db.close()
+        db=server.connect()
+        try:
+            party_rows=db.execute("""SELECT p.customer_id,COUNT(*) AS count
+                FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE p.tenant_id=(SELECT tenant_id FROM users WHERE username='owner')
+                  AND a.code='1100' AND p.customer_id='customer-1'
+                GROUP BY p.customer_id""").fetchone()
+            self.assertIsNotNone(party_rows)
+            self.assertEqual(party_rows["count"],4)
+        finally:
+            db.close()
         db=server.connect()
         try:
             paid_receivable=db.execute("""SELECT COUNT(*) FROM customer_ledger
@@ -1238,6 +1433,7 @@ class ApiIntegrationTests(unittest.TestCase):
         db=server.connect()
         try:
             db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
             tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
             movement_id=db.execute("""SELECT id FROM inventory_movements WHERE tenant_id=?
                 AND movement_type='purchase' AND note='فاکتور خرید PI-1001' LIMIT 1""",(tenant_id,)).fetchone()["id"]
@@ -1245,6 +1441,11 @@ class ApiIntegrationTests(unittest.TestCase):
                 AND source_type='inventory_movement' AND source_id=?""",(tenant_id,movement_id)).fetchone()["id"]
             saved_movement_lines=[dict(row) for row in db.execute(
                 "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,movement_journal))]
+            saved_movement_parties=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,movement_journal))]
+            db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                (tenant_id,movement_journal))
             db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,movement_journal))
             db.commit()
         finally:
@@ -1261,6 +1462,13 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_movement_lines])
+            db.executemany("""INSERT INTO journal_line_parties
+                (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_movement_parties])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
             db.commit()
         finally:
             db.close()
@@ -1281,9 +1489,18 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(result["remainingBalance"],319999)
         status, partial_statement = self.request("GET", "/api/suppliers/supplier-1/ledger", token=token)
         self.assertEqual(status,200)
+        self.assertEqual(partial_statement["totalCount"],2)
+        self.assertFalse(partial_statement["hasMore"])
         self.assertEqual(partial_statement["totalPurchases"],419999)
         self.assertEqual(partial_statement["totalPayments"],100000)
         self.assertEqual(partial_statement["balance"],319999)
+        self.assertEqual(partial_statement["reconciliation"]["controlAccountCode"],"2000")
+        self.assertEqual(partial_statement["reconciliation"]["controlAccountBalance"],319999)
+        # The earlier manual stock purchase has no supplier source; it must
+        # remain explicitly unassigned rather than being guessed onto supplier-1.
+        self.assertEqual(partial_statement["reconciliation"]["unassignedControlLineCount"],1)
+        self.assertEqual(partial_statement["reconciliation"]["unassignedControlBalance"],600000)
+        self.assertFalse(partial_statement["reconciliation"]["reconciled"])
         status, unknown_supplier = self.request("GET", "/api/suppliers/missing-supplier/ledger", token=token)
         self.assertEqual(status,404)
         # A retry must reject invoice totals/status that no longer reconcile to supplier payment rows.
@@ -1313,6 +1530,7 @@ class ApiIntegrationTests(unittest.TestCase):
         db=server.connect()
         try:
             db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+            db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
             tenant_id=db.execute("SELECT tenant_id FROM users WHERE username=?",("owner",)).fetchone()["tenant_id"]
             journal_id=db.execute("""SELECT id FROM journal_entries
                 WHERE tenant_id=? AND source_type='supplier_payment' AND source_id=?""",
@@ -1320,6 +1538,11 @@ class ApiIntegrationTests(unittest.TestCase):
             saved_payment_lines=[dict(row) for row in db.execute(
                 "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
             ).fetchall()]
+            saved_payment_parties=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id))]
+            db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                (tenant_id,journal_id))
             db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
             db.commit()
         finally:
@@ -1334,6 +1557,13 @@ class ApiIntegrationTests(unittest.TestCase):
             placeholders=",".join("?" for _ in columns)
             db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                 [tuple(line[column] for column in columns) for line in saved_payment_lines])
+            db.executemany("""INSERT INTO journal_line_parties
+                (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_payment_parties])
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
+                BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
             db.commit()
         finally:
             db.close()
@@ -1352,6 +1582,12 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(statement["totalPurchases"],419999)
         self.assertEqual(statement["totalPayments"],419999)
         self.assertEqual(statement["balance"],0)
+        self.assertEqual(statement["totalCount"],3)
+        self.assertFalse(statement["hasMore"])
+        self.assertEqual(statement["reconciliation"]["controlAccountBalance"],0)
+        self.assertEqual(statement["reconciliation"]["unassignedControlLineCount"],1)
+        self.assertEqual(statement["reconciliation"]["unassignedControlBalance"],600000)
+        self.assertFalse(statement["reconciliation"]["reconciled"])
         self.assertEqual(len(statement["items"]),3)
         self.assertEqual([row["balanceAfter"] for row in statement["items"]],[0,319999,419999])
         self.assertEqual(statement["items"][0]["sourceType"],"payment")
@@ -1805,6 +2041,7 @@ class ApiIntegrationTests(unittest.TestCase):
             db=server.connect()
             try:
                 db.execute("DROP TRIGGER IF EXISTS journal_lines_no_delete")
+                db.execute("DROP TRIGGER IF EXISTS journal_line_parties_no_delete")
                 tenant_id=db.execute("SELECT tenant_id FROM users WHERE username='online-addon-owner'").fetchone()["tenant_id"]
                 journal_id=db.execute("""SELECT id FROM journal_entries WHERE tenant_id=?
                     AND source_type='transaction' AND source_id=?""",
@@ -1812,6 +2049,11 @@ class ApiIntegrationTests(unittest.TestCase):
                 saved_public_lines=[dict(row) for row in db.execute(
                     "SELECT * FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id)
                 ).fetchall()]
+                saved_public_parties=[dict(row) for row in db.execute("""SELECT p.* FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    WHERE l.tenant_id=? AND l.entry_id=?""",(tenant_id,journal_id))]
+                db.execute("DELETE FROM journal_line_parties WHERE journal_line_id IN (SELECT id FROM journal_lines WHERE tenant_id=? AND entry_id=?)",
+                    (tenant_id,journal_id))
                 db.execute("DELETE FROM journal_lines WHERE tenant_id=? AND entry_id=?",(tenant_id,journal_id))
                 db.commit()
             finally:
@@ -1823,8 +2065,13 @@ class ApiIntegrationTests(unittest.TestCase):
                 columns=list(saved_public_lines[0]); placeholders=",".join("?" for _ in columns)
                 db.executemany("INSERT INTO journal_lines("+",".join(columns)+") VALUES("+placeholders+")",
                     [tuple(row[column] for column in columns) for row in saved_public_lines])
+                db.executemany("""INSERT INTO journal_line_parties
+                    (journal_line_id,tenant_id,customer_id,supplier_id) VALUES(?,?,?,?)""",
+                    [(row["journal_line_id"],row["tenant_id"],row["customer_id"],row["supplier_id"]) for row in saved_public_parties])
                 db.execute("""CREATE TRIGGER IF NOT EXISTS journal_lines_no_delete BEFORE DELETE ON journal_lines
                     BEGIN SELECT RAISE(ABORT,'journal lines are immutable'); END""")
+                db.execute("""CREATE TRIGGER IF NOT EXISTS journal_line_parties_no_delete BEFORE DELETE ON journal_line_parties
+                    BEGIN SELECT RAISE(ABORT,'journal line parties are immutable'); END""")
                 db.commit()
             finally:
                 db.close()
@@ -2188,6 +2435,52 @@ class ApiIntegrationTests(unittest.TestCase):
                 server.PUBLIC_ORDER_FAILURES.clear()
                 server.PUBLIC_ORDER_FAILURES.update(original)
 
+    def test_login_throttle_reserves_capacity_for_concurrent_attempts(self):
+        with server.LOGIN_LOCK:
+            saved = (server.LOGIN_FAILURES.copy(), server.LOGIN_IP_FAILURES.copy(),
+                     server.LOGIN_INFLIGHT_BY_KEY.copy(), server.LOGIN_INFLIGHT_BY_IP.copy())
+            server.LOGIN_FAILURES.clear()
+            server.LOGIN_IP_FAILURES.clear()
+            server.LOGIN_INFLIGHT_BY_KEY.clear()
+            server.LOGIN_INFLIGHT_BY_IP.clear()
+        key, ip, now = ("127.0.0.1", "parallel-owner"), "127.0.0.1", 5000
+        try:
+            self.assertTrue(all(server.reserve_login_attempt(key, ip, now) for _ in range(8)))
+            self.assertFalse(server.reserve_login_attempt(key, ip, now))
+            for _ in range(7):
+                server.finish_login_attempt(key, ip, now, failed=True)
+            # The eighth in-flight attempt succeeds: it releases its slot and clears
+            # only this username's prior failures without clearing the IP-wide count.
+            server.finish_login_attempt(key, ip, now, clear_key=True)
+            self.assertTrue(server.reserve_login_attempt(key, ip, now))
+            server.finish_login_attempt(key, ip, now, failed=True)
+            for _ in range(7):
+                self.assertTrue(server.reserve_login_attempt(key, ip, now))
+                server.finish_login_attempt(key, ip, now, failed=True)
+            self.assertFalse(server.reserve_login_attempt(key, ip, now))
+
+            with server.LOGIN_LOCK:
+                server.LOGIN_IP_FAILURES[ip] = []
+            ip_keys = [(ip, "account-" + str(index)) for index in range(30)]
+            self.assertTrue(all(server.reserve_login_attempt(other_key, ip, now) for other_key in ip_keys))
+            self.assertFalse(server.reserve_login_attempt((ip, "thirty-first"), ip, now))
+            for other_key in ip_keys:
+                server.finish_login_attempt(other_key, ip, now)
+            with server.LOGIN_LOCK:
+                self.assertEqual(server.LOGIN_INFLIGHT_BY_KEY, {})
+                self.assertEqual(server.LOGIN_INFLIGHT_BY_IP, {})
+                self.assertEqual(len(server.LOGIN_FAILURES[key]), 8)
+        finally:
+            with server.LOGIN_LOCK:
+                server.LOGIN_FAILURES.clear()
+                server.LOGIN_FAILURES.update(saved[0])
+                server.LOGIN_IP_FAILURES.clear()
+                server.LOGIN_IP_FAILURES.update(saved[1])
+                server.LOGIN_INFLIGHT_BY_KEY.clear()
+                server.LOGIN_INFLIGHT_BY_KEY.update(saved[2])
+                server.LOGIN_INFLIGHT_BY_IP.clear()
+                server.LOGIN_INFLIGHT_BY_IP.update(saved[3])
+
     def test_login_throttle_state_is_bounded(self):
         with server.LOGIN_LOCK:
             original_user = server.LOGIN_FAILURES.copy()
@@ -2382,6 +2675,48 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH = original_db_path
 
+    def test_stale_password_change_cannot_overwrite_concurrent_reset(self):
+        original_db_path = server.DB_PATH
+        server.DB_PATH = Path(self.temp.name) / "password-race-test.sqlite3"
+        try:
+            status, setup = self.request("POST", "/api/setup", {
+                "businessName": "Password Race Shop", "username": "password-race-owner",
+                "password": "correct-horse-battery"
+            })
+            self.assertEqual(status, 200)
+            token = setup["token"]
+
+            def concurrent_reset(_new_password):
+                db = server.connect()
+                try:
+                    db.execute(
+                        "UPDATE users SET password_hash=? WHERE username=?",
+                        ("administrator-reset-hash", "password-race-owner"),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+                return "requested-new-password-hash"
+
+            with mock.patch.object(server, "password_hash", side_effect=concurrent_reset):
+                status, result = self.request("POST", "/api/account/password", {
+                    "currentPassword": "correct-horse-battery",
+                    "newPassword": "another-secure-password-2026"
+                }, token)
+
+            self.assertEqual(status, 409)
+            db = server.connect()
+            try:
+                stored = db.execute(
+                    "SELECT password_hash FROM users WHERE username=?",
+                    ("password-race-owner",),
+                ).fetchone()["password_hash"]
+                self.assertEqual(stored, "administrator-reset-hash")
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH = original_db_path
+
     def test_password_hash_is_salted_and_verified(self):
         encoded = server.password_hash("a-long-test-password")
         self.assertTrue(server.verify_password("a-long-test-password", encoded))
@@ -2538,6 +2873,9 @@ class ApiIntegrationTests(unittest.TestCase):
                 ("POST", "/api/customers", {"name": "Unauthorized customer"}),
                 ("POST", "/api/customers/missing-viewer-customer/payments", {
                     "amount": 10000, "paymentMethod": "cash"
+                }),
+                ("POST", "/api/customers/missing-viewer-customer/refunds", {
+                    "amount": 1, "paymentMethod": "cash"
                 }),
                 ("POST", "/api/transactions", {
                     "id": "unauthorized-transaction", "title": "Unauthorized",
@@ -2740,6 +3078,131 @@ class ApiIntegrationTests(unittest.TestCase):
         finally:
             server.DB_PATH=original_db_path
 
+    def test_customer_credit_refunds_are_capped_idempotent_and_reconciled(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"customer-credit-refunds.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Customer Refunds","username":"refund-owner",
+                "password":"refund-owner-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            status,customer=self.request("POST","/api/customers",{
+                "id":"refund-customer","fullName":"Refund Customer"},owner)
+            self.assertEqual(status,201)
+            status,product=self.request("POST","/api/products",{
+                "id":"refund-product","name":"Refund Test Product","sellPrice":10000,"costPrice":0},owner)
+            self.assertEqual(status,201)
+            status,movement=self.request("POST","/api/inventory/movements",{
+                "id":"refund-stock","productId":"refund-product","movementType":"purchase",
+                "quantityDelta":5,"unitCost":0,"note":"refund test stock"},owner)
+            self.assertEqual(status,201)
+            status,order=self.request("POST","/api/orders",{
+                "id":"refund-credit-order","customerId":"refund-customer","paymentMethod":"credit",
+                "items":[{"productId":"refund-product","quantity":1}]},owner)
+            self.assertEqual(status,201)
+            status,payment=self.request("POST","/api/customers/refund-customer/payments",{
+                "id":"refund-credit-payment","amount":10000,"paymentMethod":"card"},owner)
+            self.assertEqual(status,201)
+            self.assertEqual(payment["remainingBalance"],0)
+            status,returned=self.request("DELETE","/api/orders/refund-credit-order",token=owner)
+            self.assertEqual(status,200)
+            self.assertFalse(returned["duplicate"])
+            status,shift=self.request("POST","/api/cash-register/shifts/open",{"openingCash":50000},owner)
+            self.assertEqual(status,201)
+
+            status,refund=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-01","amount":6000,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,201)
+            self.assertFalse(refund["duplicate"])
+            self.assertEqual(refund["balance"],-4000)
+            self.assertEqual(refund["remainingCredit"],4000)
+            status,shifts=self.request("GET","/api/cash-register/shifts",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(shifts["active"]["expectedCash"],44000)
+            status,duplicate=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-01","amount":6000,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,200)
+            self.assertTrue(duplicate["duplicate"])
+            self.assertEqual(duplicate["remainingCredit"],4000)
+            status,changed_method=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-01","amount":6000,"paymentMethod":"card"},owner)
+            self.assertEqual(status,409)
+            status,over_refund=self.request("POST","/api/customers/refund-customer/refunds",{
+                "id":"refund-credit-02","amount":5000,"paymentMethod":"cash"},owner)
+            self.assertEqual(status,409)
+
+            status,ledger=self.request("GET","/api/customers/refund-customer/ledger",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(ledger["balance"],-4000)
+            self.assertEqual(ledger["reconciliation"]["controlAccountBalance"],-4000)
+            self.assertEqual(ledger["reconciliation"]["unassignedControlLineCount"],0)
+            self.assertTrue(ledger["reconciliation"]["reconciled"])
+            db=server.connect()
+            try:
+                tenant_id=setup["user"]["tenantId"]
+                refund_rows=db.execute("""SELECT COUNT(*) FROM customer_ledger
+                    WHERE tenant_id=? AND customer_id='refund-customer'
+                      AND source_type='refund' AND source_id='refund-credit-01'""",(tenant_id,)).fetchone()[0]
+                party_rows=db.execute("""SELECT COUNT(*) FROM journal_line_parties p
+                    JOIN journal_lines l ON l.id=p.journal_line_id AND l.tenant_id=p.tenant_id
+                    JOIN journal_entries e ON e.id=l.entry_id AND e.tenant_id=l.tenant_id
+                    WHERE p.tenant_id=? AND p.customer_id='refund-customer'
+                      AND e.source_type='customer_refund' AND e.source_id='refund-credit-01'""",(tenant_id,)).fetchone()[0]
+                refund_lines=db.execute("""SELECT a.code,l.debit,l.credit FROM journal_entries e
+                    JOIN journal_lines l ON l.entry_id=e.id AND l.tenant_id=e.tenant_id
+                    JOIN accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                    WHERE e.tenant_id=? AND e.source_type='customer_refund' AND e.source_id='refund-credit-01'""",
+                    (tenant_id,)).fetchall()
+                debit,credit=db.execute("""SELECT COALESCE(SUM(debit),0),COALESCE(SUM(credit),0)
+                    FROM journal_lines WHERE tenant_id=?""",(tenant_id,)).fetchone()
+                self.assertEqual(refund_rows,1)
+                self.assertEqual(party_rows,1)
+                self.assertEqual(sorted((row["code"],row["debit"],row["credit"]) for row in refund_lines),
+                    [("1000",0,6000),("1100",6000,0)])
+                self.assertEqual(debit,credit)
+            finally:
+                db.close()
+        finally:
+            server.DB_PATH=original_db_path
+
+    def test_supplier_ledger_paginates_without_truncating_totals(self):
+        original_db_path=server.DB_PATH
+        server.DB_PATH=Path(self.temp.name)/"supplier-ledger-pagination.sqlite3"
+        try:
+            status,setup=self.request("POST","/api/setup",{
+                "businessName":"Supplier Ledger Paging","username":"supplier-page-owner",
+                "password":"supplier-page-password-2026"})
+            self.assertEqual(status,200)
+            owner=setup["token"]
+            status,supplier=self.request("POST","/api/suppliers",{
+                "id":"supplier-page-1","name":"Paging Supplier"},owner)
+            self.assertEqual(status,201)
+            tenant_id=setup["user"]["tenantId"]
+            db=server.connect()
+            try:
+                db.executemany("""INSERT INTO purchase_invoices
+                    (id,tenant_id,supplier_id,created_by,invoice_number,invoice_date,
+                     subtotal,discount,total,paid_amount,status,created_at)
+                    VALUES(?,?,?,?,?,?,1,0,1,0,'unpaid',?)""",
+                    [(f"supplier-page-invoice-{i}",tenant_id,"supplier-page-1",setup["user"]["id"],
+                      f"PAGE-{i:04d}","2026-01-01",1000+i) for i in range(1001)])
+                db.commit()
+            finally:
+                db.close()
+            status,statement=self.request("GET","/api/suppliers/supplier-page-1/ledger",token=owner)
+            self.assertEqual(status,200)
+            self.assertEqual(statement["totalCount"],1001)
+            self.assertTrue(statement["hasMore"])
+            self.assertEqual(len(statement["items"]),1000)
+            self.assertEqual(statement["totalPurchases"],1001)
+            self.assertEqual(statement["totalPayments"],0)
+            self.assertEqual(statement["balance"],1001)
+            self.assertEqual(statement["items"][0]["balanceAfter"],1001)
+            self.assertEqual(statement["items"][-1]["balanceAfter"],2)
+        finally:
+            server.DB_PATH=original_db_path
+
     def test_cash_register_shift_reconciles_cash_and_survives_versioned_backup(self):
         original_db_path=server.DB_PATH
         server.DB_PATH=Path(self.temp.name)/"cash-register-shifts.sqlite3"
@@ -2822,14 +3285,40 @@ class ApiIntegrationTests(unittest.TestCase):
                 "id":"cash-shift-active-backup-sale","title":"Cash after shift open","amount":300,
                 "kind":"income","category":"cash test","createdAt":now},owner)
             self.assertEqual(status,201)
+            status,party_customer=self.request("POST","/api/customers",{
+                "id":"backup-party-customer","fullName":"Backup Party Customer"},owner)
+            self.assertEqual(status,201)
+            db=server.connect()
+            try:
+                tenant_id=setup["user"]["tenantId"]
+                accounts={row["code"]:row["id"] for row in db.execute(
+                    "SELECT id,code FROM accounts WHERE tenant_id=?",(tenant_id,))}
+                entry_id="backup-party-entry"
+                db.execute("""INSERT INTO journal_entries
+                    (id,tenant_id,entry_date,memo,source_type,source_id,created_by,created_at)
+                    VALUES(?,?,?,'Party backup fixture','party_backup_test',?,?,?)""",
+                    (entry_id,tenant_id,time.strftime("%Y-%m-%d"),entry_id,setup["user"]["id"],int(time.time())))
+                receivable_line="backup-party-receivable"
+                db.executemany("""INSERT INTO journal_lines
+                    (id,tenant_id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?,?)""",[
+                    (receivable_line,tenant_id,entry_id,accounts["1100"],1234,0),
+                    ("backup-party-revenue",tenant_id,entry_id,accounts["4000"],0,1234)])
+                db.execute("""INSERT INTO journal_line_parties
+                    (journal_line_id,tenant_id,customer_id) VALUES(?,?,?)""",
+                    (receivable_line,tenant_id,"backup-party-customer"))
+                db.commit()
+            finally:
+                db.close()
             status,live_active=self.request("GET","/api/cash-register/shifts",token=owner)
             self.assertEqual(status,200)
             self.assertEqual(live_active["active"]["expectedCash"],2300)
 
             status,snapshot=self.request("GET","/api/backup",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(snapshot["version"],4)
+            self.assertEqual(snapshot["version"],5)
             self.assertEqual(len(snapshot["tables"]["cash_register_shifts"]),3)
+            self.assertEqual(len(snapshot["tables"]["journal_line_parties"]),1)
+            self.assertEqual(snapshot["tables"]["journal_line_parties"][0]["customer_id"],"backup-party-customer")
             self.assertTrue(all("__rowid" in row for row in snapshot["tables"]["journal_entries"]))
             db=server.connect()
             try:
@@ -2844,11 +3333,20 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(len(history["items"]),3)
             self.assertEqual(history["active"]["id"],active_shift["id"])
             self.assertEqual(history["active"]["expectedCash"],2300)
+            db=server.connect()
+            try:
+                restored_party=db.execute("""SELECT customer_id FROM journal_line_parties
+                    WHERE journal_line_id='backup-party-receivable' AND tenant_id=?""",
+                    (setup["user"]["tenantId"],)).fetchone()
+                self.assertEqual(restored_party["customer_id"],"backup-party-customer")
+            finally:
+                db.close()
             first=next(item for item in history["items"] if item["id"]==shift_id)
             self.assertEqual(first["difference"],-50)
 
             legacy_v3=json.loads(json.dumps(snapshot))
             legacy_v3["version"]=3
+            legacy_v3["tables"].pop("journal_line_parties")
             for journal in legacy_v3["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
             for shift in legacy_v3["tables"]["cash_register_shifts"]:
@@ -2862,6 +3360,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
             legacy_v2=json.loads(json.dumps(snapshot))
             legacy_v2["version"]=2
+            legacy_v2["tables"].pop("journal_line_parties")
             legacy_v2["tables"].pop("cash_register_shifts")
             for journal in legacy_v2["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
@@ -2956,7 +3455,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
             status,snapshot=self.request("GET","/api/backup",token=owner)
             self.assertEqual(status,200)
-            self.assertEqual(snapshot["version"],4)
+            self.assertEqual(snapshot["version"],5)
             self.assertTrue(all("fulfillment_status" in row for row in snapshot["tables"]["orders"]))
             db=server.connect()
             try:
@@ -3082,6 +3581,7 @@ class ApiIntegrationTests(unittest.TestCase):
             legacy_snapshot["version"]=1
             legacy_snapshot["tables"].pop("accounting_periods")
             legacy_snapshot["tables"].pop("cash_register_shifts")
+            legacy_snapshot["tables"].pop("journal_line_parties")
             for journal in legacy_snapshot["tables"]["journal_entries"]:
                 journal.pop("__rowid",None)
             status,legacy_restored=self.request("POST","/api/backup/restore",legacy_snapshot,owner)
@@ -3291,3 +3791,116 @@ class ModuleEntitlementRuntimeTests(unittest.TestCase):
         self.assertFalse(self.enabled("hotel"))
 
 
+
+
+class SessionAuthenticationRaceTests(unittest.TestCase):
+    def test_authentication_rejects_session_revoked_before_atomic_refresh(self):
+        from email.message import Message
+
+        now = int(time.time())
+
+        class Cursor:
+            def __init__(self, row=None, rowcount=-1):
+                self._row = row
+                self.rowcount = rowcount
+
+            def fetchone(self):
+                return self._row
+
+        class RevokedSessionDatabase:
+            def __init__(self):
+                self.statements = []
+
+            def execute(self, sql, params=()):
+                self.statements.append((sql, params))
+                if sql.lstrip().startswith("SELECT u.*,s.expires_at"):
+                    return Cursor({
+                        "id": "user-1",
+                        "username": "owner",
+                        "active": 1,
+                        "session_created_at": now - 60,
+                        "expires_at": now + 600,
+                    })
+                if sql.lstrip().startswith("UPDATE sessions SET expires_at"):
+                    # Model logout/password reset winning before the conditional
+                    # refresh obtains its write lock.
+                    return Cursor(rowcount=0)
+                raise AssertionError("Unexpected SQL: " + sql)
+
+            def commit(self):
+                pass
+
+        handler = object.__new__(server.Handler)
+        handler.headers = Message()
+        token = "t" * 48
+        handler.headers["Authorization"] = "Bearer " + token
+        db = RevokedSessionDatabase()
+
+        with mock.patch.object(server.time, "time", return_value=now):
+            self.assertIsNone(handler.authenticate(db))
+
+        self.assertEqual(len(db.statements), 2)
+        self.assertIn("EXISTS (SELECT 1 FROM users", db.statements[1][0])
+        self.assertEqual(db.statements[1][1][1], hashlib.sha256(token.encode()).hexdigest())
+
+
+class SessionIssuanceTests(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript("""
+            CREATE TABLE users(
+                id TEXT PRIMARY KEY, active INTEGER NOT NULL,
+                password_hash TEXT NOT NULL, username TEXT NOT NULL,
+                role TEXT NOT NULL, tenant_id TEXT NOT NULL
+            );
+            CREATE TABLE sessions(
+                token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+            );
+        """)
+        self.db.execute(
+            "INSERT INTO users VALUES(?,?,?,?,?,?)",
+            ("user-1", 1, "verified-hash", "owner", "owner", "tenant-1"),
+        )
+        self.db.commit()
+        self.handler = object.__new__(server.Handler)
+        self.handler.send_json = lambda status, payload: (status, payload)
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_concurrent_safe_issuance_prunes_to_nine_existing_plus_new(self):
+        self.db.executemany(
+            "INSERT INTO sessions VALUES(?,?,?,?)",
+            [(f"old-{n}", "user-1", 5000, 100 + n) for n in range(12)],
+        )
+        self.db.commit()
+
+        with (
+            mock.patch.object(server.time, "time", return_value=1000),
+            mock.patch.object(server.secrets, "token_urlsafe", return_value="new-secret"),
+            mock.patch.object(server, "public_user", return_value={"id": "user-1"}),
+        ):
+            status, payload = self.handler.create_session(self.db, "user-1", "verified-hash")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["token"], "new-secret")
+        rows = self.db.execute(
+            "SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at,rowid",
+            ("user-1",),
+        ).fetchall()
+        self.assertEqual(len(rows), 10)
+        hashes = {row["token_hash"] for row in rows}
+        self.assertTrue({f"old-{n}" for n in range(3, 12)}.issubset(hashes))
+        self.assertIn(hashlib.sha256(b"new-secret").hexdigest(), hashes)
+        self.assertNotIn("old-0", hashes)
+
+    def test_issuance_rejects_password_changed_after_login_verification(self):
+        with mock.patch.object(server.time, "time", return_value=1000):
+            status, payload = self.handler.create_session(
+                self.db, "user-1", "stale-password-hash"
+            )
+
+        self.assertEqual(status, 401)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
