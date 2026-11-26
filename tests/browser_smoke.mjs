@@ -266,8 +266,12 @@ try {
     const now = new Date();
     return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
   });
-  await page.locator('#accountingDateFilter input[name="fromDate"]').fill(accountingToday);
-  await page.locator('#accountingDateFilter input[name="toDate"]').fill(accountingToday);
+  const accountingFromInput = page.locator('#accountingDateFilter input[name="fromDate"]');
+  const accountingToInput = page.locator('#accountingDateFilter input[name="toDate"]');
+  await accountingFromInput.fill(accountingToday);
+  await accountingToInput.fill(accountingToday);
+  assert.equal(await accountingFromInput.inputValue(), accountingToday, "accounting start-date control must retain the selected date");
+  assert.equal(await accountingToInput.inputValue(), accountingToday, "accounting end-date control must retain the selected date");
   const reportPaths = ["/api/accounting/profit-loss", "/api/accounting/journal", "/api/accounting/cash-flow"];
   const reportResponses = reportPaths.map(path => page.waitForResponse(response => {
     const url = new URL(response.url());
