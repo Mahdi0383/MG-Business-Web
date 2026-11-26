@@ -60,6 +60,7 @@ class BoundedHttpServerTests(unittest.TestCase):
             self.assertTrue(second.response.startswith(b"HTTP/1.1 503 Service Unavailable\r\n"))
             self.assertIn(b"Retry-After: 1\r\n", second.response)
             self.assertIn(b"Cache-Control: no-store\r\n", second.response)
+            self.assertTrue(second.response.endswith(b"\r\n\r\n"))
             self.assertEqual(second.timeout, 0.2)
         finally:
             release.set()
