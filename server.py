@@ -1567,8 +1567,22 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
     def process_request(self, request, client_address):
         if not self._worker_slots.acquire(blocking=False):
-            # Do not create an unbounded number of threads under connection floods.
-            self.shutdown_request(request)
+            # Reject saturation explicitly without allocating another worker.
+            # A short timeout keeps a non-reading client from stalling accept().
+            try:
+                request.settimeout(0.2)
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\\r\\n"
+                    b"Connection: close\\r\\n"
+                    b"Content-Length: 0\\r\\n"
+                    b"Retry-After: 1\\r\\n"
+                    b"Cache-Control: no-store\\r\\n\\r\\n"
+                )
+            except (AttributeError, OSError, TimeoutError):
+                # A client may disconnect or stop reading while saturated.
+                pass
+            finally:
+                self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
