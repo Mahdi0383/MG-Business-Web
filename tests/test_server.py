@@ -39,6 +39,12 @@ class BoundedHttpServerTests(unittest.TestCase):
         class DummySocket:
             def __init__(self):
                 self.closed = False
+                self.response = b""
+                self.timeout = None
+            def settimeout(self, value):
+                self.timeout = value
+            def sendall(self, payload):
+                self.response += payload
             def close(self):
                 self.closed = True
 
@@ -51,6 +57,10 @@ class BoundedHttpServerTests(unittest.TestCase):
             httpd.process_request(second, ("127.0.0.1", 10002))
             self.assertTrue(second.closed)
             self.assertFalse(first.closed)
+            self.assertTrue(second.response.startswith(b"HTTP/1.1 503 Service Unavailable\r\n"))
+            self.assertIn(b"Retry-After: 1\r\n", second.response)
+            self.assertIn(b"Cache-Control: no-store\r\n", second.response)
+            self.assertEqual(second.timeout, 0.2)
         finally:
             release.set()
             self.assertTrue(httpd._worker_slots.acquire(timeout=2))
